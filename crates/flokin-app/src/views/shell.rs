@@ -14,7 +14,7 @@ pub fn view(model: &ShellModel, app_theme: AppTheme) -> Element<'_, Message> {
         toolbar(app_theme),
         row![
             activity_bar(model),
-            views::explorer::view(model),
+            views::explorer::view(model, app_theme),
             widgets::divider(),
             workspace(model),
             widgets::divider(),

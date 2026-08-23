@@ -1,10 +1,34 @@
-use flokin_core::{BottomTab, ShellModel, WorkspaceTab};
-use iced::widget::{column, container, row, scrollable, text};
+use flokin_core::{BottomTab, Document, PropertyValue, ShellModel, WorkspaceTab};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 use crate::{message::Message, theme, widgets};
 
 pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
+    if let Some(collection) = model.selected_collection() {
+        return container(row![widgets::tab_button(
+            collection.display_name.as_str(),
+            true,
+            Message::MockAction,
+        )])
+        .height(38)
+        .padding([0.0, theme::spacing::SM])
+        .style(theme::surface)
+        .into();
+    }
+
+    if let Some(document) = model.selected_document() {
+        return container(row![widgets::tab_button(
+            document.title.as_str(),
+            true,
+            Message::MockAction,
+        )])
+        .height(38)
+        .padding([0.0, theme::spacing::SM])
+        .style(theme::surface)
+        .into();
+    }
+
     let mut tabs = row![]
         .spacing(theme::spacing::XXS)
         .align_y(Alignment::Center);
@@ -30,10 +54,126 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
 }
 
 pub fn view(model: &ShellModel) -> Element<'_, Message> {
+    if let Some(collection) = model.selected_collection() {
+        return collection_view(model, collection.id.as_str());
+    }
+
+    if let Some(document) = model.selected_document() {
+        return document_selection_view(document);
+    }
+
     column![breadcrumb(), editor_area(model), bottom_panel(model)]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element<'a, Message> {
+    let Some(collection) = model.selected_collection() else {
+        return container("").into();
+    };
+    let documents = model.collection_documents(collection_id);
+    let mut list = column![
+        text(collection.display_name.as_str())
+            .size(22)
+            .style(theme::text_accent),
+        text(format!("{} documentos", collection.document_count))
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+    ]
+    .spacing(theme::spacing::MD);
+
+    for document in documents {
+        list = list.push(document_row(document));
+    }
+
+    container(scrollable(list).height(Length::Fill))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(theme::spacing::XXL)
+        .style(theme::editor)
+        .into()
+}
+
+fn document_row(document: &Document) -> Element<'_, Message> {
+    let mut meta = row![text(document.relative_path.display().to_string())
+        .font(theme::mono())
+        .size(theme::typography::LABEL)
+        .style(theme::text_muted)]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    for (key, value) in simple_properties(document).into_iter().take(3) {
+        meta = meta.push(property_chip(format!("{key}: {}", property_preview(value))));
+    }
+
+    button(
+        column![
+            text(document.title.as_str())
+                .size(theme::typography::TITLE)
+                .style(theme::text_normal),
+            meta,
+        ]
+        .spacing(theme::spacing::XS),
+    )
+    .width(Length::Fill)
+    .padding(theme::spacing::MD)
+    .style(theme::button_tree)
+    .on_press(Message::MarkdownSelected(document.path.clone()))
+    .into()
+}
+
+fn document_selection_view(document: &Document) -> Element<'_, Message> {
+    container(
+        column![
+            text(document.title.as_str())
+                .size(22)
+                .style(theme::text_accent),
+            text(document.relative_path.display().to_string())
+                .font(theme::mono())
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+            text("Conteúdo real será aberto em milestone futura.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        ]
+        .spacing(theme::spacing::MD),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(theme::spacing::XXL)
+    .style(theme::editor)
+    .into()
+}
+
+fn simple_properties(document: &Document) -> Vec<(&str, &PropertyValue)> {
+    document
+        .properties
+        .iter()
+        .filter(|(key, _)| key.as_str() != "title" && key.as_str() != "type")
+        .map(|(key, value)| (key.as_str(), value))
+        .collect()
+}
+
+fn property_preview(value: &PropertyValue) -> String {
+    match value {
+        PropertyValue::Null => String::from("null"),
+        PropertyValue::Bool(value) => value.to_string(),
+        PropertyValue::Number(value) | PropertyValue::String(value) => value.clone(),
+        PropertyValue::Array(values) => format!("{} itens", values.len()),
+        PropertyValue::Object(values) => format!("{} campos", values.len()),
+    }
+}
+
+fn property_chip(label: String) -> Element<'static, Message> {
+    container(
+        text(label)
+            .size(theme::typography::LABEL)
+            .style(theme::text_accent),
+    )
+    .padding([3.0, 8.0])
+    .style(theme::chip)
+    .into()
 }
 
 fn breadcrumb<'a>() -> Element<'a, Message> {

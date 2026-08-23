@@ -10,3 +10,6 @@ path = "src/lib.rs"
 
 [lints]
 workspace = true
+
+[dependencies]
+serde_yaml = "0.9"

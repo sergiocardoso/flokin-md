@@ -1,33 +1,18 @@
 use crate::model::{
-    Activity, BottomTab, DocumentTab, ExplorerNode, FilterCount, InspectorField, ShellModel,
-    TagCount, WorkspaceTab,
+    Activity, BottomTab, DocumentTab, FilterCount, InspectorField, ScanState, ShellModel, TagCount,
+    WorkspaceTab,
 };
 
 pub fn mock_shell() -> ShellModel {
     ShellModel {
         active_activity: Activity::Explorer,
         current_workspace: None,
-        explorer: vec![ExplorerNode::folder(
-            1,
-            "Knowledge",
-            vec![
-                ExplorerNode::folder(
-                    2,
-                    "Projects",
-                    vec![
-                        ExplorerNode::file(3, "carf.md"),
-                        ExplorerNode::file(4, "cvm.md"),
-                        ExplorerNode::file(5, "healthy-chew.md"),
-                        ExplorerNode::file(6, "ideas.md"),
-                    ],
-                ),
-                ExplorerNode::collapsed_folder(7, "People", Vec::new()),
-                ExplorerNode::collapsed_folder(8, "Meetings", Vec::new()),
-                ExplorerNode::collapsed_folder(9, "Areas", Vec::new()),
-                ExplorerNode::collapsed_folder(10, "Resources", Vec::new()),
-                ExplorerNode::collapsed_folder(11, "Archive", Vec::new()),
-            ],
-        )],
+        explorer: Vec::new(),
+        documents: Vec::new(),
+        collections: Vec::new(),
+        scan_state: ScanState::Idle,
+        selected_markdown: None,
+        selected_collection: None,
         filters: vec![
             FilterCount {
                 label: "Todos os documentos",

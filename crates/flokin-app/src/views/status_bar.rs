@@ -1,4 +1,4 @@
-use flokin_core::ShellModel;
+use flokin_core::{ScanState, ShellModel};
 use iced::widget::{container, row, text};
 use iced::{Alignment, Element, Length};
 
@@ -6,16 +6,31 @@ use crate::{message::Message, theme};
 
 pub fn view(model: &ShellModel) -> Element<'_, Message> {
     let workspace = model.workspace_display();
-    let status_items = [
-        if workspace.is_open {
-            format!("{} ({})", workspace.name, workspace.path)
-        } else {
-            String::from("Nenhuma pasta aberta")
-        },
-        String::from("Não indexado"),
-        String::from("Markdown"),
-        String::from("Ln 1, Col 1"),
-    ];
+    let mut status_items = vec![if workspace.is_open {
+        workspace.name
+    } else {
+        String::from("Nenhuma pasta aberta")
+    }];
+
+    match &model.scan_state {
+        ScanState::Idle => {}
+        ScanState::Scanning => status_items.push(String::from("Analisando documentos...")),
+        ScanState::Completed {
+            documents,
+            collections,
+            warnings,
+            ..
+        } => {
+            status_items.push(format!("{documents} documentos"));
+            status_items.push(format!("{collections} collections"));
+            if *warnings > 0 {
+                status_items.push(format!("{warnings} warnings"));
+            }
+        }
+        ScanState::Failed(_) => status_items.push(String::from("Falha ao analisar workspace")),
+    }
+
+    status_items.push(String::from("Markdown"));
 
     let mut row = row![]
         .spacing(theme::spacing::LG)
@@ -23,9 +38,13 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     let mut is_first = true;
 
     for item in status_items {
-        let style = match item.as_str() {
-            "Não indexado" => theme::text_warning,
-            _ => theme::text_muted,
+        let style = if item == "Analisando documentos..."
+            || item == "Falha ao analisar workspace"
+            || item.ends_with("warnings")
+        {
+            theme::text_warning
+        } else {
+            theme::text_muted
         };
 
         if is_first {

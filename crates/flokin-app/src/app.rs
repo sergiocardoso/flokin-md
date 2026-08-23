@@ -28,7 +28,9 @@ impl FlokinApp {
                 self.model.select_activity(activity);
             }
             Message::ExplorerNodeToggled(id) => {
-                self.model.toggle_explorer_node(id);
+                if !self.model.toggle_explorer_node(id) {
+                    self.model.select_explorer_node(id);
+                }
             }
             Message::WorkspaceTabSelected(tab) => {
                 self.model.select_workspace_tab(tab);
@@ -40,7 +42,31 @@ impl FlokinApp {
                 return Task::perform(file_dialog::pick_folder(), Message::FolderSelected);
             }
             Message::FolderSelected(path) => {
-                self.model.workspace_selected(path);
+                if let Some(path) = path {
+                    self.model.workspace_selected(Some(path.clone()));
+                    return Task::perform(
+                        async move {
+                            let result = flokin_core::scan_workspace(&path)
+                                .map_err(|error| error.to_string());
+                            (path, result)
+                        },
+                        |(path, result)| Message::ScanCompleted(path, result),
+                    );
+                }
+            }
+            Message::ScanCompleted(path, result) => {
+                if self.model.current_workspace.as_ref() == Some(&path) {
+                    match result {
+                        Ok(result) => self.model.scan_completed(result),
+                        Err(message) => self.model.scan_failed(message),
+                    }
+                }
+            }
+            Message::CollectionSelected(collection_id) => {
+                self.model.select_collection(collection_id);
+            }
+            Message::MarkdownSelected(path) => {
+                self.model.select_markdown_path(path);
             }
             Message::ThemeToggled => {
                 self.theme = self.theme.toggled();
@@ -84,7 +110,7 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 
 #[cfg(test)]
 mod tests {
-    use flokin_core::{Activity, BottomTab, ExplorerNodeId, WorkspaceTab};
+    use flokin_core::{Activity, BottomTab, WorkspaceTab};
 
     use super::FlokinApp;
     use crate::{message::Message, theme::AppTheme};
@@ -106,11 +132,9 @@ mod tests {
 
         let _ = app.update(Message::WorkspaceTabSelected(WorkspaceTab::Cvm));
         let _ = app.update(Message::BottomTabSelected(BottomTab::Backlinks));
-        let _ = app.update(Message::ExplorerNodeToggled(ExplorerNodeId(2)));
 
         assert_eq!(app.model.selected_tab, WorkspaceTab::Cvm);
         assert_eq!(app.model.bottom_tab, BottomTab::Backlinks);
-        assert!(!app.model.explorer[0].children[0].expanded);
     }
 
     #[test]

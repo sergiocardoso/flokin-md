@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+devicons = "0.6.13"
 flokin-core = { path = "../flokin-core" }
 iced = { version = "0.14", features = ["svg"] }
 rfd = "0.17"

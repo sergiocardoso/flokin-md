@@ -1,4 +1,5 @@
 mod app;
+mod file_icons;
 mod message;
 mod services;
 mod theme;
