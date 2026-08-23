@@ -4,11 +4,11 @@
 
 ## Platform
 
-web
+native desktop
 
 ## Stack
 
-delegated: Tauri 2 desktop shell with React, TypeScript, Vite, pnpm, and Rust, per the initial project brief.
+Rust stable, Iced 0.14, and Cargo. FlokinMD does not use Node.js, WebView, Tauri, React, TypeScript, Vite, or pnpm as application stack.
 
 ## Users
 
@@ -24,11 +24,11 @@ Markdown files remain open, readable, portable, and local. Future indexes and ca
 
 ## Capabilities and Constraints
 
-MDB-001 is limited to the desktop shell. It must not implement real filesystem access, Markdown parsing, SQLite, search, graph, watcher, sync, login, AI, MCP, or external APIs.
+MDB-001R is limited to the native desktop shell. It must not implement real filesystem access, Markdown parsing, SQLite, search, graph, watcher, sync, login, AI, MCP, or external APIs.
 
 ## Brand Commitments
 
-Visible name: FlokinMD. Technical name: flokin-md. Bundle identifier: dev.flokin.md. Initial theme: light with a clean premium desktop-app feel and purple accent.
+Visible name: FlokinMD. Technical name: flokin-md. Theme: dark native desktop tool with clean technical surfaces and purple accent.
 
 ## Product Principles
 

@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["crates/flokin-app", "crates/flokin-core"]
+default-members = ["crates/flokin-app"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+authors = ["FlokinMD contributors"]
+license = "UNLICENSED"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

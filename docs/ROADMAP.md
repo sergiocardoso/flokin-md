@@ -1,8 +1,8 @@
 # Roadmap
 
-This file records the intended milestones. Only MDB-001 is implemented now.
+This file records the intended milestones. Only MDB-001R is implemented now.
 
-- MDB-001 Desktop Shell
+- MDB-001R Native Desktop Shell — Iced
 - MDB-002 Abrir pasta
 - MDB-003 Markdown Scanner
 - MDB-004 Collections

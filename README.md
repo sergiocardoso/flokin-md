@@ -2,29 +2,26 @@
 
 Local-first desktop app that turns Markdown folders into a visual, structured, queryable database.
 
-MDB-001 implements only the desktop shell. Markdown scanning, SQLite, search, graph, relations, filesystem watching, and other future features are intentionally not implemented yet.
+FlokinMD is a native Rust desktop application built with Iced.
+
+MDB-001R implements only the native desktop shell. Markdown scanning, SQLite, search, graph, relations, filesystem watching, and other future features are intentionally not implemented yet.
 
 ## Development
-
-Install dependencies:
-
-```sh
-pnpm install
-```
 
 Run the desktop app:
 
 ```sh
-pnpm tauri dev
+cargo run
 ```
 
 Run checks:
 
 ```sh
-pnpm lint
-pnpm test
-pnpm build
-cargo check --manifest-path src-tauri/Cargo.toml
+cargo fmt --check
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo build --workspace
 ```
 
 ## Documentation

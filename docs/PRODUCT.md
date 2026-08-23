@@ -10,14 +10,14 @@ Markdown files are the source of truth.
 
 FlokinMD must not convert `.md` files into a proprietary format. Future indexes, caches, schemas, and views exist to help users understand and operate on their Markdown, not to replace it.
 
-## MDB-001 Scope
+## MDB-001R Scope
 
-MDB-001 implements only the desktop shell:
+MDB-001R implements only the native desktop shell:
 
-- Tauri 2 desktop app.
-- React, TypeScript, Vite, and pnpm frontend.
-- Light theme with a premium desktop-app look.
-- Static visual controls for search, filters, settings, navigation, recent folders, CTAs, and status.
+- Rust stable.
+- Iced 0.14 native desktop GUI.
+- Cargo workspace with app and core boundaries.
+- Dark professional tool UI with menu, toolbar, activity bar, explorer, tabs, editor, bottom panel, inspector, and status bar.
 
 No real filesystem access, Markdown parsing, SQLite, search, graph, watcher, sync, login, AI, MCP, or external API integration is included in this milestone.
 

@@ -1,29 +1,34 @@
 # Architecture
 
-FlokinMD starts as a simple Tauri 2 application:
+FlokinMD is a native Rust desktop application built with Iced.
 
-- `src/`: React + TypeScript frontend.
-- `src-tauri/`: Tauri 2 Rust host.
+- `crates/flokin-app/`: Iced 0.14 desktop GUI.
+- `crates/flokin-core/`: product state, mock data, and domain logic that can be tested without a window.
 - `docs/`: product, architecture, design-system, and roadmap notes.
+- `assets/`: future non-code assets.
 
-MDB-001 intentionally keeps the architecture small. The current Rust layer only boots the Tauri application and does not expose product commands.
+MDB-001R intentionally keeps the architecture small. The application renders a native shell and mock state only.
 
 ## Current Boundary
 
-The UI is a static desktop shell. It does not read Markdown files, scan folders, watch the filesystem, create SQLite indexes, or call external services.
+The UI is a native desktop shell. It does not read Markdown files, scan folders, watch the filesystem, create SQLite indexes, or call external services.
+
+The app crate may depend on the core crate. The core crate must not depend on Iced, windowing, rendering, filesystem dialogs, or other presentation concerns.
 
 ## Future Direction
 
-As the product grows, the intended structure is:
+As the product grows, the intended structure remains:
 
 ```text
-apps/
 crates/
 docs/
+assets/
 fixtures/
 ```
 
-The future Rust core should live outside the GUI boundary and should be usable without the Tauri frontend. GUI code may depend on core APIs, but core code must not depend on React, webview details, or Tauri window concerns.
+The Rust core should remain usable without the GUI. GUI code may depend on core APIs, but core code must not depend on Iced or window concerns.
+
+Explorer, workspace, and inspector are visually separated in MDB-001R. Interactive resizing is intentionally not implemented yet; it should be handled as a focused future UI infrastructure task.
 
 ## Data Principle
 

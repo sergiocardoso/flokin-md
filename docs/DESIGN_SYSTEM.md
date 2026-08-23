@@ -1,47 +1,65 @@
 # Design System
 
-MDB-001 defines a small token-based design system in `src/App.css`.
+MDB-001B defines a token-based design system in Rust at `crates/flokin-app/src/theme.rs`.
+
+The application supports two in-memory themes:
+
+- Dark
+- Light
 
 ## Colors
 
-- `--color-background`
-- `--color-surface`
-- `--color-surface-muted`
-- `--color-border`
-- `--color-text`
-- `--color-text-muted`
-- `--color-primary`
-- `--color-primary-hover`
-- `--color-success`
-- `--color-warning`
-- `--color-danger`
+- `background`
+- `surface`
+- `surface_hover`
+- `surface_selected`
+- `surface_active`
+- `elevated_surface`
+- `panel`
+- `editor_background`
+- `editor_gutter`
+- `border`
+- `border_subtle`
+- `text`
+- `text_muted`
+- `accent`
+- `accent_hover`
+- `accent_soft`
+- `success`
+- `warning`
+- `danger`
+- `selected_text`
 
 ## Spacing
 
-- `--space-4`
-- `--space-8`
-- `--space-12`
-- `--space-16`
-- `--space-20`
-- `--space-24`
-- `--space-32`
+- `XXS`
+- `XS`
+- `SM`
+- `MD`
+- `LG`
+- `XL`
+- `XXL`
 
 ## Radius
 
-- `--radius-small`
-- `--radius-medium`
-- `--radius-large`
+- `XS`
+- `SM`
+- `MD`
+- `LG`
 
 ## Typography
 
-- `--font-display`
-- `--font-heading`
-- `--font-body`
-- `--font-label`
-- `--font-mono`
+- UI font: system default.
+- Mono font: system monospace fallback.
+- Sizes: menu, label, body, editor, title.
+
+## Icons
+
+Icons are centralized as inline SVG line icons through `theme::Icon` and `widgets::icon`.
+They are intentionally consistent in weight and size and avoid adding a large icon dependency during this shell milestone.
 
 ## Usage Rules
 
-New screens should reuse these tokens before introducing new values. If a new token is needed, document why it belongs in the shared system instead of hard-coding one-off CSS.
+New screens should reuse these tokens before introducing new values. If a new token is needed, document why it belongs in the shared Rust theme instead of hard-coding one-off colors or dimensions.
 
-The initial visual direction is a light desktop app with clean surfaces, subtle borders, rounded panels, good information density, and a purple primary accent.
+The visual direction is a native desktop tool with high information density, clear panes, restrained borders, minimal rounding, technical typography, and a purple accent. Dark mode remains the default; light mode should feel equally refined and readable.
