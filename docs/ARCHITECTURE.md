@@ -57,6 +57,14 @@ TableModel / Inspector / Explorer
 
 The core crate does not depend on `notify` or Iced. It owns the shared Markdown/ignore policy and applies incremental workspace updates by reparsing changed Markdown files, removing missing paths, rebuilding collections, and refreshing explorer projections from in-memory documents. Full workspace scan remains available as a manual fallback for ambiguous directory-level changes.
 
+## Search
+
+MDB-008 adds in-memory workspace search in `flokin-core`. The scanner keeps the parsed Markdown body on each `Document`, and the search service queries the already loaded `Document` values without rereading files per keystroke. Search covers document title, file name, relative path, frontmatter property names, frontmatter string values, and Markdown body text.
+
+The GUI owns only interaction concerns: opening/focusing the toolbar search field, debounce, keyboard navigation, popup rendering, and selecting a result. Search state is centralized as `SearchState` on `ShellModel`; result selection still resolves to the single real selected document path used by Table View and Inspector.
+
+The current backend is a deterministic O(n) in-memory scan with simple scoring and snippets. SQLite FTS is an intended future replacement for the search backend/cache, but MDB-008 does not introduce SQLite, SQL, or a persistent search index.
+
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.

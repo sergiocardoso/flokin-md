@@ -236,6 +236,44 @@ pub fn elevated(theme: &Theme) -> container::Style {
     container_style(palette.elevated_surface, None, radius::SM)
 }
 
+pub fn overlay_panel(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        text_color: Some(palette.text),
+        background: Some(Background::Color(palette.elevated_surface)),
+        border: border(palette.border, 1.0, radius::LG),
+        shadow: Shadow {
+            color: Color {
+                a: 0.28,
+                ..Color::BLACK
+            },
+            offset: iced::Vector::new(0.0, 12.0),
+            blur_radius: 28.0,
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn overlay_backdrop(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    let backdrop = if palette.background.r > 0.5 {
+        Color {
+            a: 0.22,
+            ..palette.border
+        }
+    } else {
+        Color {
+            a: 0.34,
+            ..Color::BLACK
+        }
+    };
+
+    container::Style {
+        background: Some(Background::Color(backdrop)),
+        ..container::Style::default()
+    }
+}
+
 pub fn surface(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.surface, None, radius::SM)

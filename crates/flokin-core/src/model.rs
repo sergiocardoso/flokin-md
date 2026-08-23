@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    Collection, Document, PropertyValue, ScanError, ScanResult, SortDirection, TableSort,
-    WorkspaceUpdate,
+    search_documents, Collection, Document, PropertyValue, ScanError, ScanResult, SearchQuery,
+    SearchState, SortDirection, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +233,7 @@ pub struct ShellModel {
     pub selected_document_path: Option<PathBuf>,
     pub selected_collection: Option<String>,
     pub collection_table_sort: Option<TableSort>,
+    pub search: SearchState,
     pub filters: Vec<FilterCount>,
     pub selected_tab: WorkspaceTab,
     pub bottom_tab: BottomTab,
@@ -270,6 +271,7 @@ impl ShellModel {
             self.selected_document_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
+            self.search = SearchState::closed();
             self.scan_state = ScanState::Scanning;
         }
     }
@@ -308,6 +310,7 @@ impl ShellModel {
             self.selected_document_path = Some(path);
             self.selected_collection = None;
             self.collection_table_sort = None;
+            self.search.close();
             true
         } else {
             false
@@ -317,6 +320,21 @@ impl ShellModel {
     pub fn select_markdown_path(&mut self, path: PathBuf) {
         if self.documents.iter().any(|document| document.path == path) {
             self.selected_document_path = Some(path);
+            self.selected_collection = None;
+            self.collection_table_sort = None;
+        }
+    }
+
+    pub fn select_search_result_path(&mut self, path: PathBuf) -> bool {
+        if let Some(document) = self.documents.iter().find(|document| document.path == path) {
+            self.selected_document_path = Some(document.path.clone());
+            self.selected_collection = Some(document.collection_id.clone());
+            self.collection_table_sort = None;
+            self.search.close();
+            true
+        } else {
+            self.refresh_search_results();
+            false
         }
     }
 
@@ -385,6 +403,7 @@ impl ShellModel {
             errors: result.errors.len(),
             warnings,
         };
+        self.refresh_search_results();
     }
 
     pub fn workspace_update_started(&mut self) {
@@ -475,6 +494,7 @@ impl ShellModel {
         self.explorer = explorer_from_scan_result(&result);
         restore_expanded_folder_paths(&mut self.explorer, &expanded_paths);
         self.set_completed_state(result.errors.len());
+        self.refresh_search_results();
     }
 
     pub fn workspace_update_failed(&mut self, error: ScanError) {
@@ -502,7 +522,47 @@ impl ShellModel {
         self.selected_document_path = None;
         self.selected_collection = None;
         self.collection_table_sort = None;
+        self.search = SearchState::closed();
         self.scan_state = ScanState::Failed(message);
+    }
+
+    pub fn open_search(&mut self) {
+        self.search.open();
+        self.refresh_search_results();
+    }
+
+    pub fn close_search(&mut self) {
+        self.search.close();
+    }
+
+    pub fn update_search_query(&mut self, query: String) {
+        self.search.set_query(query);
+    }
+
+    pub fn refresh_search_results(&mut self) {
+        let outcome =
+            search_documents(SearchQuery::new(self.search.query.clone()), &self.documents);
+        self.search.apply_outcome(outcome);
+    }
+
+    pub fn select_next_search_result(&mut self) {
+        self.search.select_next();
+    }
+
+    pub fn select_previous_search_result(&mut self) {
+        self.search.select_previous();
+    }
+
+    pub fn activate_selected_search_result(&mut self) -> bool {
+        let Some(path) = self
+            .search
+            .selected_result()
+            .map(|result| result.document_path.clone())
+        else {
+            return false;
+        };
+
+        self.select_search_result_path(path)
     }
 
     pub fn selected_collection(&self) -> Option<&Collection> {
@@ -1093,6 +1153,25 @@ mod tests {
     }
 
     #[test]
+    fn search_selection_points_to_real_document_for_inspector() {
+        let mut shell = shell_with_documents(vec![
+            document("projects/carf.md", "CARF", "project", []),
+            document("meetings/reforma-carf.md", "Reforma do CARF", "meeting", []),
+        ]);
+
+        shell.open_search();
+        shell.update_search_query(String::from("reforma"));
+        shell.refresh_search_results();
+        assert!(shell.activate_selected_search_result());
+
+        assert_eq!(shell.selected_document().unwrap().title, "Reforma do CARF");
+        assert_eq!(
+            property_value(&shell, "Title").display_value(),
+            "Reforma do CARF"
+        );
+    }
+
+    #[test]
     fn changing_selection_updates_inspector_without_stale_data() {
         let mut shell = shell_with_documents(vec![
             document(
@@ -1646,6 +1725,7 @@ mod tests {
                 modified: None,
             },
             title: title.to_owned(),
+            markdown_content: String::new(),
             properties: properties
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value))

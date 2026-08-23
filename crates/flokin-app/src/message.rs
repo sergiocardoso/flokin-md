@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{Activity, BottomTab, ExplorerNodeId, ScanResult, WorkspaceTab, WorkspaceUpdate};
+use iced::keyboard;
 
 use crate::services::file_watcher::WatcherMessage;
 
@@ -20,6 +21,15 @@ pub enum Message {
     CollectionSelected(String),
     TableHeaderSelected(String),
     MarkdownSelected(PathBuf),
+    SearchOpened,
+    SearchClosed,
+    SearchQueryChanged(String),
+    SearchDebounceElapsed(Instant),
+    SearchNext,
+    SearchPrevious,
+    SearchActivated,
+    SearchResultSelected(PathBuf),
+    KeyboardEvent(keyboard::Event),
     ThemeToggled,
     MockAction,
 }

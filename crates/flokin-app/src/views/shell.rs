@@ -1,6 +1,8 @@
 use flokin_core::{Activity, ShellModel};
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Alignment, Element, Length};
+use iced::widget::{
+    button, column, container, mouse_area, row, scrollable, stack, text, text_input,
+};
+use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
     message::Message,
@@ -9,23 +11,33 @@ use crate::{
 };
 
 pub fn view(model: &ShellModel, app_theme: AppTheme) -> Element<'_, Message> {
-    column![
+    let content = row![
+        activity_bar(model),
+        views::explorer::view(model, app_theme),
+        widgets::divider(),
+        workspace(model),
+        widgets::divider(),
+        views::inspector::view(model),
+    ]
+    .height(Length::Fill);
+
+    let shell = column![
         menu_bar(),
-        toolbar(app_theme),
-        row![
-            activity_bar(model),
-            views::explorer::view(model, app_theme),
-            widgets::divider(),
-            workspace(model),
-            widgets::divider(),
-            views::inspector::view(model),
-        ]
-        .height(Length::Fill),
+        toolbar(model, app_theme),
+        content,
         views::status_bar::view(model),
     ]
     .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    .height(Length::Fill);
+
+    if model.search.open {
+        stack![shell, search_backdrop(), search_overlay(model)]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        shell.into()
+    }
 }
 
 fn menu_bar<'a>() -> Element<'a, Message> {
@@ -61,21 +73,26 @@ fn menu_bar<'a>() -> Element<'a, Message> {
         .into()
 }
 
-fn toolbar(app_theme: AppTheme) -> Element<'static, Message> {
-    let search = row![
-        widgets::icon(theme::Icon::Search, theme::icons::TOOLBAR, false),
-        text_input("Buscar...", "")
-            .padding([4, 8])
-            .size(theme::typography::BODY)
-            .width(250)
-            .style(theme::input),
-        text("Ctrl+K")
-            .size(theme::typography::LABEL)
-            .font(theme::mono())
-            .style(theme::text_muted)
-    ]
-    .spacing(theme::spacing::SM)
-    .align_y(Alignment::Center);
+fn toolbar(model: &ShellModel, app_theme: AppTheme) -> Element<'_, Message> {
+    let input = text_input("Buscar documentos...", model.search.query.as_str())
+        .padding([4, 8])
+        .size(theme::typography::BODY)
+        .width(250)
+        .style(theme::input);
+
+    let search = mouse_area(
+        row![
+            widgets::icon(theme::Icon::Search, theme::icons::TOOLBAR, false),
+            input,
+            text("Ctrl+K")
+                .size(theme::typography::LABEL)
+                .font(theme::mono())
+                .style(theme::text_muted)
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .on_press(Message::SearchOpened);
 
     let left = row![
         widgets::toolbar_button("Abrir pasta", theme::Icon::Folder, Message::OpenFolder),
@@ -111,6 +128,151 @@ fn toolbar(app_theme: AppTheme) -> Element<'static, Message> {
         .padding([0.0, theme::spacing::LG])
         .style(theme::elevated)
         .into()
+}
+
+fn search_backdrop<'a>() -> Element<'a, Message> {
+    mouse_area(
+        container("")
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(theme::overlay_backdrop),
+    )
+    .on_press(Message::SearchClosed)
+    .into()
+}
+
+fn search_overlay(model: &ShellModel) -> Element<'_, Message> {
+    let query = model.search.query.trim();
+    let body: Element<'_, Message> = if query.is_empty() {
+        container(
+            text("Digite para buscar documentos.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        )
+        .padding(theme::spacing::MD)
+        .width(Length::Fill)
+        .into()
+    } else if model.search.results.is_empty() {
+        container(
+            text(format!("Nenhum documento encontrado para \"{query}\"."))
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        )
+        .padding(theme::spacing::MD)
+        .width(Length::Fill)
+        .into()
+    } else {
+        let mut rows = column![].spacing(0);
+        for (index, result) in model.search.results.iter().enumerate() {
+            rows = rows.push(search_result_row(
+                result,
+                model.search.selected_index == Some(index),
+            ));
+        }
+
+        scrollable(rows).height(330).width(Length::Fill).into()
+    };
+
+    let count = if model.search.is_limited() {
+        format!("{}+ resultados", model.search.results.len())
+    } else {
+        format!("{} resultados", model.search.total_matches)
+    };
+
+    let overlay_input = text_input("Buscar documentos...", model.search.query.as_str())
+        .id("search-overlay-input")
+        .on_input(Message::SearchQueryChanged)
+        .on_submit(Message::SearchActivated)
+        .padding([8, 10])
+        .size(theme::typography::BODY)
+        .width(Length::Fill)
+        .style(theme::input);
+
+    let palette = mouse_area(
+        container(
+            column![
+                row![
+                    widgets::icon(theme::Icon::Search, theme::icons::TOOLBAR, false),
+                    overlay_input,
+                ]
+                .spacing(theme::spacing::SM)
+                .align_y(Alignment::Center),
+                container("")
+                    .height(1)
+                    .width(Length::Fill)
+                    .style(theme::divider),
+                body,
+                text(count)
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::SM),
+        )
+        .width(Length::Fill)
+        .max_width(680)
+        .max_height(500)
+        .padding(theme::spacing::MD)
+        .style(theme::overlay_panel),
+    )
+    .on_press(Message::SearchOpened);
+
+    container(palette)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding([96.0, theme::spacing::LG])
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Top)
+        .into()
+}
+
+fn search_result_row<'a>(
+    result: &'a flokin_core::SearchResult,
+    selected: bool,
+) -> Element<'a, Message> {
+    let style = if selected {
+        theme::button_tree_selected
+    } else {
+        theme::button_tree
+    };
+    let row_style = if selected {
+        theme::table_row_selected
+    } else {
+        theme::table_row
+    };
+
+    let mut content = column![
+        text(result.title.as_str())
+            .size(theme::typography::BODY)
+            .style(if selected {
+                theme::text_accent
+            } else {
+                theme::text_normal
+            }),
+        text(result.relative_path.display().to_string())
+            .font(theme::mono())
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+    ]
+    .spacing(theme::spacing::XXS);
+
+    if let Some(snippet) = result.snippet.as_deref() {
+        content = content.push(
+            text(snippet)
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+        );
+    }
+
+    button(
+        container(content)
+            .padding([7.0, theme::spacing::MD])
+            .style(row_style),
+    )
+    .width(Length::Fill)
+    .padding(0)
+    .style(style)
+    .on_press(Message::SearchResultSelected(result.document_path.clone()))
+    .into()
 }
 
 fn activity_bar(model: &ShellModel) -> Element<'_, Message> {

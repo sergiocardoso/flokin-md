@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 devicons = "0.6.13"
 flokin-core = { path = "../flokin-core" }
-iced = { version = "0.14", features = ["svg"] }
+iced = { version = "0.14", features = ["advanced", "svg"] }
 notify = "8.2.0"
 rfd = "0.17"
 

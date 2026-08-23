@@ -721,6 +721,7 @@ mod tests {
                 modified: None,
             },
             title: title.to_owned(),
+            markdown_content: String::new(),
             properties: properties
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value))
