@@ -3,7 +3,7 @@ use std::{
     ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,11 +21,18 @@ pub struct Document {
     pub path: PathBuf,
     pub relative_path: PathBuf,
     pub file_name: OsString,
+    pub metadata: DocumentMetadata,
     pub title: String,
     pub properties: BTreeMap<String, PropertyValue>,
     pub document_type: Option<String>,
     pub collection_id: String,
     pub warnings: Vec<DocumentWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentMetadata {
+    pub file_size: Option<u64>,
+    pub modified: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +179,7 @@ fn parse_document(path: PathBuf, relative_path: PathBuf, file_name: OsString) ->
     let mut warnings = Vec::new();
     let mut properties = BTreeMap::new();
     let mut body = String::new();
+    let metadata = document_metadata(&path);
 
     match fs::read_to_string(&path) {
         Ok(content) => {
@@ -197,11 +205,25 @@ fn parse_document(path: PathBuf, relative_path: PathBuf, file_name: OsString) ->
         path,
         relative_path,
         file_name,
+        metadata,
         title,
         properties,
         document_type,
         collection_id,
         warnings,
+    }
+}
+
+fn document_metadata(path: &Path) -> DocumentMetadata {
+    match fs::metadata(path) {
+        Ok(metadata) => DocumentMetadata {
+            file_size: Some(metadata.len()),
+            modified: metadata.modified().ok(),
+        },
+        Err(_) => DocumentMetadata {
+            file_size: None,
+            modified: None,
+        },
     }
 }
 
@@ -827,6 +849,17 @@ mod tests {
 
         assert_eq!(document.title, "empty");
         assert!(document.properties.is_empty());
+    }
+
+    #[test]
+    fn records_filesystem_metadata_for_document() {
+        let workspace = TempWorkspace::new();
+        workspace.write("note.md", "12345");
+
+        let document = only_document(&workspace);
+
+        assert_eq!(document.metadata.file_size, Some(5));
+        assert!(document.metadata.modified.is_some());
     }
 
     fn relative_paths(result: &super::ScanResult) -> Vec<PathBuf> {

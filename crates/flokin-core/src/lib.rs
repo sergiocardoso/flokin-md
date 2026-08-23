@@ -5,12 +5,13 @@ mod table;
 
 pub use mock::mock_shell;
 pub use model::{
-    workspace_display, Activity, BottomTab, DocumentTab, ExplorerNode, ExplorerNodeId,
-    ExplorerNodeKind, FilterCount, InspectorField, ScanState, ShellModel, TagCount,
-    WorkspaceDisplay, WorkspaceTab,
+    workspace_display, Activity, BottomTab, DocumentInspector, DocumentTab, ExplorerNode,
+    ExplorerNodeId, ExplorerNodeKind, FilterCount, InspectorField, InspectorModel, InspectorValue,
+    ScanState, ShellModel, WorkspaceDisplay, WorkspaceTab,
 };
 pub use scanner::{
-    scan_workspace, Collection, Document, DocumentWarning, PropertyValue, ScanError, ScanResult,
+    scan_workspace, Collection, Document, DocumentMetadata, DocumentWarning, PropertyValue,
+    ScanError, ScanResult,
 };
 pub use table::{
     SortDirection, TableCell, TableColumn, TableModel, TableRow, TableSort, TableValueType,

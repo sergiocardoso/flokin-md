@@ -38,6 +38,10 @@ The core owns this pipeline. It resolves document titles from `frontmatter.title
 
 MDB-005 adds a read-only `TableModel` projection in `flokin-core`. It derives deterministic columns and typed cells from in-memory `Document` values for a selected Collection, keeps `Title` as the first column, skips redundant internal properties such as `title` and `type`, infers predominant column types, and applies basic typed sorting without depending on Iced or any database cache.
 
+## Document Inspector Projection
+
+MDB-006 adds a read-only `DocumentInspector` projection in `flokin-core`. The GUI stores only the selected Markdown document path as the document selection identity and resolves the current `Document` from in-memory scan results. The Inspector projection renders real title, typed frontmatter properties, tags, parser warnings, and lightweight filesystem metadata without coupling the core crate to Iced.
+
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.

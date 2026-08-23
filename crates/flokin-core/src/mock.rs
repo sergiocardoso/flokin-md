@@ -1,6 +1,5 @@
 use crate::model::{
-    Activity, BottomTab, DocumentTab, FilterCount, InspectorField, ScanState, ShellModel, TagCount,
-    WorkspaceTab,
+    Activity, BottomTab, DocumentTab, FilterCount, ScanState, ShellModel, WorkspaceTab,
 };
 
 pub fn mock_shell() -> ShellModel {
@@ -11,7 +10,7 @@ pub fn mock_shell() -> ShellModel {
         documents: Vec::new(),
         collections: Vec::new(),
         scan_state: ScanState::Idle,
-        selected_markdown: None,
+        selected_document_path: None,
         selected_collection: None,
         collection_table_sort: None,
         filters: vec![
@@ -42,74 +41,6 @@ pub fn mock_shell() -> ShellModel {
             selected: WorkspaceTab::Carf,
             content: CARF_MARKDOWN,
         },
-        inspector: vec![
-            InspectorField {
-                label: "Status",
-                value: "Ativo",
-            },
-            InspectorField {
-                label: "Tipo",
-                value: "Documento",
-            },
-            InspectorField {
-                label: "Owner",
-                value: "Sergio",
-            },
-            InspectorField {
-                label: "Projeto",
-                value: "Projects",
-            },
-            InspectorField {
-                label: "Tags",
-                value: "fiscal, governo",
-            },
-            InspectorField {
-                label: "Criado em",
-                value: "20/05/2024 10:15",
-            },
-            InspectorField {
-                label: "Atualizado em",
-                value: "31/05/2024 14:22",
-            },
-            InspectorField {
-                label: "Fonte",
-                value: "Manual",
-            },
-            InspectorField {
-                label: "Anexos",
-                value: "3 arquivos",
-            },
-            InspectorField {
-                label: "Palavras",
-                value: "512",
-            },
-            InspectorField {
-                label: "Caracteres",
-                value: "3.842",
-            },
-        ],
-        tags: vec![
-            TagCount {
-                label: "fiscal",
-                count: 24,
-            },
-            TagCount {
-                label: "governo",
-                count: 18,
-            },
-            TagCount {
-                label: "tributario",
-                count: 12,
-            },
-            TagCount {
-                label: "brasil",
-                count: 9,
-            },
-            TagCount {
-                label: "receita-federal",
-                count: 7,
-            },
-        ],
     }
 }
 

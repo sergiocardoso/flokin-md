@@ -1,6 +1,9 @@
-use std::path::{Path, PathBuf, MAIN_SEPARATOR};
+use std::{
+    path::{Path, PathBuf, MAIN_SEPARATOR},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use crate::{Collection, Document, ScanResult, SortDirection, TableSort};
+use crate::{Collection, Document, PropertyValue, ScanResult, SortDirection, TableSort};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
@@ -173,14 +176,46 @@ pub struct DocumentTab {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorField {
-    pub label: &'static str,
-    pub value: &'static str,
+    pub label: String,
+    pub value: InspectorValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TagCount {
-    pub label: &'static str,
-    pub count: u16,
+pub enum InspectorValue {
+    Text(String),
+    Number(String),
+    Bool(bool),
+    Empty,
+    Array(Vec<String>),
+    Object,
+}
+
+impl InspectorValue {
+    pub fn display_value(&self) -> String {
+        match self {
+            Self::Text(value) | Self::Number(value) => value.clone(),
+            Self::Bool(true) => String::from("✓"),
+            Self::Bool(false) => String::from("✕"),
+            Self::Empty => String::from("—"),
+            Self::Array(values) if values.is_empty() => String::from("—"),
+            Self::Array(values) => values.join(", "),
+            Self::Object => String::from("{...}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentInspector {
+    pub properties: Vec<InspectorField>,
+    pub metadata: Vec<InspectorField>,
+    pub tags: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectorModel {
+    Empty { title: String, description: String },
+    Document(DocumentInspector),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,15 +226,13 @@ pub struct ShellModel {
     pub documents: Vec<Document>,
     pub collections: Vec<Collection>,
     pub scan_state: ScanState,
-    pub selected_markdown: Option<PathBuf>,
+    pub selected_document_path: Option<PathBuf>,
     pub selected_collection: Option<String>,
     pub collection_table_sort: Option<TableSort>,
     pub filters: Vec<FilterCount>,
     pub selected_tab: WorkspaceTab,
     pub bottom_tab: BottomTab,
     pub document: DocumentTab,
-    pub inspector: Vec<InspectorField>,
-    pub tags: Vec<TagCount>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,7 +256,7 @@ impl ShellModel {
             self.explorer.clear();
             self.documents.clear();
             self.collections.clear();
-            self.selected_markdown = None;
+            self.selected_document_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.scan_state = ScanState::Scanning;
@@ -261,7 +294,7 @@ impl ShellModel {
             .cloned();
 
         if let Some(path) = selected {
-            self.selected_markdown = Some(path);
+            self.selected_document_path = Some(path);
             self.selected_collection = None;
             self.collection_table_sort = None;
             true
@@ -272,7 +305,7 @@ impl ShellModel {
 
     pub fn select_markdown_path(&mut self, path: PathBuf) {
         if self.documents.iter().any(|document| document.path == path) {
-            self.selected_markdown = Some(path);
+            self.selected_document_path = Some(path);
         }
     }
 
@@ -283,7 +316,7 @@ impl ShellModel {
             .any(|collection| collection.id == collection_id)
         {
             self.selected_collection = Some(collection_id);
-            self.selected_markdown = None;
+            self.selected_document_path = None;
             self.collection_table_sort = None;
         }
     }
@@ -326,7 +359,7 @@ impl ShellModel {
         self.explorer.clear();
         self.documents.clear();
         self.collections.clear();
-        self.selected_markdown = None;
+        self.selected_document_path = None;
         self.selected_collection = None;
         self.collection_table_sort = None;
         self.scan_state = ScanState::Failed(message);
@@ -347,10 +380,40 @@ impl ShellModel {
     }
 
     pub fn selected_document(&self) -> Option<&Document> {
-        let path = self.selected_markdown.as_ref()?;
+        let path = self.selected_document_path.as_ref()?;
         self.documents
             .iter()
             .find(|document| &document.path == path)
+    }
+
+    pub fn document_inspector(&self) -> InspectorModel {
+        let Some(document) = self.selected_document() else {
+            return InspectorModel::Empty {
+                title: String::from("Nenhum documento selecionado."),
+                description: String::from(
+                    "Selecione um documento ou registro para ver suas propriedades.",
+                ),
+            };
+        };
+
+        InspectorModel::Document(DocumentInspector {
+            properties: inspector_properties(document),
+            metadata: inspector_metadata(document, self.collection_display_name(document)),
+            tags: inspector_tags(document),
+            warnings: document
+                .warnings
+                .iter()
+                .map(|warning| user_warning_message(warning.message.as_str()))
+                .collect(),
+        })
+    }
+
+    fn collection_display_name(&self, document: &Document) -> String {
+        self.collections
+            .iter()
+            .find(|collection| collection.id == document.collection_id)
+            .map(|collection| collection.display_name.clone())
+            .unwrap_or_else(|| document.collection_id.clone())
     }
 }
 
@@ -446,6 +509,151 @@ fn compare_paths(left: &Path, right: &Path) -> std::cmp::Ordering {
         .cmp(&right.to_string_lossy().to_lowercase())
 }
 
+fn inspector_properties(document: &Document) -> Vec<InspectorField> {
+    let mut properties = vec![InspectorField {
+        label: String::from("Title"),
+        value: InspectorValue::Text(document.title.clone()),
+    }];
+
+    properties.extend(document.properties.iter().filter_map(|(key, value)| {
+        if is_special_property(key) {
+            None
+        } else {
+            Some(InspectorField {
+                label: key.clone(),
+                value: inspector_value(value),
+            })
+        }
+    }));
+
+    properties
+}
+
+fn inspector_metadata(document: &Document, collection_display_name: String) -> Vec<InspectorField> {
+    vec![
+        InspectorField {
+            label: String::from("Arquivo"),
+            value: InspectorValue::Text(document.file_name.to_string_lossy().into_owned()),
+        },
+        InspectorField {
+            label: String::from("Caminho"),
+            value: InspectorValue::Text(document.relative_path.display().to_string()),
+        },
+        InspectorField {
+            label: String::from("Tipo"),
+            value: document
+                .document_type
+                .as_ref()
+                .map(|value| InspectorValue::Text(value.clone()))
+                .unwrap_or(InspectorValue::Empty),
+        },
+        InspectorField {
+            label: String::from("Collection"),
+            value: InspectorValue::Text(collection_display_name),
+        },
+        InspectorField {
+            label: String::from("Tamanho"),
+            value: document
+                .metadata
+                .file_size
+                .map(format_file_size)
+                .map(InspectorValue::Text)
+                .unwrap_or(InspectorValue::Empty),
+        },
+        InspectorField {
+            label: String::from("Modificado"),
+            value: document
+                .metadata
+                .modified
+                .map(format_system_time)
+                .map(InspectorValue::Text)
+                .unwrap_or(InspectorValue::Empty),
+        },
+    ]
+}
+
+fn inspector_tags(document: &Document) -> Vec<String> {
+    match document.properties.get("tags") {
+        Some(PropertyValue::Array(values)) => values
+            .iter()
+            .map(compact_property_value)
+            .filter(|value| !value.trim().is_empty() && value != "—")
+            .collect(),
+        Some(value) => {
+            let value = compact_property_value(value);
+            if value.trim().is_empty() || value == "—" {
+                Vec::new()
+            } else {
+                vec![value]
+            }
+        }
+        None => Vec::new(),
+    }
+}
+
+fn inspector_value(value: &PropertyValue) -> InspectorValue {
+    match value {
+        PropertyValue::Null => InspectorValue::Empty,
+        PropertyValue::Bool(value) => InspectorValue::Bool(*value),
+        PropertyValue::Number(value) => InspectorValue::Number(value.clone()),
+        PropertyValue::String(value) => InspectorValue::Text(value.clone()),
+        PropertyValue::Array(values) => {
+            InspectorValue::Array(values.iter().map(compact_property_value).collect())
+        }
+        PropertyValue::Object(_) => InspectorValue::Object,
+    }
+}
+
+fn compact_property_value(value: &PropertyValue) -> String {
+    match value {
+        PropertyValue::Null => String::from("—"),
+        PropertyValue::Bool(true) => String::from("✓"),
+        PropertyValue::Bool(false) => String::from("✕"),
+        PropertyValue::Number(value) | PropertyValue::String(value) => value.clone(),
+        PropertyValue::Array(values) => {
+            let values = values
+                .iter()
+                .map(compact_property_value)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{values}]")
+        }
+        PropertyValue::Object(_) => String::from("{...}"),
+    }
+}
+
+fn is_special_property(key: &str) -> bool {
+    matches!(key, "title" | "type" | "tags")
+}
+
+fn format_file_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_system_time(time: SystemTime) -> String {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => format!("{}s desde UNIX epoch", duration.as_secs()),
+        Err(_) => String::from("—"),
+    }
+}
+
+fn user_warning_message(message: &str) -> String {
+    if message.to_lowercase().contains("yaml") {
+        String::from("Frontmatter inválido.")
+    } else {
+        message.to_owned()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceDisplay {
     pub name: String,
@@ -499,12 +707,16 @@ fn home_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mock_shell;
+    use crate::{
+        mock_shell, Collection, Document, DocumentMetadata, DocumentWarning, PropertyValue,
+        ScanResult, TableModel,
+    };
 
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, time::Duration};
 
     use super::{
-        workspace_display, BottomTab, ExplorerNode, ExplorerNodeId, ScanState, WorkspaceTab,
+        workspace_display, BottomTab, ExplorerNode, ExplorerNodeId, InspectorModel, InspectorValue,
+        ScanState, WorkspaceTab,
     };
 
     #[test]
@@ -594,5 +806,383 @@ mod tests {
         let mut shell = mock_shell();
 
         assert!(!shell.toggle_explorer_node(ExplorerNodeId(999)));
+    }
+
+    #[test]
+    fn table_row_selection_selects_document_for_inspector() {
+        let mut shell = shell_with_documents(vec![
+            document(
+                "projects/task-42.md",
+                "Task 42",
+                "project",
+                [("priority", number("42"))],
+            ),
+            document(
+                "projects/task-43.md",
+                "Task 43",
+                "project",
+                [("priority", number("43"))],
+            ),
+        ]);
+        shell.select_collection(String::from("project"));
+        let table = TableModel::collection("project", &shell.documents, None);
+
+        shell.select_markdown_path(table.rows[0].document_path.clone());
+
+        assert_eq!(shell.selected_document().unwrap().title, "Task 42");
+        assert_eq!(property_value(&shell, "Title").display_value(), "Task 42");
+    }
+
+    #[test]
+    fn path_selection_selects_document_for_inspector() {
+        let mut shell = shell_with_documents(vec![document(
+            "people/sergio.md",
+            "Sérgio",
+            "person",
+            [("active", bool_value(true))],
+        )]);
+        let path = shell.documents[0].path.clone();
+
+        shell.select_markdown_path(path);
+
+        assert_eq!(property_value(&shell, "Title").display_value(), "Sérgio");
+    }
+
+    #[test]
+    fn changing_selection_updates_inspector_without_stale_data() {
+        let mut shell = shell_with_documents(vec![
+            document(
+                "projects/task-42.md",
+                "Task 42",
+                "project",
+                [("priority", number("42"))],
+            ),
+            document(
+                "projects/task-43.md",
+                "Task 43",
+                "project",
+                [("priority", number("43"))],
+            ),
+        ]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+        assert_eq!(property_value(&shell, "priority").display_value(), "42");
+
+        shell.select_markdown_path(shell.documents[1].path.clone());
+        assert_eq!(property_value(&shell, "priority").display_value(), "43");
+    }
+
+    #[test]
+    fn workspace_change_clears_document_selection() {
+        let mut shell = shell_with_documents(vec![document("task.md", "Task", "project", [])]);
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        shell.workspace_selected(Some(PathBuf::from("/tmp/another-workspace")));
+
+        assert!(shell.selected_document().is_none());
+        assert!(matches!(
+            shell.document_inspector(),
+            InspectorModel::Empty { .. }
+        ));
+    }
+
+    #[test]
+    fn collection_change_clears_document_selection() {
+        let mut shell = shell_with_documents(vec![
+            document("projects/task.md", "Task", "project", []),
+            document("people/sergio.md", "Sérgio", "person", []),
+        ]);
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        shell.select_collection(String::from("person"));
+
+        assert!(shell.selected_document().is_none());
+        assert!(matches!(
+            shell.document_inspector(),
+            InspectorModel::Empty { .. }
+        ));
+    }
+
+    #[test]
+    fn frontmatter_properties_reach_inspector_model() {
+        let mut shell = shell_with_documents(vec![document(
+            "projects/carf.md",
+            "CARF via Frontmatter",
+            "project",
+            [("owner", string("Sergio"))],
+        )]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        assert_eq!(
+            property_value(&shell, "Title").display_value(),
+            "CARF via Frontmatter"
+        );
+        assert_eq!(property_value(&shell, "owner").display_value(), "Sergio");
+        assert!(property(&shell, "title").is_none());
+    }
+
+    #[test]
+    fn inspector_preserves_string_number_bool_array_and_null_values() {
+        let mut shell = shell_with_documents(vec![document(
+            "projects/types.md",
+            "Types",
+            "project",
+            [
+                ("name", string("Sergio")),
+                ("score", number("42")),
+                ("active", bool_value(true)),
+                ("done", bool_value(false)),
+                (
+                    "skills",
+                    PropertyValue::Array(vec![string("rust"), string("jota")]),
+                ),
+                ("empty", PropertyValue::Null),
+            ],
+        )]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        assert_eq!(
+            property_value(&shell, "name"),
+            InspectorValue::Text(String::from("Sergio"))
+        );
+        assert_eq!(
+            property_value(&shell, "score"),
+            InspectorValue::Number(String::from("42"))
+        );
+        assert_eq!(property_value(&shell, "active"), InspectorValue::Bool(true));
+        assert_eq!(property_value(&shell, "done"), InspectorValue::Bool(false));
+        assert_eq!(
+            property_value(&shell, "skills"),
+            InspectorValue::Array(vec![String::from("rust"), String::from("jota")])
+        );
+        assert_eq!(property_value(&shell, "empty"), InspectorValue::Empty);
+    }
+
+    #[test]
+    fn inspector_renders_real_tags_without_global_mock_counts() {
+        let mut shell = shell_with_documents(vec![document(
+            "projects/tags.md",
+            "Tags",
+            "project",
+            [(
+                "tags",
+                PropertyValue::Array(vec![string("rust"), string("jota")]),
+            )],
+        )]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        let InspectorModel::Document(inspector) = shell.document_inspector() else {
+            panic!("expected selected document inspector");
+        };
+        assert_eq!(inspector.tags, vec!["rust", "jota"]);
+        assert!(inspector
+            .properties
+            .iter()
+            .all(|field| field.label != "tags"));
+    }
+
+    #[test]
+    fn inspector_metadata_includes_filename_relative_path_and_file_size() {
+        let mut shell = shell_with_documents(vec![document_with_metadata(
+            "tasks/task-42.md",
+            "Task 42",
+            "project",
+            [],
+            Some(42),
+        )]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        assert_eq!(
+            metadata_value(&shell, "Arquivo").display_value(),
+            "task-42.md"
+        );
+        assert_eq!(
+            metadata_value(&shell, "Caminho").display_value(),
+            "tasks/task-42.md"
+        );
+        assert_eq!(metadata_value(&shell, "Tamanho").display_value(), "42 B");
+    }
+
+    #[test]
+    fn inspector_warns_about_invalid_yaml_without_debug_text() {
+        let mut document = document("broken.md", "Broken Frontmatter", "documents", []);
+        document.warnings.push(DocumentWarning {
+            path: document.path.clone(),
+            message: String::from("YAML frontmatter inválido: parser details"),
+        });
+        let mut shell = shell_with_documents(vec![document]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        let InspectorModel::Document(inspector) = shell.document_inspector() else {
+            panic!("expected selected document inspector");
+        };
+        assert_eq!(inspector.warnings, vec!["Frontmatter inválido."]);
+    }
+
+    #[test]
+    fn document_without_frontmatter_still_has_title_and_metadata() {
+        let mut shell = shell_with_documents(vec![document("empty.md", "empty", "documents", [])]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        assert_eq!(property_value(&shell, "Title").display_value(), "empty");
+        assert_eq!(metadata_value(&shell, "Tipo"), InspectorValue::Empty);
+    }
+
+    #[test]
+    fn inspector_supports_unicode_values() {
+        let mut shell = shell_with_documents(vec![document(
+            "ações/visão.md",
+            "Visão Geral",
+            "documents",
+            [("responsável", string("Sérgio"))],
+        )]);
+
+        shell.select_markdown_path(shell.documents[0].path.clone());
+
+        assert_eq!(
+            property_value(&shell, "Title").display_value(),
+            "Visão Geral"
+        );
+        assert_eq!(
+            property_value(&shell, "responsável").display_value(),
+            "Sérgio"
+        );
+        assert_eq!(
+            metadata_value(&shell, "Caminho").display_value(),
+            "ações/visão.md"
+        );
+    }
+
+    #[test]
+    fn empty_selection_returns_empty_inspector_state() {
+        let shell = shell_with_documents(vec![document("task.md", "Task", "project", [])]);
+
+        assert_eq!(
+            shell.document_inspector(),
+            InspectorModel::Empty {
+                title: String::from("Nenhum documento selecionado."),
+                description: String::from(
+                    "Selecione um documento ou registro para ver suas propriedades."
+                ),
+            }
+        );
+    }
+
+    fn shell_with_documents(documents: Vec<Document>) -> super::ShellModel {
+        let mut shell = mock_shell();
+        let mut counts = BTreeMap::<String, usize>::new();
+        for document in &documents {
+            *counts.entry(document.collection_id.clone()).or_default() += 1;
+        }
+
+        let collections = counts
+            .into_iter()
+            .map(|(id, document_count)| Collection {
+                display_name: match id.as_str() {
+                    "project" => String::from("Projects"),
+                    "person" => String::from("People"),
+                    _ => String::from("Documents"),
+                },
+                id,
+                document_count,
+            })
+            .collect::<Vec<_>>();
+
+        shell.scan_completed(ScanResult {
+            root: PathBuf::from("/workspace"),
+            documents,
+            collections,
+            directories: Vec::new(),
+            errors: Vec::new(),
+            duration: Duration::from_secs(0),
+        });
+        shell
+    }
+
+    fn document<const N: usize>(
+        relative_path: &str,
+        title: &str,
+        collection_id: &str,
+        properties: [(&str, PropertyValue); N],
+    ) -> Document {
+        document_with_metadata(relative_path, title, collection_id, properties, None)
+    }
+
+    fn document_with_metadata<const N: usize>(
+        relative_path: &str,
+        title: &str,
+        collection_id: &str,
+        properties: [(&str, PropertyValue); N],
+        file_size: Option<u64>,
+    ) -> Document {
+        let relative_path = PathBuf::from(relative_path);
+        let path = PathBuf::from("/workspace").join(&relative_path);
+        Document {
+            path,
+            relative_path: relative_path.clone(),
+            file_name: relative_path
+                .file_name()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| OsString::from("document.md")),
+            metadata: DocumentMetadata {
+                file_size,
+                modified: None,
+            },
+            title: title.to_owned(),
+            properties: properties
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+            document_type: match collection_id {
+                "documents" => None,
+                value => Some(value.to_owned()),
+            },
+            collection_id: collection_id.to_owned(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn property(shell: &super::ShellModel, label: &str) -> Option<super::InspectorField> {
+        let InspectorModel::Document(inspector) = shell.document_inspector() else {
+            return None;
+        };
+        inspector
+            .properties
+            .into_iter()
+            .find(|field| field.label == label)
+    }
+
+    fn property_value(shell: &super::ShellModel, label: &str) -> InspectorValue {
+        property(shell, label).unwrap().value
+    }
+
+    fn metadata_value(shell: &super::ShellModel, label: &str) -> InspectorValue {
+        let InspectorModel::Document(inspector) = shell.document_inspector() else {
+            panic!("expected selected document inspector");
+        };
+        inspector
+            .metadata
+            .into_iter()
+            .find(|field| field.label == label)
+            .unwrap()
+            .value
+    }
+
+    fn string(value: &str) -> PropertyValue {
+        PropertyValue::String(value.to_owned())
+    }
+
+    fn number(value: &str) -> PropertyValue {
+        PropertyValue::Number(value.to_owned())
+    }
+
+    fn bool_value(value: bool) -> PropertyValue {
+        PropertyValue::Bool(value)
     }
 }

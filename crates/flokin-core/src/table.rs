@@ -716,6 +716,10 @@ mod tests {
                 .file_name()
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| OsString::from("document.md")),
+            metadata: crate::DocumentMetadata {
+                file_size: None,
+                modified: None,
+            },
             title: title.to_owned(),
             properties: properties
                 .into_iter()

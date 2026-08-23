@@ -68,7 +68,7 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
                 tree = tree.push(tree_node(
                     node,
                     0,
-                    model.selected_markdown.as_ref(),
+                    model.selected_document_path.as_ref(),
                     app_theme,
                 ));
             }
@@ -121,10 +121,10 @@ fn scan_summary(documents: usize, errors: usize, warnings: usize) -> Element<'st
 fn tree_node<'a>(
     node: &'a ExplorerNode,
     depth: usize,
-    selected_markdown: Option<&std::path::PathBuf>,
+    selected_document_path: Option<&std::path::PathBuf>,
     app_theme: AppTheme,
 ) -> Element<'a, Message> {
-    let selected = selected_markdown
+    let selected = selected_document_path
         .map(|selected| selected == &node.path)
         .unwrap_or(false);
     let style = if selected {
@@ -172,7 +172,12 @@ fn tree_node<'a>(
     let mut children = column![item].spacing(theme::spacing::XXS);
     if node.expanded {
         for child in &node.children {
-            children = children.push(tree_node(child, depth + 1, selected_markdown, app_theme));
+            children = children.push(tree_node(
+                child,
+                depth + 1,
+                selected_document_path,
+                app_theme,
+            ));
         }
     }
 

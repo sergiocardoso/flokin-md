@@ -145,7 +145,7 @@ fn table_view<'a>(model: &'a ShellModel, table: TableModel) -> Element<'a, Messa
     let mut rows = column![table_header(&table.columns, model, width)].spacing(0);
 
     for row_model in table.rows {
-        let selected = model.selected_markdown.as_ref() == Some(&row_model.document_path);
+        let selected = model.selected_document_path.as_ref() == Some(&row_model.document_path);
         let mut cells = row![].spacing(0).align_y(Alignment::Center);
 
         for (column, cell) in table.columns.iter().zip(row_model.cells) {

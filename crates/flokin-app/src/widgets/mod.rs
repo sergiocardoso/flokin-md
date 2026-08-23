@@ -88,25 +88,6 @@ pub fn divider<'a>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn field_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
-    container(
-        row![
-            text(label)
-                .size(theme::typography::BODY)
-                .style(theme::text_muted)
-                .width(94),
-            text(value)
-                .size(theme::typography::BODY)
-                .style(theme::text_normal)
-                .width(Length::Fill)
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
-    )
-    .padding([3.0, 0.0])
-    .into()
-}
-
 pub fn icon(icon: Icon, size: f32, accent: bool) -> Element<'static, Message> {
     let body = theme::icon_svg(icon)
         .trim_start_matches(r#"<svg viewBox="0 0 24 24">"#)
@@ -127,15 +108,4 @@ pub fn icon(icon: Icon, size: f32, accent: bool) -> Element<'static, Message> {
         .height(size)
         .style(style)
         .into()
-}
-
-pub fn chip<'a>(label: &'a str) -> Element<'a, Message> {
-    container(
-        text(label)
-            .size(theme::typography::LABEL)
-            .style(theme::text_accent),
-    )
-    .padding([3.0, 8.0])
-    .style(theme::chip)
-    .into()
 }
