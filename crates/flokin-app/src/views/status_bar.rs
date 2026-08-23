@@ -15,6 +15,19 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     match &model.scan_state {
         ScanState::Idle => {}
         ScanState::Scanning => status_items.push(String::from("Analisando documentos...")),
+        ScanState::Updating {
+            documents,
+            collections,
+            warnings,
+            ..
+        } => {
+            status_items.push(String::from("Atualizando..."));
+            status_items.push(format!("{documents} documentos"));
+            status_items.push(format!("{collections} collections"));
+            if *warnings > 0 {
+                status_items.push(format!("{warnings} warnings"));
+            }
+        }
         ScanState::Completed {
             documents,
             collections,
@@ -30,6 +43,10 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
         ScanState::Failed(_) => status_items.push(String::from("Falha ao analisar workspace")),
     }
 
+    if workspace.is_open && !matches!(model.scan_state, ScanState::Scanning | ScanState::Failed(_))
+    {
+        status_items.push(String::from("Workspace monitorado"));
+    }
     status_items.push(String::from("Markdown"));
 
     let mut row = row![]
@@ -39,6 +56,7 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
 
     for item in status_items {
         let style = if item == "Analisando documentos..."
+            || item == "Atualizando..."
             || item == "Falha ao analisar workspace"
             || item.ends_with("warnings")
         {

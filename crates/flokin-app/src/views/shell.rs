@@ -79,7 +79,7 @@ fn toolbar(app_theme: AppTheme) -> Element<'static, Message> {
 
     let left = row![
         widgets::toolbar_button("Abrir pasta", theme::Icon::Folder, Message::OpenFolder),
-        widgets::toolbar_button("Reindexar", theme::Icon::Refresh, Message::MockAction),
+        widgets::toolbar_button("Reindexar", theme::Icon::Refresh, Message::ReindexWorkspace),
         widgets::toolbar_button("Novo", theme::Icon::Plus, Message::MockAction),
         container("").width(1).height(22).style(theme::divider),
         search

@@ -54,6 +54,12 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
             errors,
             warnings,
             ..
+        }
+        | ScanState::Updating {
+            documents,
+            errors,
+            warnings,
+            ..
         } => {
             if *documents == 0 {
                 return scan_message("Nenhum arquivo Markdown encontrado.");

@@ -42,6 +42,21 @@ MDB-005 adds a read-only `TableModel` projection in `flokin-core`. It derives de
 
 MDB-006 adds a read-only `DocumentInspector` projection in `flokin-core`. The GUI stores only the selected Markdown document path as the document selection identity and resolves the current `Document` from in-memory scan results. The Inspector projection renders real title, typed frontmatter properties, tags, parser warnings, and lightweight filesystem metadata without coupling the core crate to Iced.
 
+## File Watcher
+
+MDB-007 adds a read-only filesystem watcher in `flokin-app` using `notify`. The app watches the current workspace recursively, debounces noisy native filesystem events, and translates backend-specific events into core-owned `WorkspaceEvent` values:
+
+```text
+notify event
+WorkspaceEvent
+workspace update
+Document
+Collection
+TableModel / Inspector / Explorer
+```
+
+The core crate does not depend on `notify` or Iced. It owns the shared Markdown/ignore policy and applies incremental workspace updates by reparsing changed Markdown files, removing missing paths, rebuilding collections, and refreshing explorer projections from in-memory documents. Full workspace scan remains available as a manual fallback for ambiguous directory-level changes.
+
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.

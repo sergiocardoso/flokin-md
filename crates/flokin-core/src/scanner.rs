@@ -73,6 +73,24 @@ pub struct ScanError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceEvent {
+    Upsert(PathBuf),
+    Remove(PathBuf),
+    Rename { from: PathBuf, to: PathBuf },
+    Rescan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceUpdate {
+    pub root: PathBuf,
+    pub upserts: Vec<Document>,
+    pub removals: Vec<PathBuf>,
+    pub errors: Vec<ScanError>,
+    pub duration: Duration,
+    pub needs_rescan: bool,
+}
+
 pub fn scan_workspace(root: &Path) -> io::Result<ScanResult> {
     let started_at = Instant::now();
     let root = root.to_path_buf();
@@ -100,6 +118,101 @@ pub fn scan_workspace(root: &Path) -> io::Result<ScanResult> {
         errors,
         duration: started_at.elapsed(),
     })
+}
+
+pub fn workspace_update_from_events(
+    root: &Path,
+    events: &[WorkspaceEvent],
+) -> io::Result<WorkspaceUpdate> {
+    let started_at = Instant::now();
+    let mut upsert_paths = BTreeSet::<PathBuf>::new();
+    let mut removals = BTreeSet::<PathBuf>::new();
+    let mut errors = Vec::new();
+    let mut needs_rescan = false;
+
+    for event in events {
+        match event {
+            WorkspaceEvent::Upsert(path) => {
+                if is_workspace_markdown_path(root, path) {
+                    upsert_paths.insert(path.clone());
+                } else if should_rescan_path(root, path) {
+                    needs_rescan = true;
+                }
+            }
+            WorkspaceEvent::Remove(path) => {
+                if is_workspace_markdown_path(root, path) {
+                    removals.insert(path.clone());
+                } else if should_rescan_path(root, path) {
+                    needs_rescan = true;
+                }
+            }
+            WorkspaceEvent::Rename { from, to } => {
+                if is_workspace_markdown_path(root, from) {
+                    removals.insert(from.clone());
+                } else if should_rescan_path(root, from) {
+                    needs_rescan = true;
+                }
+
+                if is_workspace_markdown_path(root, to) {
+                    upsert_paths.insert(to.clone());
+                } else if should_rescan_path(root, to) {
+                    needs_rescan = true;
+                }
+            }
+            WorkspaceEvent::Rescan => needs_rescan = true,
+        }
+    }
+
+    let mut upserts = Vec::new();
+    for path in upsert_paths {
+        if !path.exists() {
+            removals.insert(path);
+            continue;
+        }
+
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => continue,
+            Ok(metadata) if metadata.is_file() => {
+                let relative_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                let file_name = path
+                    .file_name()
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| OsString::from("document.md"));
+                upserts.push(parse_document(path, relative_path, file_name));
+            }
+            Ok(metadata) if metadata.is_dir() => needs_rescan = true,
+            Ok(_) => {}
+            Err(error) => errors.push(ScanError {
+                path,
+                message: error.to_string(),
+            }),
+        }
+    }
+
+    upserts.sort_by(|left, right| compare_paths(&left.relative_path, &right.relative_path));
+
+    Ok(WorkspaceUpdate {
+        root: root.to_path_buf(),
+        upserts,
+        removals: removals.into_iter().collect(),
+        errors,
+        duration: started_at.elapsed(),
+        needs_rescan,
+    })
+}
+
+pub fn is_workspace_markdown_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .filter(|relative_path| !has_ignored_component(relative_path))
+        .map(is_markdown_path)
+        .unwrap_or(false)
+}
+
+pub fn should_ignore_workspace_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .map(has_ignored_component)
+        .unwrap_or(true)
 }
 
 fn scan_dir(
@@ -432,13 +545,28 @@ fn should_ignore_dir(name: &OsString) -> bool {
     )
 }
 
-fn is_markdown_path(path: &Path) -> bool {
+pub fn is_markdown_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| {
             extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
         })
         .unwrap_or(false)
+}
+
+fn should_rescan_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .filter(|relative_path| !has_ignored_component(relative_path))
+        .map(|relative_path| relative_path.extension().is_none())
+        .unwrap_or(false)
+}
+
+fn has_ignored_component(path: &Path) -> bool {
+    path.components().any(|component| match component {
+        std::path::Component::Normal(name) => should_ignore_dir(&name.to_os_string()),
+        _ => false,
+    })
 }
 
 fn compare_paths(left: &Path, right: &Path) -> std::cmp::Ordering {

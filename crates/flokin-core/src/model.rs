@@ -1,9 +1,13 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf, MAIN_SEPARATOR},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::{Collection, Document, PropertyValue, ScanResult, SortDirection, TableSort};
+use crate::{
+    Collection, Document, PropertyValue, ScanError, ScanResult, SortDirection, TableSort,
+    WorkspaceUpdate,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
@@ -239,6 +243,13 @@ pub struct ShellModel {
 pub enum ScanState {
     Idle,
     Scanning,
+    Updating {
+        documents: usize,
+        directories: usize,
+        collections: usize,
+        errors: usize,
+        warnings: usize,
+    },
     Completed {
         documents: usize,
         directories: usize,
@@ -338,9 +349,30 @@ impl ShellModel {
     }
 
     pub fn scan_completed(&mut self, result: ScanResult) {
+        let expanded_paths = expanded_folder_paths(&self.explorer);
         self.explorer = explorer_from_scan_result(&result);
+        restore_expanded_folder_paths(&mut self.explorer, &expanded_paths);
         self.documents = result.documents;
         self.collections = result.collections;
+        if let Some(selected_document_path) = self.selected_document_path.as_ref() {
+            if !self
+                .documents
+                .iter()
+                .any(|document| &document.path == selected_document_path)
+            {
+                self.selected_document_path = None;
+            }
+        }
+        if let Some(selected_collection) = self.selected_collection.as_ref() {
+            if !self
+                .collections
+                .iter()
+                .any(|collection| &collection.id == selected_collection)
+            {
+                self.selected_collection = None;
+                self.collection_table_sort = None;
+            }
+        }
         let warnings = self
             .documents
             .iter()
@@ -353,6 +385,114 @@ impl ShellModel {
             errors: result.errors.len(),
             warnings,
         };
+    }
+
+    pub fn workspace_update_started(&mut self) {
+        if let ScanState::Completed {
+            documents,
+            directories,
+            collections,
+            errors,
+            warnings,
+        }
+        | ScanState::Updating {
+            documents,
+            directories,
+            collections,
+            errors,
+            warnings,
+        } = self.scan_state
+        {
+            self.scan_state = ScanState::Updating {
+                documents,
+                directories,
+                collections,
+                errors,
+                warnings,
+            };
+        }
+    }
+
+    pub fn workspace_update_completed(&mut self, update: WorkspaceUpdate) {
+        if update.needs_rescan {
+            self.scan_state = ScanState::Scanning;
+            return;
+        }
+
+        for path in update.removals {
+            self.documents.retain(|document| document.path != path);
+            if self.selected_document_path.as_ref() == Some(&path) {
+                self.selected_document_path = None;
+            }
+        }
+
+        for document in update.upserts {
+            if let Some(existing) = self
+                .documents
+                .iter_mut()
+                .find(|existing| existing.path == document.path)
+            {
+                *existing = document;
+            } else {
+                self.documents.push(document);
+            }
+        }
+
+        self.documents
+            .sort_by(|left, right| compare_paths(&left.relative_path, &right.relative_path));
+        self.collections = collections_from_documents(&self.documents);
+
+        if let Some(selected_collection) = self.selected_collection.as_ref() {
+            if !self
+                .collections
+                .iter()
+                .any(|collection| &collection.id == selected_collection)
+            {
+                self.selected_collection = None;
+                self.collection_table_sort = None;
+            }
+        }
+
+        if let Some(selected_document_path) = self.selected_document_path.as_ref() {
+            if !self
+                .documents
+                .iter()
+                .any(|document| &document.path == selected_document_path)
+            {
+                self.selected_document_path = None;
+            }
+        }
+
+        let expanded_paths = expanded_folder_paths(&self.explorer);
+        let result = ScanResult {
+            root: update.root,
+            directories: directories_from_documents(&self.documents),
+            documents: self.documents.clone(),
+            collections: self.collections.clone(),
+            errors: update.errors,
+            duration: update.duration,
+        };
+        self.explorer = explorer_from_scan_result(&result);
+        restore_expanded_folder_paths(&mut self.explorer, &expanded_paths);
+        self.set_completed_state(result.errors.len());
+    }
+
+    pub fn workspace_update_failed(&mut self, error: ScanError) {
+        let errors = match self.scan_state {
+            ScanState::Completed { errors, .. } | ScanState::Updating { errors, .. } => errors + 1,
+            _ => 1,
+        };
+        if let Some(document) = self.selected_document_path.as_ref().and_then(|path| {
+            self.documents
+                .iter_mut()
+                .find(|document| &document.path == path)
+        }) {
+            document.warnings.push(crate::DocumentWarning {
+                path: error.path,
+                message: error.message,
+            });
+        }
+        self.set_completed_state(errors);
     }
 
     pub fn scan_failed(&mut self, message: String) {
@@ -415,6 +555,21 @@ impl ShellModel {
             .map(|collection| collection.display_name.clone())
             .unwrap_or_else(|| document.collection_id.clone())
     }
+
+    fn set_completed_state(&mut self, errors: usize) {
+        let warnings = self
+            .documents
+            .iter()
+            .map(|document| document.warnings.len())
+            .sum();
+        self.scan_state = ScanState::Completed {
+            documents: self.documents.len(),
+            directories: directories_from_documents(&self.documents).len(),
+            collections: self.collections.len(),
+            errors,
+            warnings,
+        };
+    }
 }
 
 impl ExplorerNode {
@@ -446,6 +601,89 @@ fn explorer_from_scan_result(result: &ScanResult) -> Vec<ExplorerNode> {
             result.root.clone(),
             children,
         )]
+    }
+}
+
+fn expanded_folder_paths(nodes: &[ExplorerNode]) -> BTreeSet<PathBuf> {
+    let mut paths = BTreeSet::new();
+    collect_expanded_folder_paths(nodes, &mut paths);
+    paths
+}
+
+fn collect_expanded_folder_paths(nodes: &[ExplorerNode], paths: &mut BTreeSet<PathBuf>) {
+    for node in nodes {
+        if node.is_folder() && node.expanded {
+            paths.insert(node.path.clone());
+        }
+        collect_expanded_folder_paths(&node.children, paths);
+    }
+}
+
+fn restore_expanded_folder_paths(nodes: &mut [ExplorerNode], expanded_paths: &BTreeSet<PathBuf>) {
+    for node in nodes {
+        if node.is_folder() {
+            node.expanded = expanded_paths.contains(&node.path);
+        }
+        restore_expanded_folder_paths(&mut node.children, expanded_paths);
+    }
+}
+
+fn directories_from_documents(documents: &[Document]) -> Vec<PathBuf> {
+    let mut directories = BTreeSet::new();
+    for document in documents {
+        if let Some(parent) = document.relative_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                directories.insert(parent.to_path_buf());
+                for ancestor in parent.ancestors().skip(1) {
+                    if !ancestor.as_os_str().is_empty() {
+                        directories.insert(ancestor.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+    directories.into_iter().collect()
+}
+
+fn collections_from_documents(documents: &[Document]) -> Vec<Collection> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for document in documents {
+        *counts.entry(document.collection_id.clone()).or_default() += 1;
+    }
+
+    let mut collections = counts
+        .into_iter()
+        .map(|(id, document_count)| Collection {
+            display_name: collection_display_name(&id),
+            id,
+            document_count,
+        })
+        .collect::<Vec<_>>();
+    collections.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+    });
+    collections
+}
+
+fn collection_display_name(id: &str) -> String {
+    match id {
+        "project" => String::from("Projects"),
+        "person" => String::from("People"),
+        "meeting" => String::from("Meetings"),
+        "document" | "documents" => String::from("Documents"),
+        value => {
+            let mut chars = value.chars();
+            match chars.next() {
+                Some(first) => format!(
+                    "{}{}s",
+                    first.to_uppercase().collect::<String>(),
+                    chars.collect::<String>()
+                ),
+                None => String::from("Documents"),
+            }
+        }
     }
 }
 
@@ -708,11 +946,17 @@ fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        mock_shell, Collection, Document, DocumentMetadata, DocumentWarning, PropertyValue,
-        ScanResult, TableModel,
+        mock_shell, scan_workspace, workspace_update_from_events, Collection, Document,
+        DocumentMetadata, DocumentWarning, PropertyValue, ScanResult, TableModel, WorkspaceEvent,
     };
 
-    use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, time::Duration};
+    use std::{
+        collections::BTreeMap,
+        ffi::OsString,
+        fs,
+        path::{Path, PathBuf},
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     use super::{
         workspace_display, BottomTab, ExplorerNode, ExplorerNodeId, InspectorModel, InspectorValue,
@@ -1074,6 +1318,273 @@ mod tests {
         );
     }
 
+    #[test]
+    fn workspace_modify_updates_document_properties() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/task.md",
+            "---\ntype: project\npriority: 42\n---\n# Task\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write(
+            "projects/task.md",
+            "---\ntype: project\npriority: 999\n---\n# Task\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/task.md"),
+            )],
+        );
+
+        let table = TableModel::collection("project", &shell.documents, None);
+        assert_eq!(table.rows[0].cells[1].display_value(), "999");
+    }
+
+    #[test]
+    fn workspace_create_adds_document_and_updates_collection() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "---\ntype: project\n---\n# CARF\n");
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write(
+            "projects/new-project.md",
+            "---\ntype: project\n---\n# New\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/new-project.md"),
+            )],
+        );
+
+        assert_eq!(shell.documents.len(), 2);
+        assert_eq!(
+            shell
+                .collections
+                .iter()
+                .find(|collection| collection.id == "project")
+                .unwrap()
+                .document_count,
+            2
+        );
+    }
+
+    #[test]
+    fn workspace_remove_removes_document_and_selected_document() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "---\ntype: project\n---\n# CARF\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("projects/carf.md");
+        shell.select_markdown_path(path.clone());
+
+        fs::remove_file(&path).unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Remove(path)]);
+
+        assert!(shell.documents.is_empty());
+        assert!(shell.selected_document().is_none());
+        assert!(matches!(
+            shell.document_inspector(),
+            InspectorModel::Empty { .. }
+        ));
+    }
+
+    #[test]
+    fn workspace_rename_does_not_duplicate_document() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "---\ntype: project\n---\n# CARF\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let from = workspace.path().join("projects/carf.md");
+        let to = workspace.path().join("projects/carf-2026.md");
+
+        fs::rename(&from, &to).unwrap();
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Rename {
+                from: from.clone(),
+                to: to.clone(),
+            }],
+        );
+
+        assert_eq!(shell.documents.len(), 1);
+        assert_eq!(shell.documents[0].path, to);
+    }
+
+    #[test]
+    fn workspace_move_updates_path() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "---\ntype: project\n---\n# CARF\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let from = workspace.path().join("projects/carf.md");
+        let to = workspace.path().join("archive/carf.md");
+        fs::create_dir_all(workspace.path().join("archive")).unwrap();
+
+        fs::rename(&from, &to).unwrap();
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Rename {
+                from: from.clone(),
+                to: to.clone(),
+            }],
+        );
+
+        assert_eq!(
+            shell.documents[0].relative_path,
+            PathBuf::from("archive/carf.md")
+        );
+        assert!(shell
+            .explorer
+            .iter()
+            .any(|node| node.children.iter().any(|child| child.name == "archive")));
+    }
+
+    #[test]
+    fn workspace_type_change_moves_between_collections() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "---\ntype: project\n---\n# CARF\n");
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write("projects/carf.md", "---\ntype: person\n---\n# CARF\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/carf.md"),
+            )],
+        );
+
+        assert!(shell.collection_documents("project").is_empty());
+        assert_eq!(shell.collection_documents("person").len(), 1);
+    }
+
+    #[test]
+    fn workspace_new_property_updates_table_columns() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/carf.md",
+            "---\ntype: project\nstatus: active\n---\n# CARF\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write(
+            "projects/carf.md",
+            "---\ntype: project\nstatus: active\nbudget: 1000\n---\n# CARF\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/carf.md"),
+            )],
+        );
+
+        let table = TableModel::collection("project", &shell.documents, None);
+        assert!(table.columns.iter().any(|column| column.label == "Budget"));
+    }
+
+    #[test]
+    fn workspace_invalid_yaml_warning_is_recoverable() {
+        let workspace = TempWorkspace::new();
+        workspace.write("broken.md", "---\ntype: project\n---\n# Broken\n");
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write("broken.md", "---\ntype: [broken\n---\n# Broken\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(workspace.path().join("broken.md"))],
+        );
+        assert_eq!(shell.documents[0].warnings.len(), 1);
+
+        workspace.write(
+            "broken.md",
+            "---\ntype: project\nstatus: ok\n---\n# Broken\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(workspace.path().join("broken.md"))],
+        );
+        assert!(shell.documents[0].warnings.is_empty());
+    }
+
+    #[test]
+    fn workspace_ignores_non_markdown_and_technical_directories() {
+        let workspace = TempWorkspace::new();
+        workspace.write("kept.md", "# Kept\n");
+        let mut shell = shell_from_workspace(&workspace);
+        workspace.write("notes.txt", "ignored");
+        workspace.write(".git/ignored.md", "# Ignored\n");
+        workspace.write("target/ignored.md", "# Ignored\n");
+        workspace.write("node_modules/ignored.md", "# Ignored\n");
+
+        apply_events(
+            &mut shell,
+            &workspace,
+            [
+                WorkspaceEvent::Upsert(workspace.path().join("notes.txt")),
+                WorkspaceEvent::Upsert(workspace.path().join(".git/ignored.md")),
+                WorkspaceEvent::Upsert(workspace.path().join("target/ignored.md")),
+                WorkspaceEvent::Upsert(workspace.path().join("node_modules/ignored.md")),
+            ],
+        );
+
+        assert_eq!(shell.documents.len(), 1);
+        assert_eq!(shell.documents[0].relative_path, PathBuf::from("kept.md"));
+    }
+
+    #[test]
+    fn workspace_unicode_path_and_quick_saves_converge() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "ações/visão.md",
+            "---\ntype: project\nstatus: one\n---\n# Visão\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        workspace.write(
+            "ações/visão.md",
+            "---\ntype: project\nstatus: final\n---\n# Visão\n",
+        );
+        let path = workspace.path().join("ações/visão.md");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [
+                WorkspaceEvent::Upsert(path.clone()),
+                WorkspaceEvent::Upsert(path.clone()),
+                WorkspaceEvent::Upsert(path),
+            ],
+        );
+
+        assert_eq!(
+            shell.documents[0].properties.get("status"),
+            Some(&PropertyValue::String(String::from("final")))
+        );
+        assert_eq!(
+            shell.documents[0].relative_path,
+            PathBuf::from("ações/visão.md")
+        );
+    }
+
+    #[test]
+    fn workspace_deleted_during_processing_does_not_panic() {
+        let workspace = TempWorkspace::new();
+        workspace.write("gone.md", "# Gone\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("gone.md");
+        fs::remove_file(&path).unwrap();
+
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Upsert(path)]);
+
+        assert!(shell.documents.is_empty());
+    }
+
     fn shell_with_documents(documents: Vec<Document>) -> super::ShellModel {
         let mut shell = mock_shell();
         let mut counts = BTreeMap::<String, usize>::new();
@@ -1184,5 +1695,56 @@ mod tests {
 
     fn bool_value(value: bool) -> PropertyValue {
         PropertyValue::Bool(value)
+    }
+
+    fn shell_from_workspace(workspace: &TempWorkspace) -> super::ShellModel {
+        let mut shell = mock_shell();
+        shell.workspace_selected(Some(workspace.path().to_path_buf()));
+        shell.scan_completed(scan_workspace(workspace.path()).unwrap());
+        shell
+    }
+
+    fn apply_events<const N: usize>(
+        shell: &mut super::ShellModel,
+        workspace: &TempWorkspace,
+        events: [WorkspaceEvent; N],
+    ) {
+        let update = workspace_update_from_events(workspace.path(), &events).unwrap();
+        shell.workspace_update_completed(update);
+    }
+
+    struct TempWorkspace {
+        path: PathBuf,
+    }
+
+    impl TempWorkspace {
+        fn new() -> Self {
+            let mut path = std::env::temp_dir();
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            path.push(format!("flokin-md-model-{}-{unique}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn write(&self, relative_path: &str, content: &str) {
+            let path = self.path.join(relative_path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, content).unwrap();
+        }
+    }
+
+    impl Drop for TempWorkspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

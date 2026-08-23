@@ -1,9 +1,9 @@
-use flokin_core::{mock_shell, ShellModel};
-use iced::{application, window, Element, Size, Task, Theme};
+use flokin_core::{mock_shell, ScanError, ShellModel};
+use iced::{application, window, Element, Size, Subscription, Task, Theme};
 
 use crate::{
     message::Message,
-    services::file_dialog,
+    services::{file_dialog, file_watcher},
     theme::{self, AppTheme},
     views,
 };
@@ -44,14 +44,7 @@ impl FlokinApp {
             Message::FolderSelected(path) => {
                 if let Some(path) = path {
                     self.model.workspace_selected(Some(path.clone()));
-                    return Task::perform(
-                        async move {
-                            let result = flokin_core::scan_workspace(&path)
-                                .map_err(|error| error.to_string());
-                            (path, result)
-                        },
-                        |(path, result)| Message::ScanCompleted(path, result),
-                    );
+                    return scan_workspace_task(path);
                 }
             }
             Message::ScanCompleted(path, result) => {
@@ -59,6 +52,47 @@ impl FlokinApp {
                     match result {
                         Ok(result) => self.model.scan_completed(result),
                         Err(message) => self.model.scan_failed(message),
+                    }
+                }
+            }
+            Message::ReindexWorkspace => {
+                if let Some(path) = self.model.current_workspace.clone() {
+                    self.model.workspace_selected(Some(path.clone()));
+                    return scan_workspace_task(path);
+                }
+            }
+            Message::WorkspaceWatcher(message) => match message {
+                file_watcher::WatcherMessage::Events { workspace, events } => {
+                    if self.model.current_workspace.as_ref() == Some(&workspace) {
+                        self.model.workspace_update_started();
+                        return Task::perform(
+                            async move {
+                                let result =
+                                    flokin_core::workspace_update_from_events(&workspace, &events)
+                                        .map_err(|error| error.to_string());
+                                (workspace, result)
+                            },
+                            |(path, result)| Message::WorkspaceUpdateCompleted(path, result),
+                        );
+                    }
+                }
+                file_watcher::WatcherMessage::Failed { workspace, message } => {
+                    if self.model.current_workspace.as_ref() == Some(&workspace) {
+                        self.model.workspace_update_failed(ScanError {
+                            path: workspace,
+                            message,
+                        });
+                    }
+                }
+            },
+            Message::WorkspaceUpdateCompleted(path, result) => {
+                if self.model.current_workspace.as_ref() == Some(&path) {
+                    match result {
+                        Ok(update) if update.needs_rescan => return scan_workspace_task(path),
+                        Ok(update) => self.model.workspace_update_completed(update),
+                        Err(message) => self
+                            .model
+                            .workspace_update_failed(ScanError { path, message }),
                     }
                 }
             }
@@ -83,10 +117,15 @@ impl FlokinApp {
     pub fn view(&self) -> Element<'_, Message> {
         views::shell::view(&self.model, self.theme)
     }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        file_watcher::subscription(self.model.current_workspace.clone())
+    }
 }
 
 pub fn run() -> iced::Result {
     application(FlokinApp::new, FlokinApp::update, FlokinApp::view)
+        .subscription(FlokinApp::subscription)
         .title(title)
         .theme(app_theme)
         .style(app_style)
@@ -97,6 +136,16 @@ pub fn run() -> iced::Result {
             ..window::Settings::default()
         })
         .run()
+}
+
+fn scan_workspace_task(path: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            let result = flokin_core::scan_workspace(&path).map_err(|error| error.to_string());
+            (path, result)
+        },
+        |(path, result)| Message::ScanCompleted(path, result),
+    )
 }
 
 fn title(_state: &FlokinApp) -> String {
@@ -113,10 +162,10 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 
 #[cfg(test)]
 mod tests {
-    use flokin_core::{Activity, BottomTab, WorkspaceTab};
+    use flokin_core::{Activity, BottomTab, ScanState, WorkspaceEvent, WorkspaceTab};
 
     use super::FlokinApp;
-    use crate::{message::Message, theme::AppTheme};
+    use crate::{message::Message, services::file_watcher::WatcherMessage, theme::AppTheme};
 
     #[test]
     fn starts_with_native_shell_defaults() {
@@ -170,5 +219,21 @@ mod tests {
         let _ = app.update(Message::FolderSelected(None));
 
         assert_eq!(app.model.current_workspace, Some(path));
+    }
+
+    #[test]
+    fn watcher_event_from_old_workspace_is_ignored() {
+        let mut app = FlokinApp::new();
+        let current = std::path::PathBuf::from("/tmp/current");
+        let old = std::path::PathBuf::from("/tmp/old");
+        let _ = app.update(Message::FolderSelected(Some(current.clone())));
+
+        let _ = app.update(Message::WorkspaceWatcher(WatcherMessage::Events {
+            workspace: old.clone(),
+            events: vec![WorkspaceEvent::Upsert(old.join("stale.md"))],
+        }));
+
+        assert_eq!(app.model.current_workspace, Some(current));
+        assert!(matches!(app.model.scan_state, ScanState::Scanning));
     }
 }
