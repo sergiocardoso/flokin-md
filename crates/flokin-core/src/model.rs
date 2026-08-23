@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
     Explorer,
@@ -174,8 +176,7 @@ pub struct TagCount {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellModel {
     pub active_activity: Activity,
-    pub root_name: &'static str,
-    pub root_path: &'static str,
+    pub current_workspace: Option<PathBuf>,
     pub explorer: Vec<ExplorerNode>,
     pub filters: Vec<FilterCount>,
     pub selected_tab: WorkspaceTab,
@@ -186,6 +187,19 @@ pub struct ShellModel {
 }
 
 impl ShellModel {
+    pub fn workspace_selected(&mut self, path: Option<PathBuf>) {
+        if let Some(path) = path {
+            self.current_workspace = Some(path);
+        }
+    }
+
+    pub fn workspace_display(&self) -> WorkspaceDisplay {
+        self.current_workspace
+            .as_deref()
+            .map(workspace_display)
+            .unwrap_or_else(WorkspaceDisplay::none)
+    }
+
     pub fn select_activity(&mut self, activity: Activity) {
         self.active_activity = activity;
     }
@@ -203,20 +217,122 @@ impl ShellModel {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDisplay {
+    pub name: String,
+    pub path: String,
+    pub is_open: bool,
+}
+
+impl WorkspaceDisplay {
+    fn none() -> Self {
+        Self {
+            name: String::from("Nenhuma pasta aberta"),
+            path: String::from("Selecione uma pasta para usar como workspace"),
+            is_open: false,
+        }
+    }
+}
+
+pub fn workspace_display(path: &Path) -> WorkspaceDisplay {
+    let name = path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+
+    WorkspaceDisplay {
+        name,
+        path: abbreviate_home(path),
+        is_open: true,
+    }
+}
+
+fn abbreviate_home(path: &Path) -> String {
+    home_dir()
+        .and_then(|home| {
+            path.strip_prefix(&home).ok().map(|relative| {
+                if relative.as_os_str().is_empty() {
+                    String::from("~")
+                } else {
+                    format!("~{}{}", MAIN_SEPARATOR, relative.display())
+                }
+            })
+        })
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::mock_shell;
 
-    use super::{BottomTab, ExplorerNodeId, WorkspaceTab};
+    use std::path::PathBuf;
+
+    use super::{workspace_display, BottomTab, ExplorerNodeId, WorkspaceTab};
 
     #[test]
     fn shell_starts_with_expected_mock_state() {
         let shell = mock_shell();
 
-        assert_eq!(shell.root_name, "Knowledge");
-        assert_eq!(shell.root_path, "~/Documents/Knowledge");
+        assert_eq!(shell.current_workspace, None);
         assert_eq!(shell.selected_tab, WorkspaceTab::Carf);
         assert_eq!(shell.bottom_tab, BottomTab::View);
+    }
+
+    #[test]
+    fn folder_selected_sets_workspace() {
+        let mut shell = mock_shell();
+        let path = PathBuf::from("/home/sc/Documents/Knowledge");
+
+        shell.workspace_selected(Some(path.clone()));
+
+        assert_eq!(shell.current_workspace, Some(path));
+    }
+
+    #[test]
+    fn folder_selection_cancel_keeps_existing_workspace() {
+        let mut shell = mock_shell();
+        let path = PathBuf::from("/home/sc/Documents/Knowledge");
+        shell.workspace_selected(Some(path.clone()));
+
+        shell.workspace_selected(None);
+
+        assert_eq!(shell.current_workspace, Some(path));
+    }
+
+    #[test]
+    fn selecting_another_folder_replaces_workspace() {
+        let mut shell = mock_shell();
+        let first = PathBuf::from("/home/sc/Documents/Knowledge");
+        let second = PathBuf::from("/home/sc/Jobs/Flokin/repos/flokin-md");
+
+        shell.workspace_selected(Some(first));
+        shell.workspace_selected(Some(second.clone()));
+
+        assert_eq!(shell.current_workspace, Some(second));
+    }
+
+    #[test]
+    fn workspace_display_uses_folder_name_and_path() {
+        let display = workspace_display(PathBuf::from("/tmp/flokin-md").as_path());
+
+        assert_eq!(display.name, "flokin-md");
+        assert_eq!(display.path, "/tmp/flokin-md");
+        assert!(display.is_open);
+    }
+
+    #[test]
+    fn workspace_display_handles_unicode_paths() {
+        let display = workspace_display(PathBuf::from("/tmp/Conhecimento/ação").as_path());
+
+        assert_eq!(display.name, "ação");
+        assert!(display.path.ends_with("Conhecimento/ação"));
     }
 
     #[test]

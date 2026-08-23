@@ -14,7 +14,11 @@ pub fn section_title<'a>(label: &'a str) -> Element<'a, Message> {
         .into()
 }
 
-pub fn toolbar_button(label: &str, icon_id: Icon) -> button::Button<'_, Message> {
+pub fn toolbar_button(
+    label: &str,
+    icon_id: Icon,
+    on_press: Message,
+) -> button::Button<'_, Message> {
     button(
         row![
             icon(icon_id, theme::icons::TOOLBAR, false),
@@ -25,7 +29,7 @@ pub fn toolbar_button(label: &str, icon_id: Icon) -> button::Button<'_, Message>
     )
     .padding([6.0, 9.0])
     .style(theme::button_toolbar)
-    .on_press(Message::MockAction)
+    .on_press(on_press)
 }
 
 pub fn icon_button(icon_id: Icon) -> button::Button<'static, Message> {

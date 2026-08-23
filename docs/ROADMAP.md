@@ -1,9 +1,9 @@
 # Roadmap
 
-This file records the intended milestones. Only MDB-001R is implemented now.
+This file records the intended milestones.
 
 - MDB-001R Native Desktop Shell — Iced
-- MDB-002 Abrir pasta
+- MDB-002 Abrir pasta — implemented: the toolbar opens the native directory picker, stores the selected `PathBuf` in memory as the current workspace, updates Explorer and status bar, and treats cancellation as a no-op. It does not scan, index, read, or persist workspace contents.
 - MDB-003 Markdown Scanner
 - MDB-004 Collections
 - MDB-005 Table View

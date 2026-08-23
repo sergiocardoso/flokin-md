@@ -5,15 +5,16 @@ use iced::{Alignment, Element, Length};
 use crate::{message::Message, theme};
 
 pub fn view(model: &ShellModel) -> Element<'_, Message> {
+    let workspace = model.workspace_display();
     let status_items = [
-        format!("{} ({})", model.root_name, model.root_path),
-        String::from("127 documentos"),
-        String::from("✓ Indexado"),
-        String::from("SQLite"),
-        String::from("UTF-8"),
+        if workspace.is_open {
+            format!("{} ({})", workspace.name, workspace.path)
+        } else {
+            String::from("Nenhuma pasta aberta")
+        },
+        String::from("Não indexado"),
         String::from("Markdown"),
         String::from("Ln 1, Col 1"),
-        String::from("main"),
     ];
 
     let mut row = row![]
@@ -23,9 +24,7 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
 
     for item in status_items {
         let style = match item.as_str() {
-            "✓ Indexado" => theme::text_success,
-            "SQLite" => theme::text_warning,
-            "main" => theme::text_accent,
+            "Não indexado" => theme::text_warning,
             _ => theme::text_muted,
         };
 

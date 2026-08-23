@@ -6,8 +6,7 @@ use crate::model::{
 pub fn mock_shell() -> ShellModel {
     ShellModel {
         active_activity: Activity::Explorer,
-        root_name: "Knowledge",
-        root_path: "~/Documents/Knowledge",
+        current_workspace: None,
         explorer: vec![ExplorerNode::folder(
             1,
             "Knowledge",

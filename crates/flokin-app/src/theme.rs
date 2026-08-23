@@ -49,10 +49,12 @@ pub struct Palette {
     pub accent: Color,
     pub accent_hover: Color,
     pub accent_soft: Color,
+    #[allow(dead_code)]
     pub success: Color,
     pub warning: Color,
     #[allow(dead_code)]
     pub danger: Color,
+    #[allow(dead_code)]
     pub selected_text: Color,
 }
 
@@ -143,7 +145,9 @@ pub mod icons {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Calendar,
+    #[allow(dead_code)]
     ChevronRight,
+    #[allow(dead_code)]
     ChevronDown,
     Clock,
     Database,
@@ -197,6 +201,7 @@ pub fn text_accent(theme: &Theme) -> text::Style {
     }
 }
 
+#[allow(dead_code)]
 pub fn text_success(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette(theme).success),
@@ -334,6 +339,7 @@ pub fn button_ghost(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+#[allow(dead_code)]
 pub fn button_tree(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
@@ -350,6 +356,7 @@ pub fn button_tree(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+#[allow(dead_code)]
 pub fn button_tree_selected(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {

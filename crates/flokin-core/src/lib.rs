@@ -3,6 +3,7 @@ mod model;
 
 pub use mock::mock_shell;
 pub use model::{
-    Activity, BottomTab, DocumentTab, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount,
-    InspectorField, ShellModel, TagCount, WorkspaceTab,
+    workspace_display, Activity, BottomTab, DocumentTab, ExplorerNode, ExplorerNodeId,
+    ExplorerNodeKind, FilterCount, InspectorField, ShellModel, TagCount, WorkspaceDisplay,
+    WorkspaceTab,
 };

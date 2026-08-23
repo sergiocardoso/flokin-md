@@ -3,6 +3,7 @@ use iced::{application, window, Element, Size, Task, Theme};
 
 use crate::{
     message::Message,
+    services::file_dialog,
     theme::{self, AppTheme},
     views,
 };
@@ -34,6 +35,12 @@ impl FlokinApp {
             }
             Message::BottomTabSelected(tab) => {
                 self.model.select_bottom_tab(tab);
+            }
+            Message::OpenFolder => {
+                return Task::perform(file_dialog::pick_folder(), Message::FolderSelected);
+            }
+            Message::FolderSelected(path) => {
+                self.model.workspace_selected(path);
             }
             Message::ThemeToggled => {
                 self.theme = self.theme.toggled();
@@ -87,6 +94,7 @@ mod tests {
         let app = FlokinApp::new();
 
         assert_eq!(app.model.active_activity, Activity::Explorer);
+        assert_eq!(app.model.current_workspace, None);
         assert_eq!(app.model.selected_tab, WorkspaceTab::Carf);
         assert_eq!(app.model.bottom_tab, BottomTab::View);
         assert_eq!(app.theme, AppTheme::Dark);
@@ -114,5 +122,26 @@ mod tests {
 
         let _ = app.update(Message::ThemeToggled);
         assert_eq!(app.theme, AppTheme::Dark);
+    }
+
+    #[test]
+    fn folder_selected_updates_workspace_state() {
+        let mut app = FlokinApp::new();
+        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+
+        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+
+        assert_eq!(app.model.current_workspace, Some(path));
+    }
+
+    #[test]
+    fn canceling_folder_dialog_preserves_workspace_state() {
+        let mut app = FlokinApp::new();
+        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+
+        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+        let _ = app.update(Message::FolderSelected(None));
+
+        assert_eq!(app.model.current_workspace, Some(path));
     }
 }
