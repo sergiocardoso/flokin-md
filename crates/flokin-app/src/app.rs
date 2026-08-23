@@ -65,6 +65,9 @@ impl FlokinApp {
             Message::CollectionSelected(collection_id) => {
                 self.model.select_collection(collection_id);
             }
+            Message::TableHeaderSelected(column_id) => {
+                self.model.toggle_collection_sort(column_id);
+            }
             Message::MarkdownSelected(path) => {
                 self.model.select_markdown_path(path);
             }

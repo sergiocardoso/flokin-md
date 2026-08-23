@@ -13,6 +13,7 @@ pub fn mock_shell() -> ShellModel {
         scan_state: ScanState::Idle,
         selected_markdown: None,
         selected_collection: None,
+        collection_table_sort: None,
         filters: vec![
             FilterCount {
                 label: "Todos os documentos",

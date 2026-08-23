@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
-use crate::{Collection, Document, ScanResult};
+use crate::{Collection, Document, ScanResult, SortDirection, TableSort};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
@@ -193,6 +193,7 @@ pub struct ShellModel {
     pub scan_state: ScanState,
     pub selected_markdown: Option<PathBuf>,
     pub selected_collection: Option<String>,
+    pub collection_table_sort: Option<TableSort>,
     pub filters: Vec<FilterCount>,
     pub selected_tab: WorkspaceTab,
     pub bottom_tab: BottomTab,
@@ -224,6 +225,7 @@ impl ShellModel {
             self.collections.clear();
             self.selected_markdown = None;
             self.selected_collection = None;
+            self.collection_table_sort = None;
             self.scan_state = ScanState::Scanning;
         }
     }
@@ -261,6 +263,7 @@ impl ShellModel {
         if let Some(path) = selected {
             self.selected_markdown = Some(path);
             self.selected_collection = None;
+            self.collection_table_sort = None;
             true
         } else {
             false
@@ -281,7 +284,24 @@ impl ShellModel {
         {
             self.selected_collection = Some(collection_id);
             self.selected_markdown = None;
+            self.collection_table_sort = None;
         }
+    }
+
+    pub fn toggle_collection_sort(&mut self, column_id: String) {
+        self.collection_table_sort = Some(match self.collection_table_sort.take() {
+            Some(sort) if sort.column_id == column_id => TableSort {
+                column_id,
+                direction: match sort.direction {
+                    SortDirection::Ascending => SortDirection::Descending,
+                    SortDirection::Descending => SortDirection::Ascending,
+                },
+            },
+            _ => TableSort {
+                column_id,
+                direction: SortDirection::Ascending,
+            },
+        });
     }
 
     pub fn scan_completed(&mut self, result: ScanResult) {
@@ -308,6 +328,7 @@ impl ShellModel {
         self.collections.clear();
         self.selected_markdown = None;
         self.selected_collection = None;
+        self.collection_table_sort = None;
         self.scan_state = ScanState::Failed(message);
     }
 

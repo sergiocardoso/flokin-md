@@ -281,6 +281,25 @@ pub fn active_line(theme: &Theme) -> container::Style {
     container_style(palette.surface_selected, None, 0.0)
 }
 
+pub fn table_header(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.elevated_surface,
+        Some(palette.border_subtle),
+        radius::XS,
+    )
+}
+
+pub fn table_row(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.editor_background, Some(palette.border_subtle), 0.0)
+}
+
+pub fn table_row_selected(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.surface_selected, Some(palette.accent_soft), 0.0)
+}
+
 pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let palette = palette(theme);
     let border_color = match status {
@@ -367,6 +386,22 @@ pub fn button_tree_selected(theme: &Theme, status: button::Status) -> button::St
     button::Style {
         background: Some(Background::Color(background)),
         text_color: palette.selected_text,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
+pub fn button_table_header(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = palette(theme);
+    let background = match status {
+        button::Status::Hovered => palette.surface_hover,
+        _ => palette.elevated_surface,
+    };
+
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: palette.text,
         border: Border::default(),
         shadow: Shadow::default(),
         ..button::Style::default()

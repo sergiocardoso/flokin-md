@@ -1,6 +1,7 @@
 mod mock;
 mod model;
 mod scanner;
+mod table;
 
 pub use mock::mock_shell;
 pub use model::{
@@ -10,4 +11,7 @@ pub use model::{
 };
 pub use scanner::{
     scan_workspace, Collection, Document, DocumentWarning, PropertyValue, ScanError, ScanResult,
+};
+pub use table::{
+    SortDirection, TableCell, TableColumn, TableModel, TableRow, TableSort, TableValueType,
 };

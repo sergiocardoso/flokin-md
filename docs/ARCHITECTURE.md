@@ -34,6 +34,10 @@ Collection
 
 The core owns this pipeline. It resolves document titles from `frontmatter.title`, then first Markdown H1, then filename stem; preserves YAML properties in a domain `PropertyValue` enum; resolves logical document type from frontmatter with a small parent-folder fallback; and groups documents into normalized Collections with separate ids and display names. Per-document warnings, such as invalid YAML or invalid UTF-8, are retained without failing the whole workspace.
 
+## Table Projection
+
+MDB-005 adds a read-only `TableModel` projection in `flokin-core`. It derives deterministic columns and typed cells from in-memory `Document` values for a selected Collection, keeps `Title` as the first column, skips redundant internal properties such as `title` and `type`, infers predominant column types, and applies basic typed sorting without depending on Iced or any database cache.
+
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.

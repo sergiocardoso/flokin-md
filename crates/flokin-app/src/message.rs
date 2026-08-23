@@ -13,6 +13,7 @@ pub enum Message {
     FolderSelected(Option<PathBuf>),
     ScanCompleted(PathBuf, Result<ScanResult, String>),
     CollectionSelected(String),
+    TableHeaderSelected(String),
     MarkdownSelected(PathBuf),
     ThemeToggled,
     MockAction,

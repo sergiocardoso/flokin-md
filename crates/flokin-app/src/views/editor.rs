@@ -1,5 +1,12 @@
-use flokin_core::{BottomTab, Document, PropertyValue, ShellModel, WorkspaceTab};
-use iced::widget::{button, column, container, row, scrollable, text};
+use flokin_core::{
+    BottomTab, Collection, ShellModel, SortDirection, TableCell, TableColumn, TableModel,
+    WorkspaceTab,
+};
+use iced::widget::{
+    button, column, container, row, scrollable,
+    scrollable::{Direction, Scrollbar},
+    text,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::{message::Message, theme, widgets};
@@ -72,58 +79,211 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
     let Some(collection) = model.selected_collection() else {
         return container("").into();
     };
-    let documents = model.collection_documents(collection_id);
-    let mut list = column![
-        text(collection.display_name.as_str())
-            .size(22)
-            .style(theme::text_accent),
-        text(format!("{} documentos", collection.document_count))
-            .size(theme::typography::BODY)
-            .style(theme::text_muted),
-    ]
-    .spacing(theme::spacing::MD);
+    let table = TableModel::collection(
+        collection_id,
+        &model.documents,
+        model.collection_table_sort.as_ref(),
+    );
 
-    for document in documents {
-        list = list.push(document_row(document));
-    }
-
-    container(scrollable(list).height(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(theme::spacing::XXL)
-        .style(theme::editor)
-        .into()
-}
-
-fn document_row(document: &Document) -> Element<'_, Message> {
-    let mut meta = row![text(document.relative_path.display().to_string())
-        .font(theme::mono())
-        .size(theme::typography::LABEL)
-        .style(theme::text_muted)]
-    .spacing(theme::spacing::SM)
-    .align_y(Alignment::Center);
-
-    for (key, value) in simple_properties(document).into_iter().take(3) {
-        meta = meta.push(property_chip(format!("{key}: {}", property_preview(value))));
-    }
-
-    button(
+    container(
         column![
-            text(document.title.as_str())
-                .size(theme::typography::TITLE)
-                .style(theme::text_normal),
-            meta,
+            collection_header(collection, table.columns.len().saturating_sub(1)),
+            if table.rows.is_empty() {
+                empty_collection_view()
+            } else {
+                table_view(model, table)
+            }
         ]
-        .spacing(theme::spacing::XS),
+        .spacing(theme::spacing::LG),
     )
     .width(Length::Fill)
-    .padding(theme::spacing::MD)
-    .style(theme::button_tree)
-    .on_press(Message::MarkdownSelected(document.path.clone()))
+    .height(Length::Fill)
+    .padding(theme::spacing::XXL)
+    .style(theme::editor)
     .into()
 }
 
-fn document_selection_view(document: &Document) -> Element<'_, Message> {
+fn collection_header<'a>(
+    collection: &'a Collection,
+    property_count: usize,
+) -> Element<'a, Message> {
+    container(
+        row![
+            column![
+                text(collection.display_name.as_str())
+                    .size(22)
+                    .style(theme::text_accent),
+                text(format!("{} documentos", collection.document_count))
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::XS)
+            .width(Length::Fill),
+            text(format!("{property_count} propriedades"))
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        ]
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .into()
+}
+
+fn empty_collection_view<'a>() -> Element<'a, Message> {
+    container(
+        text("Nenhum documento nesta Collection.")
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn table_view<'a>(model: &'a ShellModel, table: TableModel) -> Element<'a, Message> {
+    let width = table_width(&table.columns);
+    let mut rows = column![table_header(&table.columns, model, width)].spacing(0);
+
+    for row_model in table.rows {
+        let selected = model.selected_markdown.as_ref() == Some(&row_model.document_path);
+        let mut cells = row![].spacing(0).align_y(Alignment::Center);
+
+        for (column, cell) in table.columns.iter().zip(row_model.cells) {
+            cells = cells.push(table_cell(column.clone(), cell, selected));
+        }
+
+        let style = if selected {
+            theme::button_tree_selected
+        } else {
+            theme::button_tree
+        };
+
+        rows = rows.push(
+            button(container(cells).width(width).style(if selected {
+                theme::table_row_selected
+            } else {
+                theme::table_row
+            }))
+            .width(width)
+            .height(30)
+            .padding(0)
+            .style(style)
+            .on_press(Message::MarkdownSelected(row_model.document_path)),
+        );
+    }
+
+    container(
+        scrollable(rows)
+            .direction(Direction::Both {
+                vertical: Scrollbar::default(),
+                horizontal: Scrollbar::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn table_header<'a>(
+    columns: &[TableColumn],
+    model: &'a ShellModel,
+    width: f32,
+) -> Element<'a, Message> {
+    let mut header = row![].spacing(0).align_y(Alignment::Center);
+
+    for column in columns {
+        header = header.push(header_cell(column.clone(), model));
+    }
+
+    container(header)
+        .width(width)
+        .height(32)
+        .style(theme::table_header)
+        .into()
+}
+
+fn header_cell<'a>(column: TableColumn, model: &'a ShellModel) -> Element<'a, Message> {
+    let width = column.width as f32;
+    let column_id = column.id.clone();
+
+    button(
+        row![
+            text(column.label)
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted)
+                .width(Length::Fill),
+            sort_indicator(column_id.as_str(), model)
+        ]
+        .spacing(theme::spacing::XS)
+        .align_y(Alignment::Center),
+    )
+    .width(width)
+    .height(32)
+    .padding([0.0, theme::spacing::SM])
+    .style(theme::button_table_header)
+    .on_press(Message::TableHeaderSelected(column_id))
+    .into()
+}
+
+fn sort_indicator<'a>(column_id: &str, model: &'a ShellModel) -> Element<'a, Message> {
+    let indicator = model
+        .collection_table_sort
+        .as_ref()
+        .filter(|sort| sort.column_id == column_id)
+        .map(|sort| match sort.direction {
+            SortDirection::Ascending => "↑",
+            SortDirection::Descending => "↓",
+        })
+        .unwrap_or("");
+
+    text(indicator)
+        .size(theme::typography::LABEL)
+        .width(12)
+        .style(theme::text_accent)
+        .into()
+}
+
+fn table_cell<'a>(column: TableColumn, cell: TableCell, selected: bool) -> Element<'a, Message> {
+    let muted = matches!(&cell, TableCell::Missing | TableCell::Null);
+    let is_mono = matches!(
+        &cell,
+        TableCell::Number(_) | TableCell::Bool(_) | TableCell::Missing | TableCell::Null
+    );
+    let value = cell.display_value();
+    let style = if muted {
+        theme::text_muted
+    } else if selected {
+        theme::text_accent
+    } else {
+        theme::text_normal
+    };
+
+    container(
+        text(value)
+            .size(theme::typography::BODY)
+            .font(if is_mono {
+                theme::mono()
+            } else {
+                theme::typography::UI
+            })
+            .style(style),
+    )
+    .width(column.width as f32)
+    .height(30)
+    .padding([6.0, theme::spacing::SM])
+    .into()
+}
+
+fn table_width(columns: &[TableColumn]) -> f32 {
+    columns
+        .iter()
+        .map(|column| column.width as f32)
+        .sum::<f32>()
+}
+
+fn document_selection_view(document: &flokin_core::Document) -> Element<'_, Message> {
     container(
         column![
             text(document.title.as_str())
@@ -143,36 +303,6 @@ fn document_selection_view(document: &Document) -> Element<'_, Message> {
     .height(Length::Fill)
     .padding(theme::spacing::XXL)
     .style(theme::editor)
-    .into()
-}
-
-fn simple_properties(document: &Document) -> Vec<(&str, &PropertyValue)> {
-    document
-        .properties
-        .iter()
-        .filter(|(key, _)| key.as_str() != "title" && key.as_str() != "type")
-        .map(|(key, value)| (key.as_str(), value))
-        .collect()
-}
-
-fn property_preview(value: &PropertyValue) -> String {
-    match value {
-        PropertyValue::Null => String::from("null"),
-        PropertyValue::Bool(value) => value.to_string(),
-        PropertyValue::Number(value) | PropertyValue::String(value) => value.clone(),
-        PropertyValue::Array(values) => format!("{} itens", values.len()),
-        PropertyValue::Object(values) => format!("{} campos", values.len()),
-    }
-}
-
-fn property_chip(label: String) -> Element<'static, Message> {
-    container(
-        text(label)
-            .size(theme::typography::LABEL)
-            .style(theme::text_accent),
-    )
-    .padding([3.0, 8.0])
-    .style(theme::chip)
     .into()
 }
 
