@@ -6,9 +6,10 @@ use std::{
 };
 
 use crate::{
-    relation_display_property, search_documents, Collection, Document, PropertyValue, Relation,
-    RelationIndex, RelationStatus, ScanError, ScanResult, SearchQuery, SearchState, SortDirection,
-    SqlCatalog, SqlError, SqlQueryResult, TableSort, WorkspaceUpdate,
+    build_health, load_explicit_schema, relation_display_property, search_documents, Collection,
+    DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue, Relation,
+    RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SearchQuery, SearchState,
+    SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,12 +21,13 @@ pub enum Activity {
     Calendar,
     Favorites,
     History,
+    Health,
     Terminal,
     Settings,
 }
 
 impl Activity {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Explorer,
         Self::Relations,
         Self::Links,
@@ -33,6 +35,7 @@ impl Activity {
         Self::Calendar,
         Self::Favorites,
         Self::History,
+        Self::Health,
         Self::Terminal,
         Self::Settings,
     ];
@@ -46,6 +49,7 @@ impl Activity {
             Self::Calendar => "Calendar",
             Self::Favorites => "Favorites",
             Self::History => "History",
+            Self::Health => "Health",
             Self::Terminal => "Terminal",
             Self::Settings => "Settings",
         }
@@ -190,6 +194,11 @@ pub struct DocumentInspector {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthIssueInspector {
+    pub issue: HealthIssue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorRelation {
     pub property: String,
     pub label: String,
@@ -216,6 +225,7 @@ pub struct RelationDocumentSummary {
 pub enum InspectorModel {
     Empty { title: String, description: String },
     Document(DocumentInspector),
+    HealthIssue(HealthIssueInspector),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,12 +240,29 @@ pub struct EditorTab {
     pub document_path: PathBuf,
     pub relative_path: PathBuf,
     pub title: String,
+    pub kind: EditorTabKind,
     pub buffer: String,
     pub saved_content: String,
     pub dirty: bool,
+    pub view_mode: EditorViewMode,
+    pub split_ratio: u16,
     pub external_conflict: Option<EditorExternalConflict>,
     pub ignored_external_conflict: Option<EditorExternalConflict>,
     pub save_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorTabKind {
+    Markdown,
+    Schema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditorViewMode {
+    #[default]
+    Edit,
+    Split,
+    Preview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,10 +321,33 @@ pub struct ShellModel {
     pub collection_table_sort: Option<TableSort>,
     pub search: SearchState,
     pub relation_index: RelationIndex,
+    pub schema_catalog: SchemaCatalog,
+    pub health: DatabaseHealth,
+    pub health_filter: HealthFilter,
+    pub health_query: String,
+    pub selected_health_issue_id: Option<String>,
+    pub workspace_errors: Vec<ScanError>,
+    pub selected_schema_field: Option<(String, String)>,
+    pub collection_panel: CollectionPanel,
     pub editor: EditorState,
     pub sql_explorer: SqlExplorerState,
     pub collapsed_sql_tables: BTreeSet<String>,
     pub filters: Vec<FilterCount>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HealthFilter {
+    #[default]
+    All,
+    Errors,
+    Warnings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CollectionPanel {
+    #[default]
+    Data,
+    Schema,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +383,14 @@ impl ShellModel {
             self.collection_table_sort = None;
             self.search = SearchState::closed();
             self.relation_index = RelationIndex::default();
+            self.schema_catalog = SchemaCatalog::default();
+            self.health = DatabaseHealth::default();
+            self.health_filter = HealthFilter::All;
+            self.health_query.clear();
+            self.selected_health_issue_id = None;
+            self.workspace_errors.clear();
+            self.selected_schema_field = None;
+            self.collection_panel = CollectionPanel::Data;
             self.editor = EditorState::default();
             self.sql_explorer.open = false;
             self.sql_explorer.catalog = None;
@@ -380,6 +438,7 @@ impl ShellModel {
             self.selected_document_path = Some(path);
             self.selected_collection = None;
             self.collection_table_sort = None;
+            self.selected_schema_field = None;
             true
         } else {
             false
@@ -393,6 +452,7 @@ impl ShellModel {
             self.selected_document_path = Some(path);
             self.selected_collection = None;
             self.collection_table_sort = None;
+            self.selected_schema_field = None;
             self.search.close();
             true
         } else {
@@ -406,6 +466,7 @@ impl ShellModel {
             self.selected_document_path = Some(path);
             self.selected_collection = None;
             self.collection_table_sort = None;
+            self.selected_schema_field = None;
             self.sql_explorer.open = false;
             true
         } else {
@@ -423,7 +484,88 @@ impl ShellModel {
             self.selected_document_path = None;
             self.editor.active_path = None;
             self.collection_table_sort = None;
+            self.selected_schema_field = None;
         }
+    }
+
+    pub fn select_collection_panel(&mut self, panel: CollectionPanel) {
+        self.collection_panel = panel;
+        self.selected_schema_field = None;
+    }
+
+    pub fn select_schema_field(&mut self, collection_id: String, field_name: String) -> bool {
+        if self
+            .schema_catalog
+            .collection(&collection_id)
+            .is_some_and(|schema| schema.fields.iter().any(|field| field.name == field_name))
+        {
+            self.selected_schema_field = Some((collection_id, field_name));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn select_health_filter(&mut self, filter: HealthFilter) {
+        self.health_filter = filter;
+    }
+
+    pub fn update_health_query(&mut self, query: String) {
+        self.health_query = query;
+    }
+
+    pub fn select_health_issue(&mut self, issue_id: String) -> bool {
+        let Some(issue) = self
+            .health
+            .issues
+            .iter()
+            .find(|issue| issue.id == issue_id)
+            .cloned()
+        else {
+            return false;
+        };
+        self.selected_health_issue_id = Some(issue.id);
+        if let Some(path) = issue.document_path {
+            self.select_document_without_opening(path);
+        }
+        true
+    }
+
+    pub fn selected_health_issue(&self) -> Option<&HealthIssue> {
+        let id = self.selected_health_issue_id.as_ref()?;
+        self.health.issues.iter().find(|issue| &issue.id == id)
+    }
+
+    pub fn filtered_health_issues(&self) -> Vec<&HealthIssue> {
+        let query = self.health_query.trim().to_lowercase();
+        self.health
+            .issues
+            .iter()
+            .filter(|issue| match self.health_filter {
+                HealthFilter::All => true,
+                HealthFilter::Errors => issue.severity == crate::HealthSeverity::Error,
+                HealthFilter::Warnings => issue.severity == crate::HealthSeverity::Warning,
+            })
+            .filter(|issue| {
+                if query.is_empty() {
+                    return true;
+                }
+                issue
+                    .relative_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&query)
+                    || issue
+                        .property
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&query)
+                    || issue.message.to_lowercase().contains(&query)
+            })
+            .collect()
     }
 
     pub fn open_sql_explorer(&mut self) {
@@ -432,6 +574,7 @@ impl ShellModel {
         self.editor.active_path = None;
         self.selected_collection = None;
         self.collection_table_sort = None;
+        self.selected_schema_field = None;
         self.search.close();
     }
 
@@ -504,8 +647,12 @@ impl ShellModel {
         }
         self.documents = result.documents;
         self.collections = result.collections;
+        self.workspace_errors = result.errors.clone();
         self.relation_index = RelationIndex::build(&self.documents);
+        self.rebuild_schema_catalog(None);
+        self.rebuild_health();
         self.sync_editor_tabs_with_documents();
+        self.sync_schema_editor_tab_with_file(&result.root);
         if let Some(selected_document_path) = self.selected_document_path.as_ref() {
             if !self
                 .documents
@@ -523,6 +670,7 @@ impl ShellModel {
             {
                 self.selected_collection = None;
                 self.collection_table_sort = None;
+                self.selected_schema_field = None;
             }
         }
         let warnings = self
@@ -571,6 +719,8 @@ impl ShellModel {
             self.scan_state = ScanState::Scanning;
             return;
         }
+        let schema_changed = update.schema_changed;
+        let update_root = update.root.clone();
 
         for path in update.removals {
             self.documents.retain(|document| document.path != path);
@@ -602,7 +752,13 @@ impl ShellModel {
         self.documents
             .sort_by(|left, right| compare_paths(&left.relative_path, &right.relative_path));
         self.collections = collections_from_documents(&self.documents);
+        self.workspace_errors = update.errors.clone();
         self.relation_index = RelationIndex::build(&self.documents);
+        self.rebuild_schema_catalog(schema_changed.then(|| load_explicit_schema(&update_root)));
+        self.rebuild_health();
+        if schema_changed {
+            self.sync_schema_editor_tab_with_file(&update_root);
+        }
 
         if let Some(selected_collection) = self.selected_collection.as_ref() {
             if !self
@@ -612,6 +768,7 @@ impl ShellModel {
             {
                 self.selected_collection = None;
                 self.collection_table_sort = None;
+                self.selected_schema_field = None;
             }
         }
 
@@ -641,6 +798,7 @@ impl ShellModel {
     }
 
     pub fn workspace_update_failed(&mut self, error: ScanError) {
+        self.workspace_errors.push(error.clone());
         let errors = match self.scan_state {
             ScanState::Completed { errors, .. } | ScanState::Updating { errors, .. } => errors + 1,
             _ => 1,
@@ -656,6 +814,7 @@ impl ShellModel {
             });
         }
         self.set_completed_state(errors);
+        self.rebuild_health();
     }
 
     pub fn scan_failed(&mut self, message: String) {
@@ -667,6 +826,14 @@ impl ShellModel {
         self.collection_table_sort = None;
         self.search = SearchState::closed();
         self.relation_index = RelationIndex::default();
+        self.schema_catalog = SchemaCatalog::default();
+        self.health = DatabaseHealth::default();
+        self.health_filter = HealthFilter::All;
+        self.health_query.clear();
+        self.selected_health_issue_id = None;
+        self.workspace_errors.clear();
+        self.selected_schema_field = None;
+        self.collection_panel = CollectionPanel::Data;
         self.editor = EditorState::default();
         self.scan_state = ScanState::Failed(message);
     }
@@ -724,9 +891,12 @@ impl ShellModel {
             document_path: document.path.clone(),
             relative_path: document.relative_path.clone(),
             title: document.file_name.to_string_lossy().into_owned(),
+            kind: EditorTabKind::Markdown,
             buffer: content.clone(),
             saved_content: content,
             dirty: false,
+            view_mode: EditorViewMode::Edit,
+            split_ratio: 500,
             external_conflict: None,
             ignored_external_conflict: None,
             save_error: document
@@ -736,6 +906,46 @@ impl ShellModel {
         });
         self.editor.active_path = Some(path);
         true
+    }
+
+    pub fn open_schema_tab(&mut self) -> Result<bool, String> {
+        let Some(root) = self.current_workspace.as_ref() else {
+            return Ok(false);
+        };
+        let path = crate::schema_path(root);
+        if self.editor.tabs.iter().any(|tab| tab.document_path == path) {
+            self.editor.active_path = Some(path);
+            self.selected_document_path = None;
+            self.selected_collection = None;
+            self.collection_table_sort = None;
+            return Ok(true);
+        }
+
+        let content = fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "Não foi possível abrir {}: {error}",
+                crate::SCHEMA_FILE_NAME
+            )
+        })?;
+        self.editor.tabs.push(EditorTab {
+            document_path: path.clone(),
+            relative_path: PathBuf::from(crate::SCHEMA_FILE_NAME),
+            title: String::from(crate::SCHEMA_FILE_NAME),
+            kind: EditorTabKind::Schema,
+            buffer: content.clone(),
+            saved_content: content,
+            dirty: false,
+            view_mode: EditorViewMode::Edit,
+            split_ratio: 500,
+            external_conflict: None,
+            ignored_external_conflict: None,
+            save_error: None,
+        });
+        self.editor.active_path = Some(path);
+        self.selected_document_path = None;
+        self.selected_collection = None;
+        self.collection_table_sort = None;
+        Ok(true)
     }
 
     pub fn activate_editor_tab(&mut self, path: PathBuf) -> bool {
@@ -765,6 +975,22 @@ impl ShellModel {
         tab.buffer = buffer;
         tab.dirty = tab.buffer != tab.saved_content;
         tab.save_error = None;
+        true
+    }
+
+    pub fn set_active_editor_view_mode(&mut self, mode: EditorViewMode) -> bool {
+        let Some(tab) = self.editor.active_tab_mut() else {
+            return false;
+        };
+        tab.view_mode = mode;
+        true
+    }
+
+    pub fn set_active_editor_split_ratio(&mut self, ratio: f32) -> bool {
+        let Some(tab) = self.editor.active_tab_mut() else {
+            return false;
+        };
+        tab.split_ratio = (ratio.clamp(0.3, 0.7) * 1000.0).round() as u16;
         true
     }
 
@@ -963,6 +1189,20 @@ impl ShellModel {
             .find(|collection| &collection.id == id)
     }
 
+    pub fn selected_collection_schema(&self) -> Option<&crate::CollectionSchema> {
+        let id = self.selected_collection.as_ref()?;
+        self.schema_catalog.collection(id)
+    }
+
+    pub fn selected_schema_field(&self) -> Option<&crate::SchemaField> {
+        let (collection_id, field_name) = self.selected_schema_field.as_ref()?;
+        self.schema_catalog
+            .collection(collection_id)?
+            .fields
+            .iter()
+            .find(|field| &field.name == field_name)
+    }
+
     pub fn collection_documents(&self, collection_id: &str) -> Vec<&Document> {
         self.documents
             .iter()
@@ -978,6 +1218,14 @@ impl ShellModel {
     }
 
     pub fn document_inspector(&self) -> InspectorModel {
+        if self.active_activity == Activity::Health {
+            if let Some(issue) = self.selected_health_issue() {
+                return InspectorModel::HealthIssue(HealthIssueInspector {
+                    issue: issue.clone(),
+                });
+            }
+        }
+
         let Some(document) = self.selected_document() else {
             return InspectorModel::Empty {
                 title: String::from("Nenhum documento selecionado."),
@@ -1043,6 +1291,45 @@ impl ShellModel {
         };
     }
 
+    fn rebuild_schema_catalog(&mut self, explicit_schema: Option<ExplicitSchemaState>) {
+        let explicit_schema = explicit_schema.unwrap_or_else(|| {
+            self.current_workspace
+                .as_deref()
+                .map(load_explicit_schema)
+                .unwrap_or_default()
+        });
+        self.schema_catalog = SchemaCatalog::build(
+            &self.documents,
+            &self.collections,
+            &self.relation_index,
+            explicit_schema,
+        );
+
+        if let Some((collection_id, field_name)) = self.selected_schema_field.as_ref() {
+            let still_exists = self
+                .schema_catalog
+                .collection(collection_id)
+                .is_some_and(|schema| schema.fields.iter().any(|field| &field.name == field_name));
+            if !still_exists {
+                self.selected_schema_field = None;
+            }
+        }
+    }
+
+    fn rebuild_health(&mut self) {
+        self.health = build_health(
+            &self.documents,
+            &self.workspace_errors,
+            &self.schema_catalog,
+            &self.relation_index,
+        );
+        if let Some(issue_id) = self.selected_health_issue_id.as_ref() {
+            if !self.health.issues.iter().any(|issue| &issue.id == issue_id) {
+                self.selected_health_issue_id = None;
+            }
+        }
+    }
+
     fn close_editor_tab(&mut self, path: &Path) {
         let Some(index) = self
             .editor
@@ -1102,9 +1389,19 @@ impl ShellModel {
 
         self.editor
             .tabs
-            .retain(|tab| documents.contains_key(&tab.document_path));
+            .retain(|tab| match tab.kind {
+                EditorTabKind::Markdown => documents.contains_key(&tab.document_path),
+                EditorTabKind::Schema => self
+                    .current_workspace
+                    .as_ref()
+                    .map(crate::schema_path)
+                    .is_some_and(|path| path == tab.document_path),
+            });
 
         for tab in &mut self.editor.tabs {
+            if tab.kind != EditorTabKind::Markdown {
+                continue;
+            }
             let Some((relative_path, title, source_content)) = documents.get(&tab.document_path)
             else {
                 continue;
@@ -1134,6 +1431,53 @@ impl ShellModel {
         }
 
         self.ensure_active_tab_exists();
+    }
+
+    fn sync_schema_editor_tab_with_file(&mut self, root: &Path) {
+        let path = crate::schema_path(root);
+        let Some(tab) = self
+            .editor
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.kind == EditorTabKind::Schema && tab.document_path == path)
+        else {
+            return;
+        };
+
+        match fs::read_to_string(&path) {
+            Ok(content) if tab.dirty => {
+                if content != tab.saved_content && tab.external_conflict.is_none() {
+                    let conflict = EditorExternalConflict::Modified(content);
+                    if tab.ignored_external_conflict.as_ref() != Some(&conflict) {
+                        tab.external_conflict = Some(conflict);
+                    }
+                }
+            }
+            Ok(content) if content != tab.saved_content => {
+                tab.buffer = content.clone();
+                tab.saved_content = content;
+                tab.external_conflict = None;
+                tab.ignored_external_conflict = None;
+                tab.save_error = None;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if tab.dirty {
+                    let conflict = EditorExternalConflict::Deleted;
+                    if tab.ignored_external_conflict.as_ref() != Some(&conflict) {
+                        tab.external_conflict = Some(conflict);
+                    }
+                } else {
+                    self.close_editor_tab(&path);
+                }
+            }
+            Err(error) => {
+                tab.save_error = Some(format!(
+                    "Não foi possível ler {}: {error}",
+                    crate::SCHEMA_FILE_NAME
+                ));
+            }
+        }
     }
 
     fn is_stale_document_update(&self, document: &Document) -> bool {
@@ -1692,8 +2036,8 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use crate::{
         mock_shell, save_markdown_file, scan_workspace, workspace_update_from_events, Collection,
-        Document, DocumentMetadata, DocumentWarning, PropertyValue, ScanResult, TableModel,
-        WorkspaceEvent,
+        Document, DocumentMetadata, DocumentWarning, ExplicitSchemaState, HealthFilter,
+        HealthIssueKind, PropertyValue, ScanResult, SchemaType, TableModel, WorkspaceEvent,
     };
 
     use std::{
@@ -1705,7 +2049,8 @@ mod tests {
     };
 
     use super::{
-        workspace_display, ExplorerNode, ExplorerNodeId, InspectorModel, InspectorValue, ScanState,
+        workspace_display, Activity, EditorViewMode, ExplorerNode, ExplorerNodeId, InspectorModel,
+        InspectorValue, ScanState,
     };
 
     #[test]
@@ -3270,6 +3615,766 @@ mod tests {
     }
 
     #[test]
+    fn schema_updates_when_markdown_properties_change_create_and_remove() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\npriority: 10\n---\n# A\n",
+        );
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: active\npriority: 11\n---\n# B\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+        assert!(schema_field(project, "status").required);
+
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\npriority: high\n---\n# A\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/a.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Mixed
+        );
+        assert_eq!(
+            schema_field(project, "priority")
+                .observed_types
+                .iter()
+                .map(|observed| observed.field_type)
+                .collect::<Vec<_>>(),
+            vec![SchemaType::Integer, SchemaType::String]
+        );
+
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\npriority: 20\n---\n# A\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/a.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+
+        workspace.write(
+            "projects/c.md",
+            "---\ntype: project\npriority: 12\n---\n# C\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/c.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert!(!schema_field(project, "status").required);
+        assert_eq!(schema_field(project, "status").observed_count, 2);
+        assert_eq!(schema_field(project, "status").total_documents, 3);
+
+        fs::remove_file(workspace.path().join("projects/c.md")).unwrap();
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Remove(
+                workspace.path().join("projects/c.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert!(schema_field(project, "status").required);
+        assert_eq!(schema_field(project, "status").observed_count, 2);
+        assert_eq!(schema_field(project, "status").total_documents, 2);
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+    }
+
+    #[test]
+    fn editor_view_mode_is_per_tab_and_switching_modes_keeps_buffer_dirty_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        workspace.write("b.md", "# B\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let a = workspace.path().join("a.md");
+        let b = workspace.path().join("b.md");
+
+        assert!(shell.open_editor_tab(a.clone()));
+        assert!(shell.update_active_editor_buffer(String::from("# A local\n")));
+        assert!(shell.set_active_editor_view_mode(EditorViewMode::Split));
+        assert!(shell.set_active_editor_split_ratio(0.65));
+        let a_tab = shell.editor.tab(&a).unwrap();
+        assert_eq!(a_tab.view_mode, EditorViewMode::Split);
+        assert_eq!(a_tab.buffer, "# A local\n");
+        assert!(a_tab.dirty);
+        assert_eq!(a_tab.split_ratio, 650);
+
+        assert!(shell.open_editor_tab(b.clone()));
+        assert_eq!(
+            shell.editor.tab(&b).unwrap().view_mode,
+            EditorViewMode::Edit
+        );
+        assert!(!shell.editor.tab(&b).unwrap().dirty);
+
+        assert!(shell.activate_editor_tab(a.clone()));
+        assert_eq!(
+            shell.editor.active_tab().unwrap().view_mode,
+            EditorViewMode::Split
+        );
+        assert_eq!(shell.editor.active_tab().unwrap().buffer, "# A local\n");
+        assert!(shell.editor.active_tab().unwrap().dirty);
+
+        assert!(shell.set_active_editor_view_mode(EditorViewMode::Preview));
+        assert_eq!(shell.editor.active_tab().unwrap().buffer, "# A local\n");
+        assert!(shell.editor.active_tab().unwrap().dirty);
+    }
+
+    #[test]
+    fn clean_external_update_refreshes_editor_buffer_for_preview() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        assert!(shell.open_editor_tab(path.clone()));
+
+        workspace.write("a.md", "# A externally changed\n");
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Upsert(path)]);
+
+        let tab = shell.editor.active_tab().unwrap();
+        assert_eq!(tab.buffer, "# A externally changed\n");
+        assert!(!tab.dirty);
+    }
+
+    #[test]
+    fn dirty_external_conflict_keeps_local_buffer_for_preview() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        assert!(shell.open_editor_tab(path.clone()));
+        assert!(shell.update_active_editor_buffer(String::from("# A local preview\n")));
+
+        workspace.write("a.md", "# A external\n");
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Upsert(path)]);
+
+        let tab = shell.editor.active_tab().unwrap();
+        assert_eq!(tab.buffer, "# A local preview\n");
+        assert!(tab.dirty);
+        assert!(tab.external_conflict.is_some());
+    }
+
+    #[test]
+    fn schema_distinguishes_null_from_missing_through_watcher_updates() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\n---\n# A\n",
+        );
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: null\n---\n# B\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        let status = schema_field(project, "status");
+        assert!(status.required);
+        assert!(status.nullable);
+        assert_eq!(status.observed_count, 2);
+        assert_eq!(status.null_count, 1);
+
+        workspace.write("projects/b.md", "---\ntype: project\n---\n# B\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/b.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        let status = schema_field(project, "status");
+        assert!(!status.required);
+        assert!(!status.nullable);
+        assert_eq!(status.observed_count, 1);
+        assert_eq!(status.total_documents, 2);
+    }
+
+    #[test]
+    fn editor_save_pipeline_updates_schema_without_editor_coupling() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("projects/a.md");
+
+        save_markdown_file(&path, "---\ntype: project\npriority: high\n---\n# A\n").unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Upsert(path)]);
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::String
+        );
+    }
+
+    #[test]
+    fn explicit_schema_reload_invalid_schema_and_absence_keep_inferred_schema() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: high\n---\n# A\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Absent
+        ));
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n        required: false\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Loaded(_)
+        ));
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+        assert!(schema_field(project, "priority").divergent);
+
+        workspace.write("flokin.schema.yaml", "version: [broken\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Invalid(_)
+        ));
+        assert!(!shell.schema_catalog.warnings.is_empty());
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::String
+        );
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: string\n        required: false\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Loaded(_)
+        ));
+        assert!(shell.schema_catalog.warnings.is_empty());
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::String
+        );
+        assert!(!schema_field(project, "priority").divergent);
+
+        workspace.write("flokin.schema.yaml", "version: [broken\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Invalid(_)
+        ));
+        assert!(!shell.schema_catalog.warnings.is_empty());
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: string\n        required: false\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Loaded(_)
+        ));
+        assert!(shell.schema_catalog.warnings.is_empty());
+
+        fs::remove_file(workspace.path().join("flokin.schema.yaml")).unwrap();
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Remove(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Absent
+        ));
+    }
+
+    #[test]
+    fn explicit_schema_tracks_divergence_and_extra_fields_without_health() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\npriority: 10\nbudget: 100\n---\n# A\n",
+        );
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: paused\npriority: 20\n---\n# B\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      title:\n        type: string\n        required: true\n      status:\n        type: string\n        required: true\n      priority:\n        type: integer\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+        assert!(!schema_field(project, "priority").divergent);
+        assert!(!schema_field(project, "budget").declared);
+
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: paused\npriority: high\n---\n# B\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/b.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        let priority = schema_field(project, "priority");
+        assert_eq!(priority.field_type, SchemaType::Integer);
+        assert_eq!(
+            priority
+                .observed_types
+                .iter()
+                .map(|observed| observed.field_type)
+                .collect::<Vec<_>>(),
+            vec![SchemaType::Integer, SchemaType::String]
+        );
+        assert!(priority.divergent);
+        assert!(!schema_field(project, "budget").declared);
+
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: paused\npriority: 20\n---\n# B\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/b.md"),
+            )],
+        );
+
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert!(!schema_field(project, "priority").divergent);
+    }
+
+    #[test]
+    fn health_updates_when_schema_type_mismatch_is_corrected_by_save_pipeline() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: high\n---\n# A\n",
+        );
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\npriority: 20\n---\n# B\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(health_has_kind(&shell, HealthIssueKind::TypeMismatch));
+        assert_eq!(shell.health.summary.errors, 1);
+
+        let path = workspace.path().join("projects/a.md");
+        save_markdown_file(&path, "---\ntype: project\npriority: 10\n---\n# A\n").unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Upsert(path)]);
+
+        assert!(!health_has_kind(&shell, HealthIssueKind::TypeMismatch));
+        assert_eq!(shell.health.summary.errors, 0);
+        assert_eq!(shell.health.summary.healthy_documents, 2);
+    }
+
+    #[test]
+    fn health_required_field_issue_tracks_create_and_delete() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\n---\n# A\n",
+        );
+        workspace.write(
+            "projects/b.md",
+            "---\ntype: project\nstatus: paused\n---\n# B\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      status:\n        type: string\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+        assert_eq!(shell.health.summary.healthy_documents, 2);
+
+        workspace.write("projects/c.md", "---\ntype: project\n---\n# C\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("projects/c.md"),
+            )],
+        );
+
+        assert!(health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+        assert_eq!(shell.health.summary.errors, 1);
+        assert_eq!(shell.health.summary.healthy_documents, 2);
+
+        let path = workspace.path().join("projects/c.md");
+        fs::remove_file(&path).unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Remove(path)]);
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+        assert_eq!(shell.health.summary.errors, 0);
+        assert_eq!(shell.health.summary.healthy_documents, 2);
+    }
+
+    #[test]
+    fn health_schema_file_recovery_clears_stale_explicit_schema_issue() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        workspace.write("flokin.schema.yaml", "version: [broken\n");
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 999\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+    }
+
+    #[test]
+    fn health_relation_issues_follow_target_create_delete_and_ambiguity() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "meetings/carf.md",
+            "---\ntype: meeting\nowner: \"[[Maria]]\"\n---\n# CARF\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(health_has_kind(&shell, HealthIssueKind::RelationUnresolved));
+
+        workspace.write("people/maria.md", "---\ntype: person\n---\n# Maria\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("people/maria.md"),
+            )],
+        );
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::RelationUnresolved
+        ));
+
+        workspace.write("archive/maria.md", "---\ntype: person\n---\n# Maria\n");
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("archive/maria.md"),
+            )],
+        );
+        assert!(health_has_kind(&shell, HealthIssueKind::RelationAmbiguous));
+
+        let duplicate = workspace.path().join("archive/maria.md");
+        fs::remove_file(&duplicate).unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Remove(duplicate)]);
+        assert!(!health_has_kind(&shell, HealthIssueKind::RelationAmbiguous));
+
+        let maria = workspace.path().join("people/maria.md");
+        fs::remove_file(&maria).unwrap();
+        apply_events(&mut shell, &workspace, [WorkspaceEvent::Remove(maria)]);
+        assert!(health_has_kind(&shell, HealthIssueKind::RelationUnresolved));
+    }
+
+    #[test]
+    fn health_workspace_change_discards_previous_projection() {
+        let first = TempWorkspace::new();
+        first.write("projects/a.md", "---\ntype: project\n---\n# A\n");
+        first.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      status:\n        type: string\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&first);
+        assert!(health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+
+        let second = TempWorkspace::new();
+        second.write(
+            "people/sergio.md",
+            "---\ntype: person\nactive: true\n---\n# Sergio\n",
+        );
+        shell.workspace_selected(Some(second.path().to_path_buf()));
+        shell.scan_completed(scan_workspace(second.path()).unwrap());
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+        assert_eq!(shell.health.summary.errors, 0);
+        assert_eq!(shell.health.summary.total_documents, 1);
+        assert!(shell.schema_catalog.collection("project").is_none());
+    }
+
+    #[test]
+    fn health_filter_query_and_issue_selection_drive_inspector() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: high\nbudget: 100\n---\n# A\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+        shell.active_activity = Activity::Health;
+
+        shell.select_health_filter(HealthFilter::Errors);
+        assert_eq!(shell.filtered_health_issues().len(), 1);
+        shell.select_health_filter(HealthFilter::Warnings);
+        assert_eq!(shell.filtered_health_issues().len(), 1);
+        shell.select_health_filter(HealthFilter::All);
+        shell.update_health_query(String::from("budget"));
+        assert_eq!(shell.filtered_health_issues().len(), 1);
+
+        let issue_id = shell.filtered_health_issues()[0].id.clone();
+        assert!(shell.select_health_issue(issue_id));
+        assert!(matches!(
+            shell.document_inspector(),
+            InspectorModel::HealthIssue(_)
+        ));
+        assert_eq!(
+            shell.selected_document_path.as_ref(),
+            Some(&workspace.path().join("projects/a.md"))
+        );
+    }
+
+    #[test]
+    fn invalid_explicit_field_type_and_version_fall_back_to_inferred_schema() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: banana\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Invalid(_)
+        ));
+        assert!(!shell.schema_catalog.warnings.is_empty());
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 999\ncollections:\n  projects:\n    fields:\n      priority:\n        type: string\n",
+        );
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Invalid(_)
+        ));
+        assert!(shell
+            .schema_catalog
+            .warnings
+            .first()
+            .is_some_and(|warning| warning.message.contains("versão 999 incompatível")));
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+    }
+
+    #[test]
+    fn workspace_change_discards_previous_schema_catalog() {
+        let first = TempWorkspace::new();
+        first.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        first.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n",
+        );
+        let mut shell = shell_from_workspace(&first);
+        assert!(shell.schema_catalog.collection("project").is_some());
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Loaded(_)
+        ));
+
+        let second = TempWorkspace::new();
+        second.write(
+            "people/sergio.md",
+            "---\ntype: person\nactive: true\n---\n# Sergio\n",
+        );
+        shell.workspace_selected(Some(second.path().to_path_buf()));
+        shell.scan_completed(scan_workspace(second.path()).unwrap());
+
+        assert!(shell.schema_catalog.collection("project").is_none());
+        assert!(shell.schema_catalog.collection("person").is_some());
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Absent
+        ));
+    }
+
+    #[test]
     fn workspace_deleted_during_processing_does_not_panic() {
         let workspace = TempWorkspace::new();
         workspace.write("gone.md", "# Gone\n");
@@ -3381,8 +4486,20 @@ mod tests {
             .find(|field| field.label == label)
     }
 
+    fn schema_field<'a>(schema: &'a crate::CollectionSchema, name: &str) -> &'a crate::SchemaField {
+        schema
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap()
+    }
+
     fn property_value(shell: &super::ShellModel, label: &str) -> InspectorValue {
         property(shell, label).unwrap().value
+    }
+
+    fn health_has_kind(shell: &super::ShellModel, kind: HealthIssueKind) -> bool {
+        shell.health.issues.iter().any(|issue| issue.kind == kind)
     }
 
     fn path(shell: &super::ShellModel, relative_path: &str) -> PathBuf {

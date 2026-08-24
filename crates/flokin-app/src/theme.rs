@@ -1,8 +1,10 @@
 use iced::border::Radius;
 pub mod tokens;
 
-use iced::widget::{button, container, svg, text, text_editor as iced_text_editor, text_input};
-use iced::{theme as iced_theme, Background, Border, Color, Font, Shadow, Theme};
+use iced::widget::{
+    button, container, markdown, svg, text, text_editor as iced_text_editor, text_input,
+};
+use iced::{theme as iced_theme, Background, Border, Color, Font, Padding, Shadow, Theme};
 
 pub use tokens::{ColorTokens, ThemeTokens};
 
@@ -145,6 +147,7 @@ pub enum Icon {
     Focus,
     Frame,
     Graph,
+    Health,
     Minus,
     PanelLeft,
     Plus,
@@ -218,6 +221,33 @@ pub fn text_error(theme: &Theme) -> text::Style {
     }
 }
 
+pub fn markdown_preview_settings(app_theme: AppTheme) -> markdown::Settings {
+    let iced_theme = app_theme.iced();
+    let palette = palette(&iced_theme);
+    let style = markdown::Style {
+        font: typography::UI,
+        inline_code_highlight: markdown::Highlight {
+            background: Background::Color(palette.preview_code_background),
+            border: iced::border::rounded(radius::SM),
+        },
+        inline_code_padding: Padding::from([0.0, 3.0]),
+        inline_code_color: palette.preview_text,
+        inline_code_font: typography::MONO,
+        code_block_font: typography::MONO,
+        link_color: palette.preview_link,
+    };
+    let mut settings = markdown::Settings::with_text_size(typography::BODY, style);
+    settings.h1_size = 26.0.into();
+    settings.h2_size = 21.0.into();
+    settings.h3_size = 17.0.into();
+    settings.h4_size = typography::TITLE.into();
+    settings.h5_size = typography::BODY.into();
+    settings.h6_size = typography::BODY.into();
+    settings.code_size = typography::BODY.into();
+    settings.spacing = spacing::MD.into();
+    settings
+}
+
 pub fn icon_style(theme: &Theme, _status: svg::Status) -> svg::Style {
     svg::Style {
         color: Some(palette(theme).text_muted),
@@ -239,6 +269,15 @@ pub fn markdown_text_editor(
     status: iced_text_editor::Status,
 ) -> iced_text_editor::Style {
     text_editor_with_background(theme, status, Color::TRANSPARENT)
+}
+
+pub fn markdown_preview(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.preview_background,
+        Some(palette.border_subtle),
+        radius::SM,
+    )
 }
 
 fn text_editor_with_background(
@@ -743,6 +782,9 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Graph => {
             r#"<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="8" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/><path d="M8.4 7.8 15.6 6.4"/><path d="M7 9.2 7.7 15.6"/><path d="M10.3 17.4 14.7 16.5"/></svg>"#
+        }
+        Icon::Health => {
+            r#"<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/><path d="M7 12h3l1.5-4 2 7 1.5-3h2"/></svg>"#
         }
         Icon::Minus => r#"<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>"#,
         Icon::PanelLeft => {

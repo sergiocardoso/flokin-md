@@ -1,9 +1,14 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    ExplorerNodeId, GraphNodeId, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
+    CollectionPanel, EditorViewMode, ExplorerNodeId, GraphNodeId, HealthFilter, ScanResult,
+    SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
 };
-use iced::{keyboard, widget::text_editor, window};
+use iced::{
+    keyboard,
+    widget::{markdown, text_editor},
+    window,
+};
 
 use crate::services::file_watcher::WatcherMessage;
 
@@ -26,6 +31,7 @@ pub enum MenuAction {
     Explorer,
     Data,
     Graph,
+    Health,
     SqlExplorer,
     Settings,
     Search,
@@ -38,6 +44,7 @@ pub enum AppMode {
     Files,
     Data,
     Graph,
+    Health,
     Sql,
     Settings,
 }
@@ -48,6 +55,7 @@ pub enum SplitterKind {
     Inspector,
     SqlSchema,
     SqlEditor,
+    MarkdownPreview,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +70,20 @@ pub enum Message {
     WorkspaceWatcher(WatcherMessage),
     WorkspaceUpdateCompleted(u64, PathBuf, Result<WorkspaceUpdate, String>),
     CollectionSelected(String),
+    CollectionPanelSelected(CollectionPanel),
+    SchemaFieldSelected {
+        collection_id: String,
+        field_name: String,
+    },
+    HealthFilterSelected(HealthFilter),
+    HealthQueryChanged(String),
+    HealthIssueSelected(String),
+    HealthIssueOpened(String),
+    SchemaCreateRequested,
+    SchemaCreateCanceled,
+    SchemaCreateConfirmed,
+    SchemaCreateCompleted(Result<PathBuf, String>),
+    SchemaOpenRequested,
     TableHeaderSelected(String),
     MarkdownSelected(PathBuf),
     GraphFitRequested,
@@ -86,6 +108,8 @@ pub enum Message {
     EditorTabSelected(PathBuf),
     EditorTabCloseRequested(PathBuf),
     MarkdownEditorAction(text_editor::Action),
+    EditorViewModeSelected(EditorViewMode),
+    MarkdownLinkClicked(markdown::Uri),
     EditorSaveRequested,
     EditorSaveCompleted(PathBuf, String, Result<(), String>),
     EditorCloseActiveRequested,

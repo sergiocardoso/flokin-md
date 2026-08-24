@@ -1,8 +1,8 @@
 use flokin_core::{EditorDialog, ShellModel, SqlCompletionItem};
-use iced::widget::text_editor;
 use iced::widget::{
     button, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
+use iced::widget::{markdown, text_editor};
 use iced::{alignment, mouse, Alignment, Element, Length};
 
 use crate::{
@@ -19,6 +19,7 @@ pub fn view<'a>(
     app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
     sql_completion_items: &'a [SqlCompletionItem],
     graph_state: &'a GraphViewState,
     sql_completion_selected: usize,
@@ -49,8 +50,10 @@ pub fn view<'a>(
         }
         content = content.push(workspace(
             model,
+            app_theme,
             sql_editor,
             markdown_editor,
+            markdown_preview,
             sql_completion_items,
             sql_completion_selected,
             sql_completion_open,
@@ -79,6 +82,15 @@ pub fn view<'a>(
                 .push(views::inspector::view(model, inspector_width));
         }
         content
+    } else if mode == AppMode::Health {
+        let mut content = row![activity_bar(mode)].height(Length::Fill);
+        content = content.push(views::health::view(model));
+        if right_visible {
+            content = content
+                .push(splitter(SplitterKind::Inspector, false))
+                .push(views::inspector::view(model, inspector_width));
+        }
+        content
     } else {
         let mut content = row![activity_bar(mode)].height(Length::Fill);
         if left_visible {
@@ -94,8 +106,10 @@ pub fn view<'a>(
         }
         content = content.push(workspace(
             model,
+            app_theme,
             sql_editor,
             markdown_editor,
+            markdown_preview,
             sql_completion_items,
             sql_completion_selected,
             sql_completion_open,
@@ -228,6 +242,7 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
             ("Arquivos", None, MenuAction::Explorer),
             ("Dados", None, MenuAction::Data),
             ("Grafo", None, MenuAction::Graph),
+            ("Saúde do banco", None, MenuAction::Health),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
             ("Configurações", None, MenuAction::Settings),
             ("Buscar", Some("Ctrl+K"), MenuAction::Search),
@@ -235,6 +250,7 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
         MenuId::Data => vec![
             ("Abrir Dados", None, MenuAction::Data),
             ("Abrir Grafo", None, MenuAction::Graph),
+            ("Saúde do banco", None, MenuAction::Health),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
             ("Executar query", Some("Ctrl+Enter"), MenuAction::ExecuteSql),
         ],
@@ -655,6 +671,7 @@ fn activity_bar(mode: AppMode) -> Element<'static, Message> {
         (AppMode::Files, theme::Icon::Folder, "Arquivos"),
         (AppMode::Data, theme::Icon::Database, "Dados"),
         (AppMode::Graph, theme::Icon::Graph, "Grafo"),
+        (AppMode::Health, theme::Icon::Health, "Saúde do banco"),
         (AppMode::Sql, theme::Icon::Terminal, "SQL Explorer"),
     ];
     let mut top = column![]
@@ -708,10 +725,13 @@ fn activity_button(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn workspace<'a>(
     model: &'a ShellModel,
+    app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
     sql_completion_items: &'a [SqlCompletionItem],
     sql_completion_selected: usize,
     sql_completion_open: bool,
@@ -721,8 +741,10 @@ fn workspace<'a>(
         views::editor::tabs(model),
         views::editor::view(
             model,
+            app_theme,
             sql_editor,
             markdown_editor,
+            markdown_preview,
             sql_completion_items,
             sql_completion_selected,
             sql_completion_open,

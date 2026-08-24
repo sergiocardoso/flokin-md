@@ -1,5 +1,5 @@
-use crate::model::{Activity, FilterCount, ScanState, ShellModel};
-use crate::{RelationIndex, SearchState, SqlExplorerState};
+use crate::model::{Activity, CollectionPanel, FilterCount, HealthFilter, ScanState, ShellModel};
+use crate::{DatabaseHealth, RelationIndex, SchemaCatalog, SearchState, SqlExplorerState};
 use std::collections::BTreeSet;
 
 pub fn mock_shell() -> ShellModel {
@@ -15,6 +15,14 @@ pub fn mock_shell() -> ShellModel {
         collection_table_sort: None,
         search: SearchState::closed(),
         relation_index: RelationIndex::default(),
+        schema_catalog: SchemaCatalog::default(),
+        health: DatabaseHealth::default(),
+        health_filter: HealthFilter::All,
+        health_query: String::new(),
+        selected_health_issue_id: None,
+        workspace_errors: Vec::new(),
+        selected_schema_field: None,
+        collection_panel: CollectionPanel::Data,
         editor: crate::model::EditorState::default(),
         sql_explorer: SqlExplorerState::closed(),
         collapsed_sql_tables: BTreeSet::new(),

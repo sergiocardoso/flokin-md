@@ -83,6 +83,49 @@ The initial layout is deterministic and disposable. User-dragged node positions 
 
 The Iced Graph view renders the projection through a native canvas with pan, zoom, fit, focused selected document, node selection, and document opening. Single click selects a real Document node for the existing Inspector without leaving Graph mode. Double click reuses the existing editor tab opening flow. Unresolved and ambiguous targets are rendered as non-document problem nodes and are not navigable as Documents.
 
+## Schema Catalog
+
+MDB-014 adds a disposable schema projection derived from the loaded Document Store, Collections, and RelationIndex.
+
+```text
+Documents
+    ↓
+Collections
+    ↓
+Schema inference
+    ↓
+SchemaCatalog
+
+Optional:
+flokin.schema.yaml
+    ↓
+Explicit Schema
+    ↓
+SchemaCatalog
+```
+
+Every Collection receives an inferred schema without setup, migrations, a database file, or an explicit schema file. Inference reads the already loaded `Document` values and preserves Markdown as the source of truth. It does not reread Markdown files during rendering and does not affect SQL projection types.
+
+`SchemaCatalog` lives in `flokin-core` and remains independent of Iced. It tracks field type, required/optional status, nullable values, present/total coverage, observed type counts, structural resolved `title`, explicit declarations when present, and divergence between explicit declarations and observed Markdown values. Relation fields are inferred only when `RelationIndex` has explicit wikilink relations for that property; ordinary strings remain strings.
+
+An optional read-only `flokin.schema.yaml` file may exist at the workspace root. FlokinMD never creates, formats, saves, or migrates it. If the file is absent, the inferred schema is used. If it is invalid or has an incompatible version, the workspace continues to work and inferred schema remains available with a warning. The watcher treats only this root-level file as schema input, so ordinary YAML files are not added to the Markdown scanner.
+
+## Database Health
+
+MDB-015 adds a diagnostic health projection derived from existing core state.
+
+```text
+Parser Diagnostics ─┐
+SchemaCatalog ──────┼→ HealthProjection → Health View
+RelationIndex ──────┘
+```
+
+`HealthProjection` lives in `flokin-core` and does not depend on Iced. It consumes loaded `Document` warnings, workspace scan errors, `SchemaCatalog`, and `RelationIndex`; it does not reread files, run external linters, use SQL, or write Markdown. The projection is rebuilt after scans, watcher updates, schema-file changes, relation-index rebuilds, and workspace changes, so stale issues from an old workspace or deleted document are discarded with the same source-of-truth rules as the rest of the app.
+
+Health issues use structured severity and category enums. Severities are `Error`, `Warning`, and `Info`; documents with Errors or Warnings are not counted as healthy. Categories are `Parsing`, `Schema`, `Relations`, and `Workspace`. Initial issue kinds cover invalid frontmatter/read or scan failures, invalid explicit schema, missing required fields from explicit schema only, explicit/observed type mismatches, undeclared fields when an explicit schema exists, inferred Mixed types, unresolved relations, and ambiguous relations. Self relations and relation cycles are not considered problems in this milestone.
+
+The Health View is a read-only diagnostic screen. It shows compact counts, dense issue rows, simple filters, issue selection, Inspector details, and an Open document action that reuses the existing editor-tab flow. It does not implement health scores, automatic fixes, schema editing, migrations, write SQL, Git, AI, or Markdown write-back.
+
 ## Markdown Editor And Tabs
 
 MDB-012 replaces the read-only center source viewer with real Markdown tabs and editable buffers.
@@ -108,6 +151,10 @@ EDITOR-STABILITY-001 tightens this path so filesystem updates are serialized in 
 `workspace_update_from_events` resolves Markdown paths against the final filesystem state when processing a debounced batch. If a transient remove and upsert both mention the same existing file, the result is a single upsert; only paths missing at processing time become removals. Dirty editor tabs are not closed by removal events. They keep their local buffer and record a structured external conflict (`Modified` or `Deleted`). Choosing Keep Local records the already-seen external state so unrelated watcher updates do not recreate the same conflict banner.
 
 The Iced editor widget state is app-owned per document path. `flokin-app` keeps a `text_editor::Content` map keyed by real document path, while `flokin-core` keeps only GUI-independent buffers and dirty/conflict state. Watcher synchronization updates only the `text_editor::Content` entries for changed paths, so an update for `b.md` does not rebuild the active editor state for `a.md`.
+
+MDB-012B adds a native Markdown Preview over the same editor state. Each `EditorTab` stores an in-memory `EditorViewMode` (`Edit`, `Split`, or `Preview`) and a split ratio; neither is persisted to Markdown. Preview content is parsed in `flokin-app` with `iced::widget::markdown` from the current live `EditorTab.buffer`, so unsaved text appears in Preview without autosave or dirty-state changes. The scanner-owned `markdown_body_without_frontmatter` helper removes root YAML frontmatter before rendering, using the same frontmatter boundary rules as document parsing.
+
+Preview parse results are cached per document path and rebuilt only when the frontmatter-stripped live buffer changes. Clean watcher updates replace the tab buffer and refresh the preview; dirty tabs with external conflicts keep rendering the local buffer. Links are rendered visually by the markdown widget, but external navigation is intentionally not implemented in this milestone. Relative image resolution, synchronized scrolling, WYSIWYG editing, source mapping, Mermaid, math, HTML scripting, and Markdown autocomplete remain out of scope.
 
 ## File Watcher
 

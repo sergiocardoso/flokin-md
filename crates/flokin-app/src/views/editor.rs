@@ -1,10 +1,11 @@
 use flokin_core::{
-    Collection, EditorExternalConflict, EditorTab, ShellModel, SortDirection, SqlColumnType,
-    SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell, TableColumn,
-    TableModel, TableValueType,
+    Collection, CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab,
+    EditorViewMode, SchemaField, SchemaSource, SchemaType, ShellModel, SortDirection,
+    SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell,
+    TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable,
+    button, column, container, markdown, mouse_area, row, scrollable,
     scrollable::{Direction, Scrollbar},
     stack, text,
     text::{LineHeight, Wrapping},
@@ -14,7 +15,7 @@ use iced::{keyboard, keyboard::Key, Alignment, Element, Length};
 
 use crate::{
     message::{Message, SplitterKind},
-    theme,
+    theme::{self, AppTheme},
     views::data_grid,
     widgets,
 };
@@ -124,10 +125,13 @@ fn editor_tab_label(model: &ShellModel, tab: &EditorTab) -> String {
     format!("{} — {}", tab.title, parent)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     model: &'a ShellModel,
+    app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
     sql_completion_items: &'a [SqlCompletionItem],
     sql_completion_selected: usize,
     sql_completion_open: bool,
@@ -149,7 +153,7 @@ pub fn view<'a>(
     }
 
     if let Some(tab) = model.active_editor_tab() {
-        return markdown_editor_view(tab, markdown_editor, model);
+        return markdown_editor_view(tab, markdown_editor, markdown_preview, app_theme, model);
     }
 
     if model.current_workspace.is_some() && model.documents.is_empty() {
@@ -568,15 +572,25 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
         model.collection_table_sort.as_ref(),
         Some(&model.relation_index),
     );
-
-    container(
-        column![
-            collection_header(collection, table.columns.len().saturating_sub(1)),
+    let property_count = table.columns.len().saturating_sub(1);
+    let schema = model.selected_collection_schema();
+    let content = match model.collection_panel {
+        CollectionPanel::Data => {
             if table.rows.is_empty() {
                 empty_collection_view()
             } else {
                 table_view(model, table)
             }
+        }
+        CollectionPanel::Schema => schema
+            .map(|schema| schema_view(model, schema))
+            .unwrap_or_else(empty_schema_view),
+    };
+
+    container(
+        column![
+            collection_header(collection, property_count, model),
+            content
         ]
         .spacing(theme::spacing::LG),
     )
@@ -590,6 +604,7 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
 fn collection_header<'a>(
     collection: &'a Collection,
     property_count: usize,
+    model: &'a ShellModel,
 ) -> Element<'a, Message> {
     container(
         row![
@@ -603,6 +618,7 @@ fn collection_header<'a>(
             ]
             .spacing(theme::spacing::XS)
             .width(Length::Fill),
+            collection_panel_switch(model),
             text(format!("{property_count} propriedades"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
@@ -613,6 +629,33 @@ fn collection_header<'a>(
     .into()
 }
 
+fn collection_panel_switch(model: &ShellModel) -> Element<'_, Message> {
+    row![
+        collection_panel_button("Dados", CollectionPanel::Data, model),
+        collection_panel_button("Schema", CollectionPanel::Schema, model),
+    ]
+    .spacing(theme::spacing::XS)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn collection_panel_button(
+    label: &'static str,
+    panel: CollectionPanel,
+    model: &ShellModel,
+) -> Element<'static, Message> {
+    button(text(label).size(theme::typography::LABEL))
+        .height(28)
+        .padding([0.0, theme::spacing::MD])
+        .style(if model.collection_panel == panel {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        })
+        .on_press(Message::CollectionPanelSelected(panel))
+        .into()
+}
+
 fn empty_collection_view<'a>() -> Element<'a, Message> {
     container(
         text("Nenhum documento nesta Collection.")
@@ -621,6 +664,280 @@ fn empty_collection_view<'a>() -> Element<'a, Message> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
+    .into()
+}
+
+fn empty_schema_view<'a>() -> Element<'a, Message> {
+    container(
+        text("Nenhum schema disponível para esta Collection.")
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn schema_view<'a>(model: &'a ShellModel, schema: &'a CollectionSchema) -> Element<'a, Message> {
+    let source = match schema.source {
+        SchemaSource::Inferred => "Schema inferido",
+        SchemaSource::Explicit => "Schema explícito + observações inferidas",
+    };
+    let warning = model
+        .schema_catalog
+        .warnings
+        .first()
+        .map(|warning| warning.message.as_str());
+
+    let mut content = column![row![
+        text(format!("{} documentos", schema.document_count))
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+        text(source)
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+    ]
+    .spacing(theme::spacing::MD)
+    .align_y(Alignment::Center),]
+    .spacing(theme::spacing::SM)
+    .height(Length::Fill);
+
+    if let Some(warning) = warning {
+        content = content.push(
+            container(
+                text(warning)
+                    .size(theme::typography::BODY)
+                    .wrapping(Wrapping::Word)
+                    .style(theme::text_warning),
+            )
+            .padding([6.0, theme::spacing::MD])
+            .width(Length::Fill)
+            .style(theme::elevated),
+        );
+    }
+
+    content = content.push(schema_grid(model, schema));
+
+    if let Some(field) = model.selected_schema_field() {
+        content = content.push(schema_field_details(field));
+    }
+
+    content.into()
+}
+
+fn schema_grid<'a>(model: &'a ShellModel, schema: &'a CollectionSchema) -> Element<'a, Message> {
+    let widths = [260.0, 150.0, 110.0, 130.0];
+    let width = data_grid::grid_width(true, widths.into_iter());
+    let mut rows = column![schema_header(widths, width)].spacing(0);
+
+    for (row_index, field) in schema.fields.iter().enumerate() {
+        let selected = model.selected_schema_field.as_ref()
+            == Some(&(schema.collection_id.clone(), field.name.clone()));
+        let mut cells = row![data_grid::row_gutter(row_index, selected)]
+            .spacing(0)
+            .align_y(Alignment::Center);
+        cells = cells.push(schema_cell(
+            schema_field_label(field),
+            widths[0],
+            iced::alignment::Horizontal::Left,
+            selected,
+            false,
+        ));
+        cells = cells.push(schema_cell(
+            schema_type_label(field),
+            widths[1],
+            iced::alignment::Horizontal::Left,
+            selected,
+            field.divergent || field.field_type == SchemaType::Mixed,
+        ));
+        cells = cells.push(schema_cell(
+            if field.required {
+                "✓".to_owned()
+            } else {
+                "✕".to_owned()
+            },
+            widths[2],
+            iced::alignment::Horizontal::Center,
+            selected,
+            false,
+        ));
+        cells = cells.push(schema_cell(
+            format!("{} / {}", field.observed_count, field.total_documents),
+            widths[3],
+            iced::alignment::Horizontal::Center,
+            selected,
+            false,
+        ));
+
+        rows = rows.push(
+            button(container(cells).width(width))
+                .width(width)
+                .height(data_grid::ROW_HEIGHT)
+                .padding(0)
+                .style(move |theme, status| {
+                    theme::data_row_button(theme, row_index, selected, status)
+                })
+                .on_press(Message::SchemaFieldSelected {
+                    collection_id: schema.collection_id.clone(),
+                    field_name: field.name.clone(),
+                }),
+        );
+    }
+
+    container(
+        scrollable(rows)
+            .direction(Direction::Both {
+                vertical: Scrollbar::default(),
+                horizontal: Scrollbar::default(),
+            })
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn schema_header<'a>(widths: [f32; 4], width: f32) -> Element<'a, Message> {
+    let mut header = row![data_grid::header_gutter()]
+        .spacing(0)
+        .align_y(Alignment::Center);
+    for (label, width) in [
+        ("FIELD", widths[0]),
+        ("TYPE", widths[1]),
+        ("REQUIRED", widths[2]),
+        ("PRESENT", widths[3]),
+    ] {
+        header = header.push(data_grid::header_cell(
+            text(label)
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            width,
+        ));
+    }
+
+    container(header)
+        .width(width)
+        .height(data_grid::HEADER_HEIGHT)
+        .style(theme::data_header)
+        .into()
+}
+
+fn schema_cell<'a>(
+    value: String,
+    width: f32,
+    alignment: iced::alignment::Horizontal,
+    selected: bool,
+    warning: bool,
+) -> Element<'a, Message> {
+    let style = if warning {
+        theme::text_warning
+    } else if selected {
+        theme::text_accent
+    } else {
+        theme::text_normal
+    };
+    data_grid::cell(
+        text(value)
+            .size(theme::typography::BODY)
+            .font(theme::mono())
+            .style(style),
+        width,
+        alignment,
+    )
+}
+
+fn schema_field_label(field: &SchemaField) -> String {
+    if field.structural {
+        format!("{} · derivado", field.name)
+    } else {
+        field.name.clone()
+    }
+}
+
+fn schema_type_label(field: &SchemaField) -> String {
+    let mut label = field.field_type.label().to_owned();
+    if field.divergent || field.field_type == SchemaType::Mixed {
+        label.push_str("  ⚠");
+    }
+    label
+}
+
+fn schema_field_details<'a>(field: &'a SchemaField) -> Element<'a, Message> {
+    let observed = if field.observed_types.is_empty() {
+        String::from("Unknown")
+    } else {
+        field
+            .observed_types
+            .iter()
+            .map(|observed| format!("{} {}", observed.field_type.label(), observed.count))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    let declared = field
+        .declared_type
+        .map(|field_type| field_type.label())
+        .unwrap_or("Não declarado");
+    let structural = if field.structural {
+        " · campo estrutural/derivado"
+    } else {
+        ""
+    };
+
+    container(
+        column![
+            text("FIELD")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            text(format!("{}{}", field.name, structural))
+                .size(theme::typography::TITLE)
+                .style(theme::text_accent),
+            row![
+                schema_detail_item("Type", field.field_type.label().to_owned()),
+                schema_detail_item(
+                    "Required",
+                    if field.required { "Sim" } else { "Não" }.to_owned(),
+                ),
+                schema_detail_item(
+                    "Present in",
+                    format!(
+                        "{} / {} documents",
+                        field.observed_count, field.total_documents
+                    ),
+                ),
+                schema_detail_item("Null values", field.null_count.to_string()),
+                schema_detail_item("Declared", declared.to_owned()),
+            ]
+            .spacing(theme::spacing::XL)
+            .align_y(Alignment::Center),
+            text(format!("Observed types: {observed}"))
+                .font(theme::mono())
+                .size(theme::typography::BODY)
+                .style(if field.divergent {
+                    theme::text_warning
+                } else {
+                    theme::text_muted
+                }),
+        ]
+        .spacing(theme::spacing::XS),
+    )
+    .padding(theme::spacing::MD)
+    .width(Length::Fill)
+    .style(theme::elevated)
+    .into()
+}
+
+fn schema_detail_item<'a>(label: &'static str, value: String) -> Element<'a, Message> {
+    column![
+        text(label)
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        text(value)
+            .font(theme::mono())
+            .size(theme::typography::BODY)
+            .style(theme::text_normal),
+    ]
+    .spacing(theme::spacing::XXS)
     .into()
 }
 
@@ -768,6 +1085,8 @@ fn collection_alignment(value_type: TableValueType) -> iced::alignment::Horizont
 fn markdown_editor_view<'a>(
     tab: &'a EditorTab,
     markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
+    app_theme: AppTheme,
     _model: &'a ShellModel,
 ) -> Element<'a, Message> {
     let header = row![
@@ -782,6 +1101,7 @@ fn markdown_editor_view<'a>(
         ]
         .spacing(theme::spacing::XXS)
         .width(Length::Fill),
+        editor_view_mode_controls(tab.view_mode),
         save_button(tab),
     ]
     .spacing(theme::spacing::MD)
@@ -808,13 +1128,46 @@ fn markdown_editor_view<'a>(
         content = content.push(external_conflict_banner(conflict));
     }
 
-    content = content.push(markdown_editor_body(tab, markdown_editor));
+    content = content.push(markdown_document_body(
+        tab,
+        markdown_editor,
+        markdown_preview,
+        app_theme,
+    ));
 
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(theme::spacing::LG)
         .style(theme::editor)
+        .into()
+}
+
+fn editor_view_mode_controls<'a>(active: EditorViewMode) -> Element<'a, Message> {
+    row![
+        editor_view_mode_button("Editar", EditorViewMode::Edit, active),
+        editor_view_mode_button("Dividido", EditorViewMode::Split, active),
+        editor_view_mode_button("Prévia", EditorViewMode::Preview, active),
+    ]
+    .spacing(theme::spacing::XS)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn editor_view_mode_button<'a>(
+    label: &'static str,
+    mode: EditorViewMode,
+    active: EditorViewMode,
+) -> Element<'a, Message> {
+    button(text(label).size(theme::typography::LABEL))
+        .height(28)
+        .padding([0.0, theme::spacing::MD])
+        .style(if mode == active {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        })
+        .on_press(Message::EditorViewModeSelected(mode))
         .into()
 }
 
@@ -875,6 +1228,107 @@ fn external_conflict_banner<'a>(conflict: &'a EditorExternalConflict) -> Element
     .padding([6.0, theme::spacing::MD])
     .width(Length::Fill)
     .style(theme::elevated)
+    .into()
+}
+
+fn markdown_document_body<'a>(
+    tab: &'a EditorTab,
+    markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
+    app_theme: AppTheme,
+) -> Element<'a, Message> {
+    match tab.view_mode {
+        EditorViewMode::Edit => markdown_editor_body(tab, markdown_editor),
+        EditorViewMode::Preview => markdown_preview_body(markdown_preview, app_theme),
+        EditorViewMode::Split => {
+            markdown_split_body(tab, markdown_editor, markdown_preview, app_theme)
+        }
+    }
+}
+
+fn markdown_split_body<'a>(
+    tab: &'a EditorTab,
+    markdown_editor: &'a text_editor::Content,
+    markdown_preview: &'a [markdown::Item],
+    app_theme: AppTheme,
+) -> Element<'a, Message> {
+    iced::widget::responsive(move |size| {
+        let total_width = size.width.max(1.0);
+        let splitter_width = theme::sizes::SPLITTER_HIT_AREA;
+        let available = (total_width - splitter_width).max(1.0);
+        let minimum = 280.0;
+        let left_width = if available < minimum * 2.0 {
+            available * 0.5
+        } else {
+            (available * (f32::from(tab.split_ratio) / 1000.0)).clamp(minimum, available - minimum)
+        };
+        let right_width = (available - left_width).max(1.0);
+
+        row![
+            container(markdown_editor_body(tab, markdown_editor))
+                .width(left_width)
+                .height(Length::Fill),
+            markdown_splitter(),
+            container(markdown_preview_body(markdown_preview, app_theme))
+                .width(right_width)
+                .height(Length::Fill),
+        ]
+        .spacing(0)
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+    })
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
+}
+
+fn markdown_splitter<'a>() -> Element<'a, Message> {
+    mouse_area(
+        container("")
+            .width(theme::sizes::SPLITTER_HIT_AREA)
+            .height(Length::Fill)
+            .style(theme::splitter),
+    )
+    .on_press(Message::SplitterPressed(SplitterKind::MarkdownPreview, 0.0))
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
+}
+
+fn markdown_preview_body<'a>(
+    markdown_preview: &'a [markdown::Item],
+    app_theme: AppTheme,
+) -> Element<'a, Message> {
+    let body: Element<'a, Message> = if markdown_preview.is_empty() {
+        container(
+            text("Prévia vazia.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        )
+        .width(Length::Fill)
+        .padding(theme::spacing::LG)
+        .into()
+    } else {
+        markdown::view(
+            markdown_preview,
+            theme::markdown_preview_settings(app_theme),
+        )
+        .map(Message::MarkdownLinkClicked)
+    };
+
+    container(
+        scrollable(
+            container(body)
+                .width(Length::Fill)
+                .padding([theme::spacing::XL, theme::spacing::XXL]),
+        )
+        .direction(Direction::Vertical(Scrollbar::default()))
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(theme::markdown_preview)
     .into()
 }
 

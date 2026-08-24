@@ -14,7 +14,7 @@ use iced::{
     advanced::widget::{self as advanced_widget, operate},
     application, event, keyboard,
     keyboard::{key::Named, Key},
-    widget::text_editor,
+    widget::{markdown, text_editor},
     window, Element, Size, Subscription, Task, Theme,
 };
 
@@ -35,6 +35,7 @@ pub struct FlokinApp {
     sql_editor: text_editor::Content,
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
     empty_markdown_editor: text_editor::Content,
+    markdown_previews: HashMap<PathBuf, MarkdownPreviewCache>,
     sql_completion: SqlCompletionPopup,
     graph: GraphViewState,
     workspace_update_running: bool,
@@ -47,6 +48,8 @@ pub struct FlokinApp {
     workspace_generation: u64,
     open_menu: Option<crate::message::MenuId>,
     about_open: bool,
+    schema_create_dialog_open: bool,
+    schema_create_error: Option<String>,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
@@ -69,6 +72,7 @@ impl FlokinApp {
             sql_editor: text_editor::Content::new(),
             markdown_editors: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
+            markdown_previews: HashMap::new(),
             sql_completion: SqlCompletionPopup::closed(),
             graph: GraphViewState::default(),
             workspace_update_running: false,
@@ -81,6 +85,8 @@ impl FlokinApp {
             workspace_generation: 0,
             open_menu: None,
             about_open: false,
+            schema_create_dialog_open: false,
+            schema_create_error: None,
             left_width: crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH,
             inspector_width: crate::theme::sizes::INSPECTOR_DEFAULT_WIDTH,
             schema_width: crate::theme::sizes::SCHEMA_DEFAULT_WIDTH,
@@ -105,6 +111,7 @@ impl FlokinApp {
                     AppMode::Sql => flokin_core::Activity::Terminal,
                     AppMode::Settings => flokin_core::Activity::Settings,
                     AppMode::Graph => flokin_core::Activity::Relations,
+                    AppMode::Health => flokin_core::Activity::Health,
                     AppMode::Files | AppMode::Data => flokin_core::Activity::Explorer,
                 });
                 if mode == AppMode::Sql {
@@ -192,6 +199,7 @@ impl FlokinApp {
                             self.model.workspace_update_completed(update);
                             self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
+                            self.sync_markdown_previews_for_paths(&changed_paths);
                             self.cleanup_markdown_editors();
                             self.workspace_update_running = false;
                             self.search_needs_refresh = false;
@@ -219,6 +227,96 @@ impl FlokinApp {
             Message::CollectionSelected(collection_id) => {
                 self.model.select_collection(collection_id);
             }
+            Message::CollectionPanelSelected(panel) => {
+                self.model.select_collection_panel(panel);
+            }
+            Message::SchemaFieldSelected {
+                collection_id,
+                field_name,
+            } => {
+                self.model.select_schema_field(collection_id, field_name);
+            }
+            Message::HealthFilterSelected(filter) => {
+                self.model.select_health_filter(filter);
+            }
+            Message::HealthQueryChanged(query) => {
+                self.model.update_health_query(query);
+            }
+            Message::HealthIssueSelected(issue_id) => {
+                self.model.select_health_issue(issue_id);
+            }
+            Message::HealthIssueOpened(issue_id) => {
+                if let Some(path) = self
+                    .model
+                    .health
+                    .issues
+                    .iter()
+                    .find(|issue| issue.id == issue_id)
+                    .and_then(|issue| issue.document_path.clone())
+                {
+                    self.open_or_activate_document(path);
+                }
+            }
+            Message::SchemaCreateRequested => {
+                self.schema_create_error = None;
+                self.schema_create_dialog_open = true;
+            }
+            Message::SchemaCreateCanceled => {
+                self.schema_create_dialog_open = false;
+                self.schema_create_error = None;
+            }
+            Message::SchemaCreateConfirmed => {
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    self.schema_create_error = Some(String::from("Nenhum workspace aberto."));
+                    return Task::none();
+                };
+                let generated =
+                    match flokin_core::generate_explicit_schema(&self.model.schema_catalog) {
+                        Ok(generated) => generated,
+                        Err(flokin_core::SchemaGenerationError::Empty) => {
+                            self.schema_create_error = Some(String::from(
+                                "Nenhuma Collection disponível para gerar schema.",
+                            ));
+                            return Task::none();
+                        }
+                        Err(flokin_core::SchemaGenerationError::Serialize(error)) => {
+                            self.schema_create_error =
+                                Some(format!("Não foi possível gerar o schema: {error}"));
+                            return Task::none();
+                        }
+                    };
+                return create_schema_file_task(workspace, generated.yaml);
+            }
+            Message::SchemaCreateCompleted(result) => match result {
+                Ok(path) => {
+                    self.schema_create_dialog_open = false;
+                    self.schema_create_error = None;
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return self.enqueue_workspace_events(
+                            workspace,
+                            vec![WorkspaceEvent::Upsert(path)],
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.schema_create_error = Some(error);
+                    self.schema_create_dialog_open = true;
+                }
+            },
+            Message::SchemaOpenRequested => match self.model.open_schema_tab() {
+                Ok(true) => {
+                    self.mode = AppMode::Files;
+                    self.model.sql_explorer.open = false;
+                    self.sql_completion.close();
+                    self.ensure_markdown_editor_for_active();
+                    self.ensure_markdown_preview_for_active();
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    self.schema_create_error = Some(error);
+                    self.schema_create_dialog_open = true;
+                }
+            },
             Message::TableHeaderSelected(column_id) => {
                 self.model.toggle_collection_sort(column_id);
             }
@@ -268,6 +366,7 @@ impl FlokinApp {
             Message::EditorTabSelected(path) => {
                 if self.model.activate_editor_tab(path) {
                     self.ensure_markdown_editor_for_active();
+                    self.ensure_markdown_preview_for_active();
                 }
             }
             Message::EditorTabCloseRequested(path) => {
@@ -283,8 +382,15 @@ impl FlokinApp {
                 if let Some(content) = self.markdown_editors.get_mut(&path) {
                     content.perform(action);
                     self.model.update_active_editor_buffer(content.text());
+                    self.ensure_markdown_preview_for_path(&path);
                 }
             }
+            Message::EditorViewModeSelected(mode) => {
+                if self.model.set_active_editor_view_mode(mode) {
+                    self.ensure_markdown_preview_for_active();
+                }
+            }
+            Message::MarkdownLinkClicked(_uri) => {}
             Message::EditorSaveRequested => {
                 return self.save_editor_paths(self.model.pending_save_paths());
             }
@@ -380,6 +486,7 @@ impl FlokinApp {
             Message::EditorExternalReload => {
                 if self.model.reload_external_editor_change() {
                     self.sync_markdown_editor_for_active_from_model();
+                    self.ensure_markdown_preview_for_active();
                 }
             }
             Message::EditorExternalKeep => {
@@ -556,6 +663,9 @@ impl FlokinApp {
                     MenuAction::Graph => {
                         return self.update(Message::AppModeSelected(AppMode::Graph))
                     }
+                    MenuAction::Health => {
+                        return self.update(Message::AppModeSelected(AppMode::Health))
+                    }
                     MenuAction::SqlExplorer => {
                         return self.update(Message::AppModeSelected(AppMode::Sql))
                     }
@@ -575,6 +685,12 @@ impl FlokinApp {
                     SplitterKind::Inspector => self.inspector_width,
                     SplitterKind::SqlSchema => self.schema_width,
                     SplitterKind::SqlEditor => self.sql_editor_height,
+                    SplitterKind::MarkdownPreview => self
+                        .model
+                        .editor
+                        .active_tab()
+                        .map(|tab| f32::from(tab.split_ratio) / 1000.0)
+                        .unwrap_or(0.5),
                 };
                 let position = if kind == SplitterKind::SqlEditor {
                     self.cursor.1
@@ -588,6 +704,8 @@ impl FlokinApp {
                 if let Some((kind, origin, initial)) = self.splitter {
                     let delta = if kind == SplitterKind::SqlEditor {
                         y - origin
+                    } else if kind == SplitterKind::MarkdownPreview {
+                        (x - origin) / 1000.0
                     } else if kind == SplitterKind::Inspector {
                         origin - x
                     } else {
@@ -617,6 +735,9 @@ impl FlokinApp {
                                 crate::theme::sizes::SQL_EDITOR_MIN_HEIGHT,
                                 crate::theme::sizes::SQL_EDITOR_MAX_HEIGHT,
                             )
+                        }
+                        SplitterKind::MarkdownPreview => {
+                            self.model.set_active_editor_split_ratio(initial + delta);
                         }
                     }
                 }
@@ -653,6 +774,7 @@ impl FlokinApp {
             self.theme,
             &self.sql_editor,
             markdown_editor,
+            self.active_markdown_preview_items(),
             &self.sql_completion.items,
             &self.graph,
             self.sql_completion.selected,
@@ -686,6 +808,12 @@ impl FlokinApp {
             }),
         ])
     }
+}
+
+#[derive(Debug, Clone)]
+struct MarkdownPreviewCache {
+    source: String,
+    items: Vec<markdown::Item>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -753,6 +881,7 @@ impl FlokinApp {
         self.model.sql_explorer.open = false;
         self.sql_completion.close();
         self.ensure_markdown_editor_for_active();
+        self.ensure_markdown_preview_for_active();
     }
 
     fn switch_workspace(&mut self, path: std::path::PathBuf) -> Task<Message> {
@@ -761,6 +890,7 @@ impl FlokinApp {
         self.model.workspace_selected(Some(path.clone()));
         self.sql_editor = text_editor::Content::new();
         self.markdown_editors.clear();
+        self.markdown_previews.clear();
         self.empty_markdown_editor = text_editor::Content::new();
         self.sql_completion.close();
         self.workspace_update_running = false;
@@ -770,7 +900,43 @@ impl FlokinApp {
         self.pending_workspace_switch = None;
         self.pending_workspace_save = None;
         self.pending_reindex = false;
+        self.schema_create_dialog_open = false;
+        self.schema_create_error = None;
         scan_workspace_task(generation, path)
+    }
+
+    fn active_markdown_preview_items(&self) -> &[markdown::Item] {
+        let Some(path) = self.model.editor.active_path.as_ref() else {
+            return &[];
+        };
+        self.markdown_previews
+            .get(path)
+            .map(|cache| cache.items.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn ensure_markdown_preview_for_active(&mut self) {
+        let Some(path) = self.model.editor.active_path.clone() else {
+            return;
+        };
+        self.ensure_markdown_preview_for_path(&path);
+    }
+
+    fn ensure_markdown_preview_for_path(&mut self, path: &std::path::Path) {
+        let Some(tab) = self.model.editor.tab(path) else {
+            return;
+        };
+        let source = flokin_core::markdown_body_without_frontmatter(&tab.buffer).to_owned();
+        if self
+            .markdown_previews
+            .get(path)
+            .is_some_and(|cache| cache.source == source)
+        {
+            return;
+        }
+        let items = markdown::parse(&source).collect();
+        self.markdown_previews
+            .insert(path.to_path_buf(), MarkdownPreviewCache { source, items });
     }
 
     fn sync_graph_projection(&mut self, keep_positions: bool) {
@@ -912,8 +1078,18 @@ impl FlokinApp {
         }
     }
 
+    fn sync_markdown_previews_for_paths(&mut self, paths: &[std::path::PathBuf]) {
+        for path in paths {
+            if self.model.editor.tab(path).is_some() {
+                self.ensure_markdown_preview_for_path(path);
+            }
+        }
+    }
+
     fn cleanup_markdown_editors(&mut self) {
         self.markdown_editors
+            .retain(|path, _| self.model.editor.tab(path).is_some());
+        self.markdown_previews
             .retain(|path, _| self.model.editor.tab(path).is_some());
     }
 
@@ -1117,6 +1293,27 @@ fn save_editor_tab_task(path: std::path::PathBuf, content: String) -> Task<Messa
     )
 }
 
+fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Task<Message> {
+    Task::perform(
+        async move {
+            let path = flokin_core::schema_path(&workspace);
+            if path.exists() {
+                return Err(String::from(
+                    "Já existe um flokin.schema.yaml neste workspace.",
+                ));
+            }
+            save_markdown_file(&path, &content).map_err(|error| {
+                format!(
+                    "Não foi possível criar {}: {error}",
+                    flokin_core::SCHEMA_FILE_NAME
+                )
+            })?;
+            Ok(path)
+        },
+        Message::SchemaCreateCompleted,
+    )
+}
+
 fn rebuild_sql_projection_task(
     generation: u64,
     path: std::path::PathBuf,
@@ -1219,7 +1416,10 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 
 #[cfg(test)]
 mod tests {
-    use flokin_core::{scan_workspace, Activity, ScanResult, ScanState, SqlError, WorkspaceEvent};
+    use flokin_core::{
+        scan_workspace, workspace_update_from_events, Activity, ScanResult, ScanState, SqlError,
+        WorkspaceEvent,
+    };
     use iced::{
         keyboard::{
             key::{Code, Named, Physical},
@@ -1692,6 +1892,10 @@ mod tests {
         let _ = app.update(Message::AppModeSelected(AppMode::Graph));
         assert_eq!(app.mode, AppMode::Graph);
         assert!(!app.model.sql_explorer.open);
+        let _ = app.update(Message::AppModeSelected(AppMode::Health));
+        assert_eq!(app.mode, AppMode::Health);
+        assert_eq!(app.model.active_activity, flokin_core::Activity::Health);
+        assert!(!app.model.sql_explorer.open);
         let _ = app.update(Message::AppModeSelected(AppMode::Sql));
         assert_eq!(app.mode, AppMode::Sql);
         assert!(app.model.sql_explorer.open);
@@ -1756,6 +1960,79 @@ mod tests {
         assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "A dirty\n");
         assert!(app.model.editor.tab(&path).unwrap().dirty);
         assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "A dirty\n");
+    }
+
+    #[test]
+    fn markdown_preview_cache_uses_unsaved_live_buffer_and_strips_frontmatter() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\n---\n# Saved\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+
+        app.model.update_active_editor_buffer(String::from(
+            "---\ntitle: A\n---\n## Teste preview\n\n- item\n",
+        ));
+        app.ensure_markdown_preview_for_active();
+
+        let cache = app.markdown_previews.get(&path).unwrap();
+        assert_eq!(cache.source, "## Teste preview\n\n- item\n");
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn markdown_preview_cache_updates_for_clean_external_change() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.ensure_markdown_preview_for_active();
+
+        workspace.write("a.md", "# A external\n");
+        let update =
+            workspace_update_from_events(workspace.path(), &[WorkspaceEvent::Upsert(path.clone())])
+                .unwrap();
+        app.model.workspace_update_completed(update);
+        app.sync_markdown_editors_for_paths(std::slice::from_ref(&path));
+        app.sync_markdown_previews_for_paths(std::slice::from_ref(&path));
+
+        assert_eq!(
+            app.markdown_previews.get(&path).unwrap().source,
+            "# A external\n"
+        );
+        assert!(!app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn markdown_preview_cache_keeps_local_buffer_during_dirty_conflict() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+
+        app.model
+            .update_active_editor_buffer(String::from("# A local\n"));
+        app.ensure_markdown_preview_for_active();
+        workspace.write("a.md", "# A external\n");
+        let update =
+            workspace_update_from_events(workspace.path(), &[WorkspaceEvent::Upsert(path.clone())])
+                .unwrap();
+        app.model.workspace_update_completed(update);
+        app.sync_markdown_previews_for_paths(std::slice::from_ref(&path));
+
+        assert_eq!(
+            app.markdown_previews.get(&path).unwrap().source,
+            "# A local\n"
+        );
+        assert!(app
+            .model
+            .editor
+            .tab(&path)
+            .unwrap()
+            .external_conflict
+            .is_some());
     }
 
     #[test]

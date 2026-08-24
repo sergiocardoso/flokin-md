@@ -91,6 +91,7 @@ pub struct WorkspaceUpdate {
     pub errors: Vec<ScanError>,
     pub duration: Duration,
     pub needs_rescan: bool,
+    pub schema_changed: bool,
 }
 
 impl WorkspaceUpdate {
@@ -141,12 +142,15 @@ pub fn workspace_update_from_events(
     let mut removals = BTreeSet::<PathBuf>::new();
     let mut errors = Vec::new();
     let mut needs_rescan = false;
+    let mut schema_changed = false;
 
     for event in events {
         match event {
             WorkspaceEvent::Upsert(path) => {
                 if is_workspace_markdown_path(root, path) {
                     upsert_paths.insert(path.clone());
+                } else if crate::is_workspace_schema_path(root, path) {
+                    schema_changed = true;
                 } else if should_rescan_path(root, path) {
                     needs_rescan = true;
                 }
@@ -154,6 +158,8 @@ pub fn workspace_update_from_events(
             WorkspaceEvent::Remove(path) => {
                 if is_workspace_markdown_path(root, path) {
                     removals.insert(path.clone());
+                } else if crate::is_workspace_schema_path(root, path) {
+                    schema_changed = true;
                 } else if should_rescan_path(root, path) {
                     needs_rescan = true;
                 }
@@ -161,12 +167,16 @@ pub fn workspace_update_from_events(
             WorkspaceEvent::Rename { from, to } => {
                 if is_workspace_markdown_path(root, from) {
                     removals.insert(from.clone());
+                } else if crate::is_workspace_schema_path(root, from) {
+                    schema_changed = true;
                 } else if should_rescan_path(root, from) {
                     needs_rescan = true;
                 }
 
                 if is_workspace_markdown_path(root, to) {
                     upsert_paths.insert(to.clone());
+                } else if crate::is_workspace_schema_path(root, to) {
+                    schema_changed = true;
                 } else if should_rescan_path(root, to) {
                     needs_rescan = true;
                 }
@@ -216,6 +226,7 @@ pub fn workspace_update_from_events(
         errors,
         duration: started_at.elapsed(),
         needs_rescan,
+        schema_changed,
     })
 }
 
@@ -366,6 +377,10 @@ struct ParsedFrontmatter<'a> {
     properties: BTreeMap<String, PropertyValue>,
     body: &'a str,
     warnings: Vec<DocumentWarning>,
+}
+
+pub fn markdown_body_without_frontmatter(content: &str) -> &str {
+    parse_frontmatter(Path::new(""), content).body
 }
 
 fn parse_frontmatter<'a>(path: &Path, content: &'a str) -> ParsedFrontmatter<'a> {
@@ -599,7 +614,10 @@ fn compare_paths(left: &Path, right: &Path) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{scan_workspace, workspace_update_from_events, PropertyValue, WorkspaceEvent};
+    use super::{
+        markdown_body_without_frontmatter, scan_workspace, workspace_update_from_events,
+        PropertyValue, WorkspaceEvent,
+    };
 
     use std::{
         fs,
@@ -662,6 +680,31 @@ mod tests {
             result.documents[0].relative_path,
             PathBuf::from("README.md")
         );
+    }
+
+    #[test]
+    fn schema_file_event_sets_schema_changed_without_scanning_yaml_files() {
+        let workspace = TempWorkspace::new();
+        workspace.write("flokin.schema.yaml", "version: 1\ncollections: {}\n");
+        workspace.write("other.yaml", "ignored: true\n");
+
+        let schema_update = workspace_update_from_events(
+            workspace.path(),
+            &[WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        )
+        .unwrap();
+        assert!(schema_update.schema_changed);
+        assert!(schema_update.upserts.is_empty());
+
+        let other_update = workspace_update_from_events(
+            workspace.path(),
+            &[WorkspaceEvent::Upsert(workspace.path().join("other.yaml"))],
+        )
+        .unwrap();
+        assert!(!other_update.schema_changed);
+        assert!(other_update.upserts.is_empty());
     }
 
     #[test]
@@ -795,6 +838,41 @@ mod tests {
 
         assert!(document.properties.is_empty());
         assert_eq!(document.title, "Note");
+    }
+
+    #[test]
+    fn markdown_preview_body_keeps_markdown_without_frontmatter() {
+        assert_eq!(
+            markdown_body_without_frontmatter("# Title\nBody\n"),
+            "# Title\nBody\n"
+        );
+    }
+
+    #[test]
+    fn markdown_preview_body_removes_frontmatter() {
+        let source = "---\ntitle: CARF\ntype: project\n---\n\n# CARF\n";
+        assert_eq!(markdown_body_without_frontmatter(source), "\n# CARF\n");
+    }
+
+    #[test]
+    fn markdown_preview_body_removes_invalid_frontmatter_when_delimited() {
+        let source = "---\ntitle: [broken\n---\n# Fallback\n";
+        assert_eq!(markdown_body_without_frontmatter(source), "# Fallback\n");
+    }
+
+    #[test]
+    fn markdown_preview_body_supports_markdown_shapes_unicode_and_empty_body() {
+        let source = "---\ntitle: Teste\n---\n## Olá\n- item\n\n```rust\nfn main() {}\n```\n\n| Nome | Status |\n| --- | --- |\n| Ação | ativa |\n";
+        let body = markdown_body_without_frontmatter(source);
+
+        assert!(body.contains("## Olá"));
+        assert!(body.contains("- item"));
+        assert!(body.contains("```rust"));
+        assert!(body.contains("| Nome | Status |"));
+        assert_eq!(
+            markdown_body_without_frontmatter("---\ntitle: Empty\n---\n"),
+            ""
+        );
     }
 
     #[test]

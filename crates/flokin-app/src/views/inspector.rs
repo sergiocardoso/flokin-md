@@ -1,6 +1,6 @@
 use flokin_core::{
-    InspectorField, InspectorModel, InspectorRelation, InspectorRelationStatus, InspectorValue,
-    ShellModel,
+    HealthIssue, HealthSeverity, InspectorField, InspectorModel, InspectorRelation,
+    InspectorRelationStatus, InspectorValue, ShellModel,
 };
 use iced::widget::{
     button, column, container, row, scrollable, text,
@@ -14,6 +14,7 @@ pub fn view(model: &ShellModel, width: f32) -> Element<'_, Message> {
     match model.document_inspector() {
         InspectorModel::Empty { title, description } => empty_state(title, description, width),
         InspectorModel::Document(inspector) => document_inspector(inspector, width),
+        InspectorModel::HealthIssue(inspector) => health_issue_inspector(inspector.issue, width),
     }
 }
 
@@ -103,6 +104,118 @@ fn document_inspector(
         .padding(theme::spacing::LG)
         .style(theme::panel)
         .into()
+}
+
+fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Message> {
+    let mut content =
+        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::MD);
+
+    content = content
+        .push(health_field(
+            "Severity",
+            issue.severity.label().to_owned(),
+            issue.severity,
+        ))
+        .push(health_field(
+            "Category",
+            issue.category.label().to_owned(),
+            issue.severity,
+        ))
+        .push(health_field(
+            "Problem",
+            issue.message.clone(),
+            issue.severity,
+        ));
+
+    if let Some(path) = issue.relative_path.as_ref() {
+        content = content.push(health_field(
+            "Document",
+            path.display().to_string(),
+            issue.severity,
+        ));
+    }
+    if let Some(property) = issue.property.as_ref() {
+        content = content.push(health_field("Property", property.clone(), issue.severity));
+    }
+    if let Some(expected) = issue.expected {
+        content = content.push(health_field(
+            "Expected",
+            expected.label().to_owned(),
+            issue.severity,
+        ));
+    }
+    if let Some(found) = issue.found {
+        content = content.push(health_field(
+            "Found",
+            found.label().to_owned(),
+            issue.severity,
+        ));
+    }
+
+    if !issue.details.is_empty() {
+        content = content
+            .push(subtle_divider())
+            .push(section_header("DETALHES", theme::Icon::FileText));
+        for detail in issue.details {
+            content = content.push(
+                text(detail)
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted)
+                    .wrapping(Wrapping::WordOrGlyph),
+            );
+        }
+    }
+
+    if issue.document_path.is_some() {
+        content = content.push(subtle_divider()).push(
+            button(
+                row![
+                    widgets::icon(theme::Icon::FileText, theme::icons::META, true),
+                    text("Abrir documento").size(theme::typography::BODY),
+                ]
+                .spacing(theme::spacing::SM)
+                .align_y(Alignment::Center),
+            )
+            .padding([5.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::HealthIssueOpened(issue.id)),
+        );
+    }
+
+    container(scrollable(content))
+        .width(width)
+        .height(Length::Fill)
+        .padding(theme::spacing::LG)
+        .style(theme::panel)
+        .into()
+}
+
+fn health_field(
+    label: &'static str,
+    value: String,
+    severity: HealthSeverity,
+) -> Element<'static, Message> {
+    let style = match severity {
+        HealthSeverity::Error => theme::text_error,
+        HealthSeverity::Warning => theme::text_warning,
+        HealthSeverity::Info => theme::text_normal,
+    };
+    container(
+        column![
+            text(label)
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            text(value)
+                .size(theme::typography::BODY)
+                .style(style)
+                .wrapping(Wrapping::WordOrGlyph)
+                .width(Length::Fill),
+        ]
+        .spacing(theme::spacing::XXS),
+    )
+    .width(Length::Fill)
+    .padding([3.0, 0.0])
+    .into()
 }
 
 fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static, Message> {

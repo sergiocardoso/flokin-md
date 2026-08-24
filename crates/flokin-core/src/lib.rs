@@ -1,8 +1,10 @@
 mod graph;
+mod health;
 mod mock;
 mod model;
 mod relation;
 mod scanner;
+mod schema;
 mod search;
 mod sql;
 mod sql_completion;
@@ -13,11 +15,16 @@ pub use graph::{
     initial_graph_layout, GraphBounds, GraphEdge, GraphEdgeStatus, GraphNode, GraphNodeId,
     GraphNodeKind, GraphPoint, GraphProjection, GraphViewport, GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM,
 };
+pub use health::{
+    build_health, CollectionHealthSummary, DatabaseHealth, HealthCategory, HealthIssue,
+    HealthIssueKind, HealthSeverity, HealthSummary,
+};
 pub use mock::mock_shell;
 pub use model::{
-    save_markdown_file, workspace_display, Activity, DocumentInspector, DocumentSourceView,
-    EditorDialog, EditorExternalConflict, EditorState, EditorTab, ExplorerNode, ExplorerNodeId,
-    ExplorerNodeKind, FilterCount, InspectorField, InspectorModel, InspectorRelation,
+    save_markdown_file, workspace_display, Activity, CollectionPanel, DocumentInspector,
+    DocumentSourceView, EditorDialog, EditorExternalConflict, EditorState, EditorTab,
+    EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter,
+    HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
     InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
     SqlExplorerState, WorkspaceDisplay,
 };
@@ -26,9 +33,17 @@ pub use relation::{
     RelationIndex, RelationStatus, RelationTarget,
 };
 pub use scanner::{
-    is_markdown_path, is_workspace_markdown_path, scan_workspace, should_ignore_workspace_path,
-    workspace_update_from_events, Collection, Document, DocumentMetadata, DocumentWarning,
-    PropertyValue, ScanError, ScanResult, WorkspaceEvent, WorkspaceUpdate,
+    is_markdown_path, is_workspace_markdown_path, markdown_body_without_frontmatter,
+    scan_workspace, should_ignore_workspace_path, workspace_update_from_events, Collection,
+    Document, DocumentMetadata, DocumentWarning, PropertyValue, ScanError, ScanResult,
+    WorkspaceEvent, WorkspaceUpdate,
+};
+pub use schema::{
+    is_workspace_schema_path, load_explicit_schema, schema_path, schema_type_for_property_value,
+    CollectionSchema, ExplicitCollectionSchema, ExplicitFieldSchema, ExplicitSchema,
+    ExplicitSchemaState, GeneratedExplicitSchema, GeneratedSchemaOmittedField,
+    ObservedSchemaType, SchemaCatalog, SchemaField, SchemaGenerationError, SchemaSource,
+    SchemaType, SchemaWarning, SCHEMA_FILE_NAME, generate_explicit_schema,
 };
 pub use search::{
     search_documents, SearchMatchedField, SearchOutcome, SearchQuery, SearchResult, SearchState,
