@@ -1,15 +1,23 @@
 mod mock;
 mod model;
+mod relation;
 mod scanner;
 mod search;
 mod sql;
+mod sql_completion;
 mod table;
 
 pub use mock::mock_shell;
 pub use model::{
-    workspace_display, Activity, BottomTab, DocumentInspector, DocumentTab, ExplorerNode,
-    ExplorerNodeId, ExplorerNodeKind, FilterCount, InspectorField, InspectorModel, InspectorValue,
-    ScanState, ShellModel, SqlExplorerState, WorkspaceDisplay, WorkspaceTab,
+    save_markdown_file, workspace_display, Activity, DocumentInspector, DocumentSourceView,
+    EditorDialog, EditorExternalConflict, EditorState, EditorTab, ExplorerNode, ExplorerNodeId,
+    ExplorerNodeKind, FilterCount, InspectorField, InspectorModel, InspectorRelation,
+    InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
+    SqlExplorerState, WorkspaceDisplay,
+};
+pub use relation::{
+    display_relation_value, parse_wikilink, relation_display_property, Relation, RelationDocument,
+    RelationIndex, RelationStatus, RelationTarget,
 };
 pub use scanner::{
     is_markdown_path, is_workspace_markdown_path, scan_workspace, should_ignore_workspace_path,
@@ -23,6 +31,10 @@ pub use search::{
 pub use sql::{
     default_query, normalize_identifier, SqlCatalog, SqlColumn, SqlColumnType, SqlError,
     SqlProjection, SqlQueryResult, SqlResultColumn, SqlTable, SqlValue, DEFAULT_RESULT_LIMIT,
+};
+pub use sql_completion::{
+    complete_sql, completion_context, quote_identifier_if_needed, replace_sql_completion,
+    SqlCompletionContext, SqlCompletionItem, SqlCompletionKind, DEFAULT_SQL_COMPLETION_LIMIT,
 };
 pub use table::{
     SortDirection, TableCell, TableColumn, TableModel, TableRow, TableSort, TableValueType,

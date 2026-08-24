@@ -99,15 +99,15 @@ fn relative_luminance(color: Color) -> f32 {
 
 fn background_color(app_theme: AppTheme) -> Color {
     match app_theme {
-        AppTheme::Dark => theme::Palette::DARK.panel,
-        AppTheme::Light => theme::Palette::LIGHT.panel,
+        AppTheme::Dark => theme::tokens::DARK.colors.panel,
+        AppTheme::Light => theme::tokens::LIGHT.colors.panel,
     }
 }
 
 fn fallback_color(app_theme: AppTheme) -> Color {
     match app_theme {
-        AppTheme::Dark => theme::Palette::DARK.text_muted,
-        AppTheme::Light => theme::Palette::LIGHT.text_muted,
+        AppTheme::Dark => theme::tokens::DARK.colors.text_muted,
+        AppTheme::Light => theme::tokens::LIGHT.colors.text_muted,
     }
 }
 

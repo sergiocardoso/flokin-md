@@ -1,7 +1,5 @@
-use crate::model::{
-    Activity, BottomTab, DocumentTab, FilterCount, ScanState, ShellModel, WorkspaceTab,
-};
-use crate::{SearchState, SqlExplorerState};
+use crate::model::{Activity, FilterCount, ScanState, ShellModel};
+use crate::{RelationIndex, SearchState, SqlExplorerState};
 use std::collections::BTreeSet;
 
 pub fn mock_shell() -> ShellModel {
@@ -16,6 +14,8 @@ pub fn mock_shell() -> ShellModel {
         selected_collection: None,
         collection_table_sort: None,
         search: SearchState::closed(),
+        relation_index: RelationIndex::default(),
+        editor: crate::model::EditorState::default(),
         sql_explorer: SqlExplorerState::closed(),
         collapsed_sql_tables: BTreeSet::new(),
         filters: vec![
@@ -40,37 +40,5 @@ pub fn mock_shell() -> ShellModel {
                 count: 34,
             },
         ],
-        selected_tab: WorkspaceTab::Carf,
-        bottom_tab: BottomTab::View,
-        document: DocumentTab {
-            selected: WorkspaceTab::Carf,
-            content: CARF_MARKDOWN,
-        },
     }
 }
-
-const CARF_MARKDOWN: &str = "# CARF
-
-Conselho Administrativo de Recursos Fiscais.
-
-Órgão colegiado responsável pelo julgamento de recursos administrativos de decisões fiscais no âmbito da Receita Federal do Brasil.
-
-## Visão Geral
-
-* Instância administrativa
-* Julgamento de recursos fiscais
-* Vinculado ao Ministério da Fazenda
-* Composição paritária entre Fazenda e contribuintes
-
-## Estrutura
-
-| Área | Função |
-| --- | --- |
-| Turmas | Julgamento colegiado |
-| Câmara Superior | Uniformização de decisões |
-
-## Links
-
-* Site Oficial
-* Regimento Interno
-";

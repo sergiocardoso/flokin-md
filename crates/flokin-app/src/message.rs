@@ -1,10 +1,9 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    BottomTab, ExplorerNodeId, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceTab,
-    WorkspaceUpdate,
+    ExplorerNodeId, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
 };
-use iced::{keyboard, widget::text_editor};
+use iced::{keyboard, widget::text_editor, window};
 
 use crate::services::file_watcher::WatcherMessage;
 
@@ -54,8 +53,6 @@ pub enum Message {
     AppModeSelected(AppMode),
     #[allow(dead_code)]
     ExplorerNodeToggled(ExplorerNodeId),
-    WorkspaceTabSelected(WorkspaceTab),
-    BottomTabSelected(BottomTab),
     OpenFolder,
     FolderSelected(Option<PathBuf>),
     ScanCompleted(u64, PathBuf, Result<ScanResult, String>),
@@ -65,6 +62,18 @@ pub enum Message {
     CollectionSelected(String),
     TableHeaderSelected(String),
     MarkdownSelected(PathBuf),
+    EditorTabSelected(PathBuf),
+    EditorTabCloseRequested(PathBuf),
+    MarkdownEditorAction(text_editor::Action),
+    EditorSaveRequested,
+    EditorSaveCompleted(PathBuf, String, Result<(), String>),
+    EditorCloseActiveRequested,
+    EditorDialogCancel,
+    EditorDialogDiscard,
+    EditorDialogSave,
+    EditorExternalReload,
+    EditorExternalKeep,
+    WindowCloseRequested(window::Id),
     SearchOpened,
     SearchClosed,
     SearchQueryChanged(String),
@@ -76,6 +85,12 @@ pub enum Message {
     SqlExplorerOpened,
     SqlSchemaTableToggled(String),
     SqlEditorAction(text_editor::Action),
+    SqlCompletionRequested,
+    SqlCompletionNext,
+    SqlCompletionPrevious,
+    SqlCompletionAccepted,
+    SqlCompletionSelected(usize),
+    SqlCompletionClosed,
     SqlExecute,
     SqlProjectionCompleted(u64, PathBuf, Result<SqlCatalog, SqlError>),
     SqlQueryCompleted(Result<SqlQueryResult, SqlError>),

@@ -3,9 +3,9 @@ use iced::{alignment, Element};
 
 use crate::{message::Message, theme};
 
-pub const GUTTER_WIDTH: f32 = 42.0;
-pub const ROW_HEIGHT: f32 = 28.0;
-pub const HEADER_HEIGHT: f32 = 30.0;
+pub const GUTTER_WIDTH: f32 = theme::sizes::DATA_GRID_GUTTER_WIDTH;
+pub const ROW_HEIGHT: f32 = theme::sizes::DATA_GRID_ROW_HEIGHT;
+pub const HEADER_HEIGHT: f32 = theme::sizes::DATA_GRID_HEADER_HEIGHT;
 
 pub fn header_gutter() -> Element<'static, Message> {
     container(text("#").font(theme::mono()).size(theme::typography::LABEL))

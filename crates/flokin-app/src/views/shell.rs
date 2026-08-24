@@ -1,4 +1,4 @@
-use flokin_core::ShellModel;
+use flokin_core::{EditorDialog, ShellModel, SqlCompletionItem};
 use iced::widget::text_editor;
 use iced::widget::{
     button, column, container, mouse_area, row, scrollable, stack, text, text_input,
@@ -16,6 +16,10 @@ pub fn view<'a>(
     model: &'a ShellModel,
     app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
+    markdown_editor: &'a text_editor::Content,
+    sql_completion_items: &'a [SqlCompletionItem],
+    sql_completion_selected: usize,
+    sql_completion_open: bool,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
@@ -40,7 +44,15 @@ pub fn view<'a>(
                 .push(views::explorer::sql_schema_view(model, schema_width))
                 .push(splitter(SplitterKind::SqlSchema, false));
         }
-        content = content.push(workspace(model, sql_editor, sql_editor_height));
+        content = content.push(workspace(
+            model,
+            sql_editor,
+            markdown_editor,
+            sql_completion_items,
+            sql_completion_selected,
+            sql_completion_open,
+            sql_editor_height,
+        ));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
@@ -60,7 +72,15 @@ pub fn view<'a>(
                     .push(splitter(SplitterKind::LeftSidebar, false));
             }
         }
-        content = content.push(workspace(model, sql_editor, sql_editor_height));
+        content = content.push(workspace(
+            model,
+            sql_editor,
+            markdown_editor,
+            sql_completion_items,
+            sql_completion_selected,
+            sql_completion_open,
+            sql_editor_height,
+        ));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
@@ -93,8 +113,14 @@ pub fn view<'a>(
         shell
     };
 
-    if about_open {
+    let shell = if about_open {
         stack![shell, about_overlay()].into()
+    } else {
+        shell
+    };
+
+    if let Some(dialog) = model.editor.dialog.as_ref() {
+        stack![shell, editor_dialog_overlay(dialog, model)].into()
     } else {
         shell
     }
@@ -128,14 +154,14 @@ fn menu_bar<'a>() -> Element<'a, Message> {
     }
 
     container(row)
-        .height(32)
+        .height(theme::sizes::MENU_BAR_HEIGHT)
         .padding([0.0, theme::spacing::MD])
         .style(theme::panel)
         .into()
 }
 
 fn menu_overlay<'a>(menu: MenuId, anchor_x: f32) -> Element<'a, Message> {
-    let menu_width = 228.0;
+    let menu_width = theme::sizes::MENU_WIDTH;
     stack![
         mouse_area(container("").width(Length::Fill).height(Length::Fill))
             .on_press(Message::MenuClosed),
@@ -144,7 +170,7 @@ fn menu_overlay<'a>(menu: MenuId, anchor_x: f32) -> Element<'a, Message> {
             row![iced::widget::space().width(x), menu_items(menu)].into()
         }))
         .padding(iced::Padding {
-            top: 34.0,
+            top: theme::sizes::MENU_TOP_OFFSET,
             ..iced::Padding::ZERO
         })
         .width(Length::Fill)
@@ -207,7 +233,7 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
         }
         items = items.push(
             button(content)
-                .width(220)
+                .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
                 .padding([7.0, 10.0])
                 .style(theme::button_menu)
                 .on_press(Message::MenuAction(action)),
@@ -240,8 +266,84 @@ fn about_overlay<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn editor_dialog_overlay<'a>(
+    dialog: &'a EditorDialog,
+    model: &'a ShellModel,
+) -> Element<'a, Message> {
+    let (title, description, save_label, discard_label) = match dialog {
+        EditorDialog::CloseDirty { document_path } => {
+            let file_name = model
+                .editor
+                .tab(document_path)
+                .map(|tab| tab.title.as_str())
+                .unwrap_or("arquivo.md");
+            (
+                format!("Salvar alterações em {file_name}?"),
+                String::from("Suas alterações ainda não foram gravadas no Markdown."),
+                String::from("Salvar"),
+                String::from("Não salvar"),
+            )
+        }
+        EditorDialog::CloseWorkspaceDirty { dirty_count } => (
+            format!("Existem {dirty_count} arquivos com alterações não salvas."),
+            String::from("Escolha como lidar com as tabs sujas antes de continuar."),
+            String::from("Salvar tudo"),
+            String::from("Descartar alterações"),
+        ),
+    };
+
+    stack![
+        mouse_area(
+            container("")
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::overlay_backdrop)
+        )
+        .on_press(Message::EditorDialogCancel),
+        container(
+            container(
+                column![
+                    text(title)
+                        .size(theme::typography::TITLE)
+                        .style(theme::text_normal),
+                    text(description)
+                        .size(theme::typography::BODY)
+                        .style(theme::text_muted),
+                    row![
+                        button(text("Cancelar"))
+                            .padding([7.0, 12.0])
+                            .style(theme::button_toolbar)
+                            .on_press(Message::EditorDialogCancel),
+                        button(text(discard_label))
+                            .padding([7.0, 12.0])
+                            .style(theme::button_toolbar)
+                            .on_press(Message::EditorDialogDiscard),
+                        button(text(save_label))
+                            .padding([7.0, 12.0])
+                            .style(theme::button_selected)
+                            .on_press(Message::EditorDialogSave),
+                    ]
+                    .spacing(theme::spacing::SM)
+                    .align_y(Alignment::Center)
+                ]
+                .spacing(theme::spacing::MD)
+            )
+            .width(theme::sizes::DIALOG_WIDTH)
+            .padding(theme::spacing::LG)
+            .style(theme::overlay_panel)
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
 fn splitter(kind: SplitterKind, vertical: bool) -> Element<'static, Message> {
-    let size = Length::Fixed(7.0);
+    let size = Length::Fixed(theme::sizes::SPLITTER_HIT_AREA);
     let message_position = Message::SplitterPressed(kind, 0.0);
     mouse_area(
         container("")
@@ -267,7 +369,7 @@ fn toolbar(
     let input = text_input("Buscar documentos...", model.search.query.as_str())
         .padding([4, 8])
         .size(theme::typography::BODY)
-        .width(250)
+        .width(theme::sizes::TOOLBAR_SEARCH_WIDTH)
         .style(theme::input);
 
     let search = mouse_area(
@@ -295,7 +397,10 @@ fn toolbar(
             text("Reindexar workspace"),
             iced::widget::tooltip::Position::Bottom
         ),
-        container("").width(1).height(22).style(theme::divider),
+        container("")
+            .width(theme::sizes::DIVIDER_WIDTH)
+            .height(theme::sizes::DIVIDER_HEIGHT)
+            .style(theme::divider),
         search
     ]
     .spacing(theme::spacing::MD)
@@ -308,8 +413,8 @@ fn toolbar(
             theme::icons::TOOLBAR,
             left_visible,
         ))
-        .width(32)
-        .height(30)
+        .width(theme::sizes::TOOLBAR_BUTTON_WIDTH)
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding(0)
         .style(if left_visible {
             theme::button_selected
@@ -330,8 +435,8 @@ fn toolbar(
             theme::icons::TOOLBAR,
             right_visible,
         ))
-        .width(32)
-        .height(30)
+        .width(theme::sizes::TOOLBAR_BUTTON_WIDTH)
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding(0)
         .style(if right_visible {
             theme::button_selected
@@ -369,7 +474,7 @@ fn toolbar(
     .align_y(Alignment::Center);
 
     container(row![left, right].align_y(Alignment::Center))
-        .height(50)
+        .height(theme::sizes::TOOLBAR_HEIGHT)
         .padding([0.0, theme::spacing::LG])
         .style(theme::elevated)
         .into()
@@ -415,7 +520,10 @@ fn search_overlay(model: &ShellModel) -> Element<'_, Message> {
             ));
         }
 
-        scrollable(rows).height(330).width(Length::Fill).into()
+        scrollable(rows)
+            .height(theme::sizes::SEARCH_RESULTS_HEIGHT)
+            .width(Length::Fill)
+            .into()
     };
 
     let count = if model.search.is_limited() {
@@ -454,8 +562,8 @@ fn search_overlay(model: &ShellModel) -> Element<'_, Message> {
             .spacing(theme::spacing::SM),
         )
         .width(Length::Fill)
-        .max_width(680)
-        .max_height(500)
+        .max_width(theme::sizes::SEARCH_OVERLAY_WIDTH)
+        .max_height(theme::sizes::SEARCH_OVERLAY_HEIGHT)
         .padding(theme::spacing::MD)
         .style(theme::overlay_panel),
     )
@@ -544,7 +652,7 @@ fn activity_bar(mode: AppMode) -> Element<'static, Message> {
         iced::widget::Space::new().height(Length::Fill),
         bottom
     ])
-    .width(56)
+    .width(theme::sizes::ACTIVITY_BAR_WIDTH)
     .height(Length::Fill)
     .padding([theme::spacing::LG, theme::spacing::SM])
     .style(theme::panel)
@@ -558,8 +666,8 @@ fn activity_button(
     selected: bool,
 ) -> Element<'static, Message> {
     let control = button(widgets::icon(icon, theme::icons::ACTIVITY, selected))
-        .width(40)
-        .height(40)
+        .width(theme::sizes::ACTIVITY_BUTTON_SIZE)
+        .height(theme::sizes::ACTIVITY_BUTTON_SIZE)
         .padding(0)
         .style(if selected {
             theme::button_selected
@@ -580,11 +688,23 @@ fn activity_button(
 fn workspace<'a>(
     model: &'a ShellModel,
     sql_editor: &'a text_editor::Content,
+    markdown_editor: &'a text_editor::Content,
+    sql_completion_items: &'a [SqlCompletionItem],
+    sql_completion_selected: usize,
+    sql_completion_open: bool,
     sql_editor_height: f32,
 ) -> Element<'a, Message> {
     column![
         views::editor::tabs(model),
-        views::editor::view(model, sql_editor, sql_editor_height)
+        views::editor::view(
+            model,
+            sql_editor,
+            markdown_editor,
+            sql_completion_items,
+            sql_completion_selected,
+            sql_completion_open,
+            sql_editor_height,
+        )
     ]
     .width(Length::Fill)
     .height(Length::Fill)

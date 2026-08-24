@@ -1,6 +1,9 @@
-use flokin_core::{InspectorField, InspectorModel, InspectorValue, ShellModel};
+use flokin_core::{
+    InspectorField, InspectorModel, InspectorRelation, InspectorRelationStatus, InspectorValue,
+    ShellModel,
+};
 use iced::widget::{
-    column, container, row, scrollable, text,
+    button, column, container, row, scrollable, text,
     text::{LineHeight, Wrapping},
 };
 use iced::{Alignment, Element, Length};
@@ -44,6 +47,26 @@ fn document_inspector(
         content = content.push(field_row(field));
     }
 
+    if !inspector.outgoing_relations.is_empty() {
+        content = content
+            .push(subtle_divider())
+            .push(section_header("RELAÇÕES", theme::Icon::FileText));
+
+        for relation in inspector.outgoing_relations {
+            content = content.push(relation_row(relation, true));
+        }
+    }
+
+    if !inspector.incoming_relations.is_empty() {
+        content = content
+            .push(subtle_divider())
+            .push(section_header("REFERENCIADO POR", theme::Icon::Tag));
+
+        for relation in inspector.incoming_relations {
+            content = content.push(relation_row(relation, false));
+        }
+    }
+
     if !inspector.tags.is_empty() {
         content = content
             .push(subtle_divider())
@@ -79,6 +102,96 @@ fn document_inspector(
         .height(Length::Fill)
         .padding(theme::spacing::LG)
         .style(theme::panel)
+        .into()
+}
+
+fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static, Message> {
+    let property = relation.property;
+    let label = relation.label;
+    let status = relation.status;
+    let target_path = relation.target_path;
+    let candidates = relation.candidates;
+
+    let status_text = match status {
+        InspectorRelationStatus::Resolved => None,
+        InspectorRelationStatus::Unresolved => Some(String::from("Não resolvido")),
+        InspectorRelationStatus::Ambiguous(count) => {
+            Some(format!("Ambíguo — {count} documentos correspondem"))
+        }
+    };
+
+    let target: Element<'static, Message> = if let Some(path) = target_path {
+        button(
+            row![
+                text(label)
+                    .size(theme::typography::BODY)
+                    .style(theme::text_accent)
+                    .width(Length::Fill),
+                text("→")
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([3.0, 0.0])
+        .style(theme::button_ghost)
+        .on_press(Message::MarkdownSelected(path))
+        .into()
+    } else {
+        row![
+            text("⚠")
+                .size(theme::typography::BODY)
+                .style(theme::text_warning),
+            text(label)
+                .size(theme::typography::BODY)
+                .style(theme::text_normal)
+                .width(Length::Fill),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center)
+        .into()
+    };
+
+    let mut details = column![
+        text(property)
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        target,
+    ]
+    .spacing(theme::spacing::XXS);
+
+    if let Some(status_text) = status_text {
+        details = details.push(
+            text(status_text)
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted)
+                .wrapping(Wrapping::WordOrGlyph),
+        );
+    }
+
+    if !outgoing && matches!(status, InspectorRelationStatus::Resolved) {
+        details = details.push(
+            text("referência estruturada")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+        );
+    }
+
+    for candidate in candidates.into_iter().take(4) {
+        details = details.push(
+            text(candidate.relative_path.display().to_string())
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted)
+                .wrapping(Wrapping::WordOrGlyph),
+        );
+    }
+
+    container(details)
+        .width(Length::Fill)
+        .padding([4.0, 0.0])
         .into()
 }
 

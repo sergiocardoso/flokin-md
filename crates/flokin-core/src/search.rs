@@ -728,6 +728,7 @@ mod tests {
                 modified: None,
             },
             title: title.to_owned(),
+            source_content: Some(markdown_content.to_owned()),
             markdown_content: markdown_content.to_owned(),
             properties: properties
                 .into_iter()

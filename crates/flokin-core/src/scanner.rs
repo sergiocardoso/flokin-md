@@ -23,6 +23,7 @@ pub struct Document {
     pub file_name: OsString,
     pub metadata: DocumentMetadata,
     pub title: String,
+    pub source_content: Option<String>,
     pub markdown_content: String,
     pub properties: BTreeMap<String, PropertyValue>,
     pub document_type: Option<String>,
@@ -90,6 +91,16 @@ pub struct WorkspaceUpdate {
     pub errors: Vec<ScanError>,
     pub duration: Duration,
     pub needs_rescan: bool,
+}
+
+impl WorkspaceUpdate {
+    pub fn changed_paths(&self) -> Vec<PathBuf> {
+        self.upserts
+            .iter()
+            .map(|document| document.path.clone())
+            .chain(self.removals.iter().cloned())
+            .collect()
+    }
 }
 
 pub fn scan_workspace(root: &Path) -> io::Result<ScanResult> {
@@ -164,13 +175,14 @@ pub fn workspace_update_from_events(
         }
     }
 
-    let mut upserts = Vec::new();
-    for path in upsert_paths {
-        if !path.exists() {
-            removals.insert(path);
-            continue;
-        }
+    let event_paths = upsert_paths
+        .union(&removals)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    removals.clear();
 
+    let mut upserts = Vec::new();
+    for path in event_paths {
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_symlink() => continue,
             Ok(metadata) if metadata.is_file() => {
@@ -183,6 +195,11 @@ pub fn workspace_update_from_events(
             }
             Ok(metadata) if metadata.is_dir() => needs_rescan = true,
             Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if is_workspace_markdown_path(root, &path) {
+                    removals.insert(path);
+                }
+            }
             Err(error) => errors.push(ScanError {
                 path,
                 message: error.to_string(),
@@ -293,6 +310,7 @@ fn parse_document(path: PathBuf, relative_path: PathBuf, file_name: OsString) ->
     let mut warnings = Vec::new();
     let mut properties = BTreeMap::new();
     let mut body = String::new();
+    let mut source_content = None;
     let metadata = document_metadata(&path);
 
     match fs::read_to_string(&path) {
@@ -301,6 +319,7 @@ fn parse_document(path: PathBuf, relative_path: PathBuf, file_name: OsString) ->
             body = parsed.body.to_string();
             properties = parsed.properties;
             warnings.extend(parsed.warnings);
+            source_content = Some(content);
         }
         Err(error) => warnings.push(DocumentWarning {
             path: path.clone(),
@@ -321,6 +340,7 @@ fn parse_document(path: PathBuf, relative_path: PathBuf, file_name: OsString) ->
         file_name,
         metadata,
         title,
+        source_content,
         markdown_content: body,
         properties,
         document_type,
@@ -579,7 +599,7 @@ fn compare_paths(left: &Path, right: &Path) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{scan_workspace, PropertyValue};
+    use super::{scan_workspace, workspace_update_from_events, PropertyValue, WorkspaceEvent};
 
     use std::{
         fs,
@@ -979,6 +999,30 @@ mod tests {
 
         assert_eq!(document.title, "empty");
         assert!(document.properties.is_empty());
+        assert_eq!(document.source_content.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn source_content_preserves_full_markdown_with_frontmatter() {
+        let workspace = TempWorkspace::new();
+        let content = "---\ntitle: CARF Daily\ntype: meeting\n---\n\n# CARF Daily\n";
+        workspace.write("meetings/carf.md", content);
+
+        let document = only_document(&workspace);
+
+        assert_eq!(document.source_content.as_deref(), Some(content));
+        assert_eq!(document.markdown_content, "\n# CARF Daily\n");
+    }
+
+    #[test]
+    fn source_content_preserves_unicode() {
+        let workspace = TempWorkspace::new();
+        let content = "---\ntitle: Ação\n---\n\n# Visão\nConteúdo com acento.\n";
+        workspace.write("ações/visão.md", content);
+
+        let document = only_document(&workspace);
+
+        assert_eq!(document.source_content.as_deref(), Some(content));
     }
 
     #[test]
@@ -990,6 +1034,92 @@ mod tests {
 
         assert_eq!(document.metadata.file_size, Some(5));
         assert!(document.metadata.modified.is_some());
+    }
+
+    #[test]
+    fn remove_then_upsert_existing_file_converges_to_upsert() {
+        let workspace = TempWorkspace::new();
+        workspace.write("doc.md", "# Final\n");
+        let path = workspace.path().join("doc.md");
+
+        let update = workspace_update_from_events(
+            workspace.path(),
+            &[
+                WorkspaceEvent::Remove(path.clone()),
+                WorkspaceEvent::Upsert(path.clone()),
+            ],
+        )
+        .unwrap();
+
+        assert!(update.removals.is_empty());
+        assert_eq!(update.upserts.len(), 1);
+        assert_eq!(
+            update.upserts[0].source_content.as_deref(),
+            Some("# Final\n")
+        );
+    }
+
+    #[test]
+    fn upsert_then_remove_existing_file_converges_to_upsert() {
+        let workspace = TempWorkspace::new();
+        workspace.write("doc.md", "# Final\n");
+        let path = workspace.path().join("doc.md");
+
+        let update = workspace_update_from_events(
+            workspace.path(),
+            &[
+                WorkspaceEvent::Upsert(path.clone()),
+                WorkspaceEvent::Remove(path.clone()),
+            ],
+        )
+        .unwrap();
+
+        assert!(update.removals.is_empty());
+        assert_eq!(update.upserts.len(), 1);
+        assert_eq!(
+            update.upserts[0].source_content.as_deref(),
+            Some("# Final\n")
+        );
+    }
+
+    #[test]
+    fn real_delete_converges_to_removal() {
+        let workspace = TempWorkspace::new();
+        workspace.write("doc.md", "# Removed\n");
+        let path = workspace.path().join("doc.md");
+        fs::remove_file(&path).unwrap();
+
+        let update =
+            workspace_update_from_events(workspace.path(), &[WorkspaceEvent::Remove(path.clone())])
+                .unwrap();
+
+        assert!(update.upserts.is_empty());
+        assert_eq!(update.removals, vec![path]);
+    }
+
+    #[test]
+    fn event_storm_converges_to_final_existing_file_once() {
+        let workspace = TempWorkspace::new();
+        workspace.write("doc.md", "# Final\n");
+        let path = workspace.path().join("doc.md");
+
+        let update = workspace_update_from_events(
+            workspace.path(),
+            &[
+                WorkspaceEvent::Upsert(path.clone()),
+                WorkspaceEvent::Upsert(path.clone()),
+                WorkspaceEvent::Remove(path.clone()),
+                WorkspaceEvent::Upsert(path.clone()),
+            ],
+        )
+        .unwrap();
+
+        assert!(update.removals.is_empty());
+        assert_eq!(update.upserts.len(), 1);
+        assert_eq!(
+            update.upserts[0].source_content.as_deref(),
+            Some("# Final\n")
+        );
     }
 
     fn relative_paths(result: &super::ScanResult) -> Vec<PathBuf> {

@@ -1,6 +1,10 @@
 use iced::border::Radius;
+pub mod tokens;
+
 use iced::widget::{button, container, svg, text, text_editor as iced_text_editor, text_input};
-use iced::{color, theme as iced_theme, Background, Border, Color, Font, Shadow, Theme};
+use iced::{theme as iced_theme, Background, Border, Color, Font, Shadow, Theme};
+
+pub use tokens::{ColorTokens, ThemeTokens};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTheme {
@@ -31,127 +35,94 @@ impl AppTheme {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Palette {
-    pub background: Color,
-    pub surface: Color,
-    pub surface_hover: Color,
-    pub surface_selected: Color,
-    pub surface_active: Color,
-    pub elevated_surface: Color,
-    pub panel: Color,
-    pub editor_background: Color,
-    pub editor_gutter: Color,
-    pub data_row_odd: Color,
-    pub data_row_even: Color,
-    pub data_gutter: Color,
-    pub data_separator: Color,
-    pub border: Color,
-    pub border_subtle: Color,
-    pub text: Color,
-    pub text_muted: Color,
-    pub accent: Color,
-    pub accent_hover: Color,
-    pub accent_soft: Color,
-    #[allow(dead_code)]
-    pub success: Color,
-    pub warning: Color,
-    #[allow(dead_code)]
-    pub danger: Color,
-    #[allow(dead_code)]
-    pub selected_text: Color,
-}
-
-impl Palette {
-    pub const DARK: Self = Self {
-        background: color!(0x090d14),
-        surface: color!(0x0f151f),
-        surface_hover: color!(0x1b2534),
-        surface_selected: color!(0x241d3f),
-        surface_active: color!(0x202b3b),
-        elevated_surface: color!(0x151d2a),
-        panel: color!(0x101720),
-        editor_background: color!(0x0b1018),
-        editor_gutter: color!(0x111925),
-        data_row_odd: color!(0x0b1018),
-        data_row_even: color!(0x0f151f),
-        data_gutter: color!(0x111925),
-        data_separator: color!(0x182231),
-        border: color!(0x253144),
-        border_subtle: color!(0x1a2433),
-        text: color!(0xe8eef8),
-        text_muted: color!(0xa4afc1),
-        accent: color!(0x9b7cff),
-        accent_hover: color!(0xb39aff),
-        accent_soft: color!(0x282044),
-        success: color!(0x43d18b),
-        warning: color!(0xf0a742),
-        danger: color!(0xf26464),
-        selected_text: color!(0xf7f3ff),
-    };
-
-    pub const LIGHT: Self = Self {
-        background: color!(0xf4f6fb),
-        surface: color!(0xfafbfd),
-        surface_hover: color!(0xeef2f8),
-        surface_selected: color!(0xeee8ff),
-        surface_active: color!(0xe5eaf3),
-        elevated_surface: color!(0xffffff),
-        panel: color!(0xf9fafc),
-        editor_background: color!(0xffffff),
-        editor_gutter: color!(0xf1f3f8),
-        data_row_odd: color!(0xffffff),
-        data_row_even: color!(0xf8f9fc),
-        data_gutter: color!(0xf1f3f8),
-        data_separator: color!(0xe4e8f0),
-        border: color!(0xd8deea),
-        border_subtle: color!(0xe8ecf3),
-        text: color!(0x182030),
-        text_muted: color!(0x657084),
-        accent: color!(0x6f45e8),
-        accent_hover: color!(0x5f35d9),
-        accent_soft: color!(0xeee8ff),
-        success: color!(0x147a4d),
-        warning: color!(0xa96813),
-        danger: color!(0xc43f3f),
-        selected_text: color!(0x241452),
-    };
-}
-
 pub mod spacing {
-    pub const XXS: f32 = 2.0;
-    pub const XS: f32 = 4.0;
-    pub const SM: f32 = 8.0;
-    pub const MD: f32 = 12.0;
-    pub const LG: f32 = 16.0;
-    pub const XL: f32 = 20.0;
-    pub const XXL: f32 = 24.0;
+    use super::tokens;
+
+    pub const XXS: f32 = tokens::SPACING.xxs;
+    pub const XS: f32 = tokens::SPACING.xs;
+    pub const SM: f32 = tokens::SPACING.sm;
+    pub const MD: f32 = tokens::SPACING.md;
+    pub const LG: f32 = tokens::SPACING.lg;
+    pub const XL: f32 = tokens::SPACING.xl;
+    pub const XXL: f32 = tokens::SPACING.xxl;
 }
 
 pub mod radius {
+    use super::tokens;
+
     pub const XS: f32 = 2.0;
-    pub const SM: f32 = 4.0;
-    pub const MD: f32 = 6.0;
-    pub const LG: f32 = 8.0;
+    pub const SM: f32 = tokens::RADIUS.small;
+    pub const MD: f32 = tokens::RADIUS.medium;
+    pub const LG: f32 = tokens::RADIUS.large;
 }
 
 pub mod typography {
-    use iced::Font;
+    use super::tokens;
 
-    pub const UI: Font = Font::DEFAULT;
-    pub const MONO: Font = Font::MONOSPACE;
-    pub const MENU: u32 = 13;
-    pub const LABEL: u32 = 11;
-    pub const BODY: u32 = 13;
-    pub const EDITOR: u32 = 14;
-    pub const TITLE: u32 = 15;
+    pub const UI: iced::Font = tokens::TYPOGRAPHY.ui_font;
+    pub const MONO: iced::Font = tokens::TYPOGRAPHY.mono_font;
+    pub const MENU: u32 = tokens::TYPOGRAPHY.font_size_menu;
+    #[allow(dead_code)]
+    pub const SMALL: u32 = tokens::TYPOGRAPHY.font_size_small;
+    pub const LABEL: u32 = tokens::TYPOGRAPHY.font_size_label;
+    pub const BODY: u32 = tokens::TYPOGRAPHY.font_size_body;
+    pub const EDITOR: u32 = tokens::TYPOGRAPHY.font_size_editor;
+    pub const EDITOR_LINE_NUMBER: u32 = tokens::TYPOGRAPHY.font_size_editor_line_number;
+    #[allow(dead_code)]
+    pub const GRID: u32 = tokens::TYPOGRAPHY.font_size_grid;
+    pub const TITLE: u32 = tokens::TYPOGRAPHY.font_size_heading;
 }
 
 pub mod icons {
+    use super::tokens;
+
     pub const TREE: f32 = 15.0;
-    pub const TOOLBAR: f32 = 16.0;
-    pub const ACTIVITY: f32 = 20.0;
+    pub const TOOLBAR: f32 = tokens::SIZES.toolbar_icon_size;
+    pub const ACTIVITY: f32 = tokens::SIZES.activity_icon_size;
     pub const META: f32 = 15.0;
+}
+
+pub mod sizes {
+    use super::tokens;
+
+    pub const ACTIVITY_BAR_WIDTH: f32 = tokens::SIZES.activity_bar_width;
+    pub const ACTIVITY_BUTTON_SIZE: f32 = tokens::SIZES.activity_button_size;
+    pub const TOOLBAR_HEIGHT: f32 = tokens::SIZES.toolbar_height;
+    pub const TOOLBAR_BUTTON_WIDTH: f32 = tokens::SIZES.toolbar_button_width;
+    pub const TOOLBAR_BUTTON_HEIGHT: f32 = tokens::SIZES.toolbar_button_height;
+    pub const TOOLBAR_SEARCH_WIDTH: f32 = tokens::SIZES.toolbar_search_width;
+    pub const TAB_HEIGHT: f32 = tokens::SIZES.tab_height;
+    pub const TAB_BUTTON_HEIGHT: f32 = tokens::SIZES.tab_button_height;
+    pub const TAB_CLOSE_WIDTH: f32 = tokens::SIZES.tab_close_width;
+    pub const TAB_ICON_SIZE: f32 = tokens::SIZES.tab_icon_size;
+    pub const TAB_UNDERLINE_HEIGHT: f32 = tokens::SIZES.tab_underline_height;
+    pub const EDITOR_LINE_HEIGHT_RATIO: f32 = tokens::SIZES.editor_line_height_ratio;
+    pub const EDITOR_GUTTER_WIDTH: f32 = tokens::SIZES.editor_gutter_width;
+    pub const DATA_GRID_ROW_HEIGHT: f32 = tokens::SIZES.data_grid_row_height;
+    pub const DATA_GRID_HEADER_HEIGHT: f32 = tokens::SIZES.data_grid_header_height;
+    pub const DATA_GRID_GUTTER_WIDTH: f32 = tokens::SIZES.data_grid_gutter_width;
+    pub const SIDEBAR_DEFAULT_WIDTH: f32 = tokens::SIZES.sidebar_default_width;
+    pub const INSPECTOR_DEFAULT_WIDTH: f32 = tokens::SIZES.inspector_default_width;
+    pub const SCHEMA_DEFAULT_WIDTH: f32 = tokens::SIZES.schema_default_width;
+    pub const SQL_EDITOR_DEFAULT_HEIGHT: f32 = tokens::SIZES.sql_editor_default_height;
+    pub const SIDEBAR_MIN_WIDTH: f32 = tokens::SIZES.sidebar_min_width;
+    pub const SIDEBAR_MAX_WIDTH: f32 = tokens::SIZES.sidebar_max_width;
+    pub const INSPECTOR_MIN_WIDTH: f32 = tokens::SIZES.inspector_min_width;
+    pub const INSPECTOR_MAX_WIDTH: f32 = tokens::SIZES.inspector_max_width;
+    pub const SCHEMA_MIN_WIDTH: f32 = tokens::SIZES.schema_min_width;
+    pub const SCHEMA_MAX_WIDTH: f32 = tokens::SIZES.schema_max_width;
+    pub const SQL_EDITOR_MIN_HEIGHT: f32 = tokens::SIZES.sql_editor_min_height;
+    pub const SQL_EDITOR_MAX_HEIGHT: f32 = tokens::SIZES.sql_editor_max_height;
+    pub const SPLITTER_HIT_AREA: f32 = tokens::SIZES.splitter_hit_area;
+    pub const MENU_BAR_HEIGHT: f32 = tokens::SIZES.menu_bar_height;
+    pub const MENU_WIDTH: f32 = tokens::SIZES.menu_width;
+    pub const MENU_TOP_OFFSET: f32 = tokens::SIZES.menu_top_offset;
+    pub const SEARCH_OVERLAY_WIDTH: f32 = tokens::SIZES.search_overlay_width;
+    pub const SEARCH_OVERLAY_HEIGHT: f32 = tokens::SIZES.search_overlay_height;
+    pub const SEARCH_RESULTS_HEIGHT: f32 = tokens::SIZES.search_results_height;
+    pub const DIALOG_WIDTH: f32 = tokens::SIZES.dialog_width;
+    pub const DIVIDER_WIDTH: f32 = tokens::SIZES.divider_width;
+    pub const DIVIDER_HEIGHT: f32 = tokens::SIZES.divider_height;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,21 +136,26 @@ pub enum Icon {
     FileText,
     Folder,
     PanelLeft,
-    Plus,
     Refresh,
+    Save,
     Search,
     Settings,
     Split,
     Tag,
     Terminal,
+    X,
 }
 
-pub fn palette(theme: &Theme) -> Palette {
+pub fn tokens(theme: &Theme) -> &'static ThemeTokens {
     if theme.palette().background.r > 0.5 {
-        Palette::LIGHT
+        &tokens::LIGHT
     } else {
-        Palette::DARK
+        &tokens::DARK
     }
+}
+
+pub fn palette(theme: &Theme) -> ColorTokens {
+    tokens(theme).colors
 }
 
 pub fn application_style(theme: &Theme) -> iced_theme::Style {
@@ -222,6 +198,13 @@ pub fn text_warning(theme: &Theme) -> text::Style {
     }
 }
 
+#[allow(dead_code)]
+pub fn text_error(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).error),
+    }
+}
+
 pub fn icon_style(theme: &Theme, _status: svg::Status) -> svg::Style {
     svg::Style {
         color: Some(palette(theme).text_muted),
@@ -235,6 +218,21 @@ pub fn icon_accent_style(theme: &Theme, _status: svg::Status) -> svg::Style {
 }
 
 pub fn text_editor(theme: &Theme, status: iced_text_editor::Status) -> iced_text_editor::Style {
+    text_editor_with_background(theme, status, palette(theme).editor_background)
+}
+
+pub fn markdown_text_editor(
+    theme: &Theme,
+    status: iced_text_editor::Status,
+) -> iced_text_editor::Style {
+    text_editor_with_background(theme, status, Color::TRANSPARENT)
+}
+
+fn text_editor_with_background(
+    theme: &Theme,
+    status: iced_text_editor::Status,
+    background: Color,
+) -> iced_text_editor::Style {
     let palette = palette(theme);
     let border_color = match status {
         iced_text_editor::Status::Focused { .. } => palette.accent,
@@ -245,11 +243,11 @@ pub fn text_editor(theme: &Theme, status: iced_text_editor::Status) -> iced_text
     };
 
     iced_text_editor::Style {
-        background: Background::Color(palette.editor_background),
+        background: Background::Color(background),
         border: border(border_color, 1.0, radius::SM),
         placeholder: palette.text_muted,
         value: palette.text,
-        selection: palette.accent_soft,
+        selection: palette.editor_selection,
     }
 }
 
@@ -260,14 +258,14 @@ pub fn panel(theme: &Theme) -> container::Style {
 
 pub fn elevated(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.elevated_surface, None, radius::SM)
+    container_style(palette.surface_elevated, None, radius::SM)
 }
 
 pub fn overlay_panel(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
         text_color: Some(palette.text),
-        background: Some(Background::Color(palette.elevated_surface)),
+        background: Some(Background::Color(palette.menu_background)),
         border: border(palette.border, 1.0, radius::LG),
         shadow: Shadow {
             color: Color {
@@ -281,22 +279,28 @@ pub fn overlay_panel(theme: &Theme) -> container::Style {
     }
 }
 
+pub fn sql_completion_popup(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        text_color: Some(palette.text),
+        background: Some(Background::Color(palette.surface_elevated)),
+        border: border(palette.border, 1.0, radius::SM),
+        shadow: Shadow {
+            color: Color {
+                a: 0.22,
+                ..Color::BLACK
+            },
+            offset: iced::Vector::new(0.0, 8.0),
+            blur_radius: 18.0,
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn overlay_backdrop(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    let backdrop = if palette.background.r > 0.5 {
-        Color {
-            a: 0.22,
-            ..palette.border
-        }
-    } else {
-        Color {
-            a: 0.34,
-            ..Color::BLACK
-        }
-    };
-
     container::Style {
-        background: Some(Background::Color(backdrop)),
+        background: Some(Background::Color(palette.overlay_backdrop)),
         ..container::Style::default()
     }
 }
@@ -326,6 +330,17 @@ pub fn gutter(theme: &Theme) -> container::Style {
     }
 }
 
+pub fn editor_row(theme: &Theme, row_index: usize) -> container::Style {
+    let palette = palette(theme);
+    let background = if row_index.is_multiple_of(2) {
+        palette.editor_row_odd
+    } else {
+        palette.editor_row_even
+    };
+
+    container_style(background, None, 0.0)
+}
+
 pub fn chip(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.accent_soft, None, radius::LG)
@@ -341,11 +356,6 @@ pub fn tab_underline(theme: &Theme) -> container::Style {
     container_style(palette.accent, None, 0.0)
 }
 
-pub fn active_line(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container_style(palette.surface_selected, None, 0.0)
-}
-
 pub fn table_row(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.editor_background, Some(palette.border_subtle), 0.0)
@@ -356,12 +366,12 @@ pub fn data_row(theme: &Theme, row_index: usize, selected: bool) -> container::S
     let background = if selected {
         palette.surface_selected
     } else if row_index.is_multiple_of(2) {
-        palette.data_row_even
+        palette.grid_row_even
     } else {
-        palette.data_row_odd
+        palette.grid_row_odd
     };
 
-    container_style(background, Some(palette.data_separator), 0.0)
+    container_style(background, Some(palette.grid_separator), 0.0)
 }
 
 pub fn data_row_button(
@@ -376,9 +386,9 @@ pub fn data_row_button(
     } else if matches!(status, button::Status::Hovered) {
         palette.surface_hover
     } else if row_index.is_multiple_of(2) {
-        palette.data_row_even
+        palette.grid_row_even
     } else {
-        palette.data_row_odd
+        palette.grid_row_odd
     };
 
     button::Style {
@@ -392,14 +402,14 @@ pub fn data_row_button(
 
 pub fn data_gutter(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.data_gutter, Some(palette.data_separator), 0.0)
+    container_style(palette.grid_gutter, Some(palette.grid_separator), 0.0)
 }
 
 pub fn data_header(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(
-        palette.elevated_surface,
-        Some(palette.data_separator),
+        palette.grid_header,
+        Some(palette.grid_separator),
         radius::XS,
     )
 }
@@ -408,7 +418,7 @@ pub fn data_cell(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
         border: Border {
-            color: palette.data_separator,
+            color: palette.grid_separator,
             width: 0.5,
             radius: Radius::default(),
         },
@@ -430,7 +440,7 @@ pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
     };
 
     text_input::Style {
-        background: Background::Color(palette.elevated_surface),
+        background: Background::Color(palette.surface_elevated),
         border: border(border_color, 1.0, radius::SM),
         icon: palette.text_muted,
         placeholder: palette.text_muted,
@@ -525,11 +535,34 @@ pub fn button_tree_selected(theme: &Theme, status: button::Status) -> button::St
     }
 }
 
+pub fn sql_completion_button(
+    theme: &Theme,
+    selected: bool,
+    status: button::Status,
+) -> button::Style {
+    let palette = palette(theme);
+    let background = if selected {
+        Some(Background::Color(palette.accent_soft))
+    } else if matches!(status, button::Status::Hovered) {
+        Some(Background::Color(palette.surface_hover))
+    } else {
+        None
+    };
+
+    button::Style {
+        background,
+        text_color: palette.text,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
 pub fn button_table_header(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
         button::Status::Hovered => palette.surface_hover,
-        _ => palette.elevated_surface,
+        _ => palette.surface_elevated,
     };
 
     button::Style {
@@ -637,9 +670,11 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         Icon::PanelLeft => {
             r#"<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#
         }
-        Icon::Plus => r#"<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>"#,
         Icon::Refresh => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5"/><path d="M4 12a8 8 0 0 1 14-5"/><path d="M18 3v4h-4"/><path d="M6 21v-4h4"/></svg>"#
+        }
+        Icon::Save => {
+            r#"<svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8"/><path d="M8 20v-6h8v6"/></svg>"#
         }
         Icon::Search => {
             r#"<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>"#
@@ -656,6 +691,7 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         Icon::Terminal => {
             r#"<svg viewBox="0 0 24 24"><path d="m5 7 5 5-5 5"/><path d="M12 17h7"/></svg>"#
         }
+        Icon::X => r#"<svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>"#,
     }
 }
 
@@ -664,5 +700,43 @@ fn border(color: Color, width: f32, radius: f32) -> Border {
         color,
         width,
         radius: Radius::from(radius),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sizes, tokens};
+
+    #[test]
+    fn light_and_dark_tokens_include_subtle_editor_zebra_rows() {
+        assert_ne!(
+            tokens::DARK.colors.editor_row_odd,
+            tokens::DARK.colors.editor_row_even
+        );
+        assert_ne!(
+            tokens::LIGHT.colors.editor_row_odd,
+            tokens::LIGHT.colors.editor_row_even
+        );
+        assert_eq!(
+            tokens::DARK.colors.editor_row_odd,
+            tokens::DARK.colors.editor_background
+        );
+        assert_eq!(
+            tokens::LIGHT.colors.editor_row_odd,
+            tokens::LIGHT.colors.editor_background
+        );
+    }
+
+    #[test]
+    fn exported_size_tokens_match_central_values() {
+        assert_eq!(sizes::TAB_HEIGHT, tokens::SIZES.tab_height);
+        assert_eq!(
+            sizes::EDITOR_LINE_HEIGHT_RATIO,
+            tokens::SIZES.editor_line_height_ratio
+        );
+        assert_eq!(
+            sizes::ACTIVITY_BUTTON_SIZE,
+            tokens::SIZES.activity_button_size
+        );
     }
 }

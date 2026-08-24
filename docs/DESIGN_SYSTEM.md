@@ -1,6 +1,8 @@
 # Design System
 
-MDB-001B defines a token-based design system in Rust at `crates/flokin-app/src/theme.rs`.
+UI-TOKENS-001 centralizes the visual source of truth in Rust at
+`crates/flokin-app/src/theme/tokens.rs`. `theme.rs` exposes compatibility
+helpers and widget style functions that consume those tokens.
 
 The application supports two in-memory themes:
 
@@ -9,53 +11,32 @@ The application supports two in-memory themes:
 
 ## Colors
 
-- `background`
-- `surface`
-- `surface_hover`
-- `surface_selected`
-- `surface_active`
-- `elevated_surface`
-- `panel`
-- `editor_background`
-- `editor_gutter`
-- `data_row_odd`
-- `data_row_even`
-- `data_gutter`
-- `data_separator`
-- `border`
-- `border_subtle`
-- `text`
-- `text_muted`
-- `accent`
-- `accent_hover`
-- `accent_soft`
-- `success`
-- `warning`
-- `danger`
-- `selected_text`
+Color tokens live under `ThemeTokens.colors` and include application surfaces,
+text colors, accent states, status colors, editor colors, grid colors, menu
+backgrounds, and overlay backdrop colors. Dark and Light palettes are defined
+side by side as `tokens::DARK` and `tokens::LIGHT`.
 
 ## Spacing
 
-- `XXS`
-- `XS`
-- `SM`
-- `MD`
-- `LG`
-- `XL`
-- `XXL`
+Spacing uses a compact scale under `ThemeTokens.spacing`: `xxs`, `xs`, `sm`,
+`md`, `lg`, `xl`, and `xxl`.
 
 ## Radius
 
-- `XS`
-- `SM`
-- `MD`
-- `LG`
+Radius tokens live under `ThemeTokens.radius`: `small`, `medium`, and `large`.
 
 ## Typography
 
 - UI font: system default.
 - Mono font: system monospace fallback.
-- Sizes: menu, label, body, editor, title.
+- Sizes: body, small, label, heading, editor, editor line number, grid, and menu.
+
+## Sizes
+
+Important dimensions live under `ThemeTokens.sizes`, including activity bar and
+icon sizes, toolbar height, tab height, editor line height, editor gutter width,
+data grid density, sidebar defaults, splitter hit area, menu sizes, search
+overlay sizes, and dialog width.
 
 ## Icons
 
@@ -79,4 +60,16 @@ Collection tables and SQL result grids share the view-level data grid language i
 - `—` for NULL or missing values and `✓`/`✕` for booleans;
 - hover and selected-row surfaces take precedence over zebra backgrounds.
 
-Vertical separators remain lighter than horizontal row separators. Data grid tokens are defined once in `theme.rs` and must work in both Dark and Light themes.
+Vertical separators remain lighter than horizontal row separators. Data grid tokens are defined once in `theme/tokens.rs` and must work in both Dark and Light themes.
+
+## Markdown Editor
+
+The editor consumes `editor_background`, `editor_row_odd`,
+`editor_row_even`, `editor_gutter`, `editor_current_line`, and
+`editor_selection` tokens. UI-TOKENS-001 renders a subtle viewport-row
+background behind the Markdown `text_editor` and mirrors it in the line-number
+gutter while keeping Iced's editor widget intact for cursor, selection,
+copy/paste, undo/redo, scrolling, and per-tab state. Iced 0.14 does not expose
+a public text-editor scroll offset, so the zebra layer is intentionally a safe
+visual reading aid rather than a document-line-aware renderer after arbitrary
+internal scrolling.

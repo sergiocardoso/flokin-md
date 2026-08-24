@@ -1,11 +1,14 @@
 use flokin_core::{
-    BottomTab, Collection, ShellModel, SortDirection, SqlColumnType, SqlQueryResult, SqlValue,
-    TableCell, TableColumn, TableModel, TableValueType, WorkspaceTab,
+    Collection, EditorExternalConflict, EditorTab, ShellModel, SortDirection, SqlColumnType,
+    SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell, TableColumn,
+    TableModel, TableValueType,
 };
 use iced::widget::{
-    button, column, container, row, scrollable,
+    button, column, container, mouse_area, row, scrollable,
     scrollable::{Direction, Scrollbar},
-    text, text_editor,
+    stack, text,
+    text::{LineHeight, Wrapping},
+    text_editor,
 };
 use iced::{keyboard, keyboard::Key, Alignment, Element, Length};
 
@@ -23,7 +26,7 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
             true,
             Message::SqlExplorerOpened,
         )])
-        .height(38)
+        .height(theme::sizes::TAB_HEIGHT)
         .padding([0.0, theme::spacing::SM])
         .style(theme::surface)
         .into();
@@ -35,81 +38,125 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
             true,
             Message::MockAction,
         )])
-        .height(38)
+        .height(theme::sizes::TAB_HEIGHT)
         .padding([0.0, theme::spacing::SM])
         .style(theme::surface)
         .into();
     }
 
-    if let Some(document) = model.selected_document() {
-        return container(row![widgets::tab_button(
-            document.title.as_str(),
-            true,
-            Message::MockAction,
-        )])
-        .height(38)
-        .padding([0.0, theme::spacing::SM])
-        .style(theme::surface)
-        .into();
-    }
-
-    if model.current_workspace.is_some() && model.documents.is_empty() {
-        return container(row![])
-            .height(38)
+    if !model.editor.tabs.is_empty() {
+        let mut tabs = row![].spacing(theme::spacing::XS);
+        for tab in &model.editor.tabs {
+            tabs = tabs.push(editor_tab(model, tab));
+        }
+        return container(scrollable(tabs).direction(Direction::Horizontal(Scrollbar::default())))
+            .height(theme::sizes::TAB_HEIGHT)
             .padding([0.0, theme::spacing::SM])
             .style(theme::surface)
             .into();
     }
 
-    let mut tabs = row![]
-        .spacing(theme::spacing::XXS)
-        .align_y(Alignment::Center);
-
-    for tab in WorkspaceTab::ALL {
-        tabs = tabs.push(widgets::tab_button(
-            tab.title(),
-            tab == model.selected_tab,
-            Message::WorkspaceTabSelected(tab),
-        ));
-    }
-
-    tabs = tabs.push(widgets::tab_icon_button(
-        theme::Icon::Plus,
-        Message::MockAction,
-    ));
-
-    container(tabs)
-        .height(38)
+    container(row![])
+        .height(theme::sizes::TAB_HEIGHT)
         .padding([0.0, theme::spacing::SM])
         .style(theme::surface)
         .into()
 }
 
+fn editor_tab<'a>(model: &'a ShellModel, tab: &'a EditorTab) -> Element<'a, Message> {
+    let active = model.editor.active_path.as_ref() == Some(&tab.document_path);
+    let label = editor_tab_label(model, tab);
+    let dirty = if tab.dirty { " ●" } else { "" };
+    let style = if active {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    };
+
+    row![
+        button(
+            row![text(format!("{label}{dirty}"))
+                .size(theme::typography::BODY)
+                .style(if active {
+                    theme::text_accent
+                } else {
+                    theme::text_normal
+                }),]
+            .align_y(Alignment::Center)
+        )
+        .height(theme::sizes::TAB_BUTTON_HEIGHT)
+        .padding([4.0, 9.0])
+        .style(style)
+        .on_press(Message::EditorTabSelected(tab.document_path.clone())),
+        button(widgets::icon(
+            theme::Icon::X,
+            theme::sizes::TAB_ICON_SIZE,
+            false,
+        ))
+        .width(theme::sizes::TAB_CLOSE_WIDTH)
+        .height(theme::sizes::TAB_BUTTON_HEIGHT)
+        .padding(0)
+        .style(theme::button_toolbar)
+        .on_press(Message::EditorTabCloseRequested(tab.document_path.clone()))
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn editor_tab_label(model: &ShellModel, tab: &EditorTab) -> String {
+    let duplicates = model
+        .editor
+        .tabs
+        .iter()
+        .filter(|other| other.title == tab.title)
+        .count();
+    if duplicates <= 1 {
+        return tab.title.clone();
+    }
+
+    let parent = tab
+        .relative_path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::from("."));
+    format!("{} — {}", tab.title, parent)
+}
+
 pub fn view<'a>(
     model: &'a ShellModel,
     sql_editor: &'a text_editor::Content,
+    markdown_editor: &'a text_editor::Content,
+    sql_completion_items: &'a [SqlCompletionItem],
+    sql_completion_selected: usize,
+    sql_completion_open: bool,
     sql_editor_height: f32,
 ) -> Element<'a, Message> {
     if model.sql_explorer.open {
-        return sql_explorer_view(model, sql_editor, sql_editor_height);
+        return sql_explorer_view(
+            model,
+            sql_editor,
+            sql_completion_items,
+            sql_completion_selected,
+            sql_completion_open,
+            sql_editor_height,
+        );
     }
 
     if let Some(collection) = model.selected_collection() {
         return collection_view(model, collection.id.as_str());
     }
 
-    if let Some(document) = model.selected_document() {
-        return document_selection_view(document);
+    if let Some(tab) = model.active_editor_tab() {
+        return markdown_editor_view(tab, markdown_editor, model);
     }
 
     if model.current_workspace.is_some() && model.documents.is_empty() {
         return empty_workspace_view(model);
     }
 
-    column![breadcrumb(), editor_area(model), bottom_panel(model)]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    empty_document_area()
 }
 
 fn empty_workspace_view(model: &ShellModel) -> Element<'_, Message> {
@@ -139,6 +186,9 @@ fn empty_workspace_view(model: &ShellModel) -> Element<'_, Message> {
 fn sql_explorer_view<'a>(
     model: &'a ShellModel,
     sql_editor: &'a text_editor::Content,
+    sql_completion_items: &'a [SqlCompletionItem],
+    sql_completion_selected: usize,
+    sql_completion_open: bool,
     sql_editor_height: f32,
 ) -> Element<'a, Message> {
     let header = row![
@@ -170,13 +220,14 @@ fn sql_explorer_view<'a>(
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
 
-    let editor = container(
+    let editor_widget = container(
         text_editor(sql_editor)
             .placeholder("SELECT *\nFROM projects\nLIMIT 100;")
             .on_action(Message::SqlEditorAction)
-            .key_binding(sql_editor_key_binding)
+            .key_binding(move |press| sql_editor_key_binding(press, sql_completion_open))
             .font(theme::mono())
             .size(theme::typography::EDITOR)
+            .line_height(LineHeight::Relative(theme::sizes::EDITOR_LINE_HEIGHT_RATIO))
             .height(Length::Fill)
             .padding(theme::spacing::MD)
             .wrapping(iced::widget::text::Wrapping::None)
@@ -184,11 +235,22 @@ fn sql_explorer_view<'a>(
     )
     .height(Length::Fixed(sql_editor_height))
     .width(Length::Fill);
+    let editor: Element<'a, Message> = if sql_completion_open && !sql_completion_items.is_empty() {
+        stack![
+            editor_widget,
+            sql_completion_popup(sql_completion_items, sql_completion_selected)
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(sql_editor_height))
+        .into()
+    } else {
+        editor_widget.into()
+    };
 
     let results = sql_results(model);
     let editor_splitter = iced::widget::mouse_area(
         container("")
-            .height(7)
+            .height(theme::sizes::SPLITTER_HIT_AREA)
             .width(Length::Fill)
             .style(theme::splitter),
     )
@@ -211,12 +273,104 @@ fn sql_explorer_view<'a>(
         .into()
 }
 
-fn sql_editor_key_binding(press: text_editor::KeyPress) -> Option<text_editor::Binding<Message>> {
+fn sql_editor_key_binding(
+    press: text_editor::KeyPress,
+    completion_open: bool,
+) -> Option<text_editor::Binding<Message>> {
     if press.modifiers.control() && matches!(press.key, Key::Named(keyboard::key::Named::Enter)) {
         Some(text_editor::Binding::Custom(Message::SqlExecute))
+    } else if press.modifiers.control()
+        && matches!(press.key, Key::Named(keyboard::key::Named::Space))
+    {
+        Some(text_editor::Binding::Custom(
+            Message::SqlCompletionRequested,
+        ))
+    } else if completion_open {
+        match press.key.as_ref() {
+            Key::Named(keyboard::key::Named::ArrowDown) => {
+                Some(text_editor::Binding::Custom(Message::SqlCompletionNext))
+            }
+            Key::Named(keyboard::key::Named::ArrowUp) => {
+                Some(text_editor::Binding::Custom(Message::SqlCompletionPrevious))
+            }
+            Key::Named(keyboard::key::Named::Enter) | Key::Named(keyboard::key::Named::Tab) => {
+                Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
+            }
+            Key::Named(keyboard::key::Named::Escape) => {
+                Some(text_editor::Binding::Custom(Message::SqlCompletionClosed))
+            }
+            _ => text_editor::Binding::from_key_press(press),
+        }
     } else {
         text_editor::Binding::from_key_press(press)
     }
+}
+
+fn sql_completion_popup<'a>(
+    items: &'a [SqlCompletionItem],
+    selected_index: usize,
+) -> Element<'a, Message> {
+    let mut rows = column![].spacing(0);
+    for (index, item) in items.iter().take(50).enumerate() {
+        rows = rows.push(sql_completion_row(item, index == selected_index, index));
+    }
+
+    container(
+        container(scrollable(rows).height(Length::Shrink))
+            .width(360)
+            .max_height(336)
+            .padding(theme::spacing::XS)
+            .style(theme::sql_completion_popup),
+    )
+    .padding([42.0, 24.0])
+    .width(Length::Shrink)
+    .height(Length::Shrink)
+    .into()
+}
+
+fn sql_completion_row<'a>(
+    item: &'a SqlCompletionItem,
+    selected: bool,
+    index: usize,
+) -> Element<'a, Message> {
+    let kind = match item.kind {
+        SqlCompletionKind::Keyword => "K",
+        SqlCompletionKind::Table => "T",
+        SqlCompletionKind::Column => "C",
+        SqlCompletionKind::Alias => "A",
+        SqlCompletionKind::Function => "F",
+    };
+    mouse_area(
+        button(
+            row![
+                container(
+                    text(kind)
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_muted)
+                )
+                .width(22),
+                text(item.label.as_str())
+                    .font(theme::mono())
+                    .size(theme::typography::BODY)
+                    .style(theme::text_normal)
+                    .width(Length::Fill),
+                text(item.detail.as_str())
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(26)
+        .padding([3.0, theme::spacing::SM])
+        .style(move |theme, status| theme::sql_completion_button(theme, selected, status))
+        .on_press(Message::SqlCompletionSelected(index)),
+    )
+    .on_press(Message::SqlCompletionSelected(index))
+    .into()
 }
 
 fn sql_results(model: &ShellModel) -> Element<'_, Message> {
@@ -408,10 +562,11 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
     let Some(collection) = model.selected_collection() else {
         return container("").into();
     };
-    let table = TableModel::collection(
+    let table = TableModel::collection_with_relations(
         collection_id,
         &model.documents,
         model.collection_table_sort.as_ref(),
+        Some(&model.relation_index),
     );
 
     container(
@@ -610,21 +765,233 @@ fn collection_alignment(value_type: TableValueType) -> iced::alignment::Horizont
     }
 }
 
-fn document_selection_view(document: &flokin_core::Document) -> Element<'_, Message> {
-    container(
+fn markdown_editor_view<'a>(
+    tab: &'a EditorTab,
+    markdown_editor: &'a text_editor::Content,
+    _model: &'a ShellModel,
+) -> Element<'a, Message> {
+    let header = row![
         column![
-            text(document.title.as_str())
-                .size(22)
+            text(tab.title.as_str())
+                .size(theme::typography::TITLE)
                 .style(theme::text_accent),
-            text(document.relative_path.display().to_string())
+            text(tab.relative_path.display().to_string())
                 .font(theme::mono())
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
-            text("Conteúdo real será aberto em milestone futura.")
-                .size(theme::typography::BODY)
+                .size(theme::typography::LABEL)
                 .style(theme::text_muted),
         ]
-        .spacing(theme::spacing::MD),
+        .spacing(theme::spacing::XXS)
+        .width(Length::Fill),
+        save_button(tab),
+    ]
+    .spacing(theme::spacing::MD)
+    .align_y(Alignment::Center);
+
+    let mut content = column![header]
+        .spacing(theme::spacing::SM)
+        .height(Length::Fill);
+
+    if let Some(error) = tab.save_error.as_ref() {
+        content = content.push(
+            container(
+                text(error.as_str())
+                    .size(theme::typography::BODY)
+                    .style(theme::text_warning),
+            )
+            .padding([6.0, theme::spacing::MD])
+            .width(Length::Fill)
+            .style(theme::elevated),
+        );
+    }
+
+    if let Some(conflict) = tab.external_conflict.as_ref() {
+        content = content.push(external_conflict_banner(conflict));
+    }
+
+    content = content.push(markdown_editor_body(tab, markdown_editor));
+
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(theme::spacing::LG)
+        .style(theme::editor)
+        .into()
+}
+
+fn save_button<'a>(tab: &'a EditorTab) -> Element<'a, Message> {
+    let control = button(
+        row![
+            widgets::icon(theme::Icon::Save, theme::icons::TOOLBAR, !tab.dirty),
+            text("Salvar").size(theme::typography::BODY)
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .padding([5.0, 10.0])
+    .style(if tab.dirty {
+        theme::button_toolbar
+    } else {
+        theme::button_ghost
+    });
+
+    let control = if tab.dirty {
+        control.on_press(Message::EditorSaveRequested)
+    } else {
+        control
+    };
+
+    iced::widget::tooltip(
+        control,
+        text("Salvar (Ctrl+S)"),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+fn external_conflict_banner<'a>(conflict: &'a EditorExternalConflict) -> Element<'a, Message> {
+    let message = match conflict {
+        EditorExternalConflict::Modified(_) => "O arquivo foi alterado externamente.",
+        EditorExternalConflict::Deleted => "O arquivo foi removido externamente.",
+    };
+
+    container(
+        row![
+            text(message)
+                .size(theme::typography::BODY)
+                .style(theme::text_warning)
+                .width(Length::Fill),
+            button(text("Recarregar do disco"))
+                .padding([5.0, 10.0])
+                .style(theme::button_toolbar)
+                .on_press(Message::EditorExternalReload),
+            button(text("Manter minhas alterações"))
+                .padding([5.0, 10.0])
+                .style(theme::button_toolbar)
+                .on_press(Message::EditorExternalKeep),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .padding([6.0, theme::spacing::MD])
+    .width(Length::Fill)
+    .style(theme::elevated)
+    .into()
+}
+
+fn markdown_editor_body<'a>(
+    _tab: &'a EditorTab,
+    markdown_editor: &'a text_editor::Content,
+) -> Element<'a, Message> {
+    let editor = stack![
+        editor_zebra_background(),
+        text_editor(markdown_editor)
+            .placeholder("Arquivo vazio.")
+            .on_action(Message::MarkdownEditorAction)
+            .key_binding(markdown_editor_key_binding)
+            .font(theme::mono())
+            .size(theme::typography::EDITOR)
+            .line_height(LineHeight::Relative(theme::sizes::EDITOR_LINE_HEIGHT_RATIO,))
+            .height(Length::Fill)
+            .padding(theme::spacing::MD)
+            .wrapping(Wrapping::None)
+            .style(theme::markdown_text_editor)
+    ]
+    .height(Length::Fill)
+    .width(Length::Fill);
+
+    row![line_number_gutter(markdown_editor.line_count()), editor]
+        .spacing(0)
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+}
+
+fn editor_zebra_background<'a>() -> Element<'a, Message> {
+    iced::widget::responsive(|size| {
+        let line_height = editor_line_height_px();
+        let usable_height = (size.height - theme::spacing::MD * 2.0).max(0.0);
+        let visible_rows = (usable_height / line_height).ceil() as usize + 1;
+        let mut rows = column![].spacing(0);
+
+        for index in 0..visible_rows.max(1) {
+            rows = rows.push(
+                container("")
+                    .width(Length::Fill)
+                    .height(line_height)
+                    .style(move |theme| theme::editor_row(theme, index)),
+            );
+        }
+
+        container(rows)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([theme::spacing::MD, 0.0])
+            .into()
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn editor_line_height_px() -> f32 {
+    theme::typography::EDITOR as f32 * theme::sizes::EDITOR_LINE_HEIGHT_RATIO
+}
+
+fn line_number_gutter<'a>(line_count: usize) -> Element<'a, Message> {
+    let mut lines = column![].spacing(0);
+    for index in 1..=line_count.max(1) {
+        lines = lines.push(
+            container(
+                text(format!("{index:>4}"))
+                    .font(theme::mono())
+                    .size(theme::typography::EDITOR_LINE_NUMBER)
+                    .line_height(LineHeight::Relative(theme::sizes::EDITOR_LINE_HEIGHT_RATIO))
+                    .style(theme::text_muted),
+            )
+            .width(Length::Fill)
+            .style(move |theme| theme::editor_row(theme, index - 1)),
+        );
+    }
+
+    container(scrollable(lines).height(Length::Fill))
+        .width(theme::sizes::EDITOR_GUTTER_WIDTH)
+        .height(Length::Fill)
+        .padding([theme::spacing::MD, theme::spacing::SM])
+        .style(theme::gutter)
+        .into()
+}
+
+fn markdown_editor_key_binding(
+    press: text_editor::KeyPress,
+) -> Option<text_editor::Binding<Message>> {
+    if press.modifiers.control()
+        && press
+            .key
+            .to_latin(press.physical_key)
+            .or_else(|| press.modified_key.to_latin(press.physical_key))
+            == Some('s')
+    {
+        Some(text_editor::Binding::Custom(Message::EditorSaveRequested))
+    } else if press.modifiers.control()
+        && press
+            .key
+            .to_latin(press.physical_key)
+            .or_else(|| press.modified_key.to_latin(press.physical_key))
+            == Some('w')
+    {
+        Some(text_editor::Binding::Custom(
+            Message::EditorCloseActiveRequested,
+        ))
+    } else {
+        text_editor::Binding::from_key_press(press)
+    }
+}
+
+fn empty_document_area<'a>() -> Element<'a, Message> {
+    container(
+        text("Selecione um documento Markdown para ver o conteúdo.")
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -633,122 +1000,11 @@ fn document_selection_view(document: &flokin_core::Document) -> Element<'_, Mess
     .into()
 }
 
-fn breadcrumb<'a>() -> Element<'a, Message> {
-    container(
-        row![
-            text("Projects")
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
-            text("›")
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
-            text("carf.md").size(theme::typography::BODY),
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
-    )
-    .height(32)
-    .padding([0.0, theme::spacing::MD])
-    .style(theme::elevated)
-    .into()
-}
-
-fn editor_area(model: &ShellModel) -> Element<'_, Message> {
-    let mut lines = column![].spacing(0);
-
-    for (index, line) in model.document.content.lines().enumerate() {
-        lines = lines.push(editor_line(index + 1, line));
-    }
-
-    container(scrollable(lines).height(Length::Fill))
-        .height(Length::FillPortion(3))
-        .style(theme::editor)
-        .into()
-}
-
-fn editor_line(line_number: usize, line: &str) -> Element<'_, Message> {
-    let is_heading = line.starts_with('#');
-    let is_active = line_number == 1;
-    let line_text = if line.is_empty() { " " } else { line };
-    let code = text(line_text)
-        .font(theme::mono())
-        .size(theme::typography::EDITOR)
-        .style(if is_heading {
-            theme::text_accent
-        } else {
-            theme::text_normal
-        });
-
-    let line_row = row![
-        container(
-            text(format!("{line_number:>3}"))
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted)
-        )
-        .width(62)
-        .padding([3.0, theme::spacing::LG])
-        .style(theme::gutter),
-        container(code)
-            .width(Length::Fill)
-            .padding([3.0, theme::spacing::LG])
-    ]
-    .height(24);
-
-    if is_active {
-        container(line_row).style(theme::active_line).into()
-    } else {
-        line_row.into()
-    }
-}
-
-fn bottom_panel(model: &ShellModel) -> Element<'_, Message> {
-    let mut tabs = row![]
-        .spacing(theme::spacing::XXS)
-        .align_y(Alignment::Center);
-
-    for tab in BottomTab::ALL {
-        tabs = tabs.push(widgets::tab_button(
-            tab.title(),
-            tab == model.bottom_tab,
-            Message::BottomTabSelected(tab),
-        ));
-    }
-
-    let preview = column![
-        row![
-            widgets::tab_button("Prévia", true, Message::MockAction),
-            widgets::tab_button("Código-fonte", false, Message::MockAction),
-        ]
-        .spacing(theme::spacing::SM),
-        container(
-            column![
-                text("CARF").size(18).style(theme::text_accent),
-                text("Conselho Administrativo de Recursos Fiscais.").size(theme::typography::BODY),
-                text("Visão Geral").size(theme::typography::TITLE),
-                text("• Instância administrativa").size(theme::typography::BODY),
-                text("• Julgamento de recursos fiscais").size(theme::typography::BODY),
-            ]
-            .spacing(theme::spacing::SM)
-        )
-        .padding(theme::spacing::MD)
-        .width(Length::Fill)
-        .style(theme::elevated)
-    ]
-    .spacing(theme::spacing::SM);
-
-    container(column![tabs, preview].spacing(theme::spacing::SM))
-        .height(Length::FillPortion(1))
-        .padding(theme::spacing::MD)
-        .style(theme::panel)
-        .into()
-}
-
 #[cfg(test)]
 mod tests {
     use iced::{keyboard, keyboard::Key, widget::text_editor};
 
-    use super::sql_editor_key_binding;
+    use super::{markdown_editor_key_binding, sql_editor_key_binding};
     use crate::message::Message;
 
     fn key_press(modifiers: keyboard::Modifiers) -> text_editor::KeyPress {
@@ -762,19 +1018,100 @@ mod tests {
         }
     }
 
+    fn latin_key_press(character: char, modifiers: keyboard::Modifiers) -> text_editor::KeyPress {
+        text_editor::KeyPress {
+            key: Key::Character(character.to_string().into()),
+            modified_key: Key::Character(character.to_string().into()),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyS),
+            modifiers,
+            text: Some(character.to_string().into()),
+            status: text_editor::Status::Focused { is_hovered: true },
+        }
+    }
+
     #[test]
     fn ctrl_enter_in_sql_editor_publishes_execute_message() {
         assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL)),
+            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL), false),
             Some(text_editor::Binding::Custom(Message::SqlExecute))
+        );
+        assert_eq!(
+            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL), true),
+            Some(text_editor::Binding::Custom(Message::SqlExecute))
+        );
+    }
+
+    #[test]
+    fn ctrl_s_in_markdown_editor_publishes_save_message() {
+        assert_eq!(
+            markdown_editor_key_binding(latin_key_press('s', keyboard::Modifiers::CTRL)),
+            Some(text_editor::Binding::Custom(Message::EditorSaveRequested))
+        );
+    }
+
+    #[test]
+    fn ctrl_w_in_markdown_editor_publishes_close_message() {
+        let mut press = latin_key_press('w', keyboard::Modifiers::CTRL);
+        press.physical_key = keyboard::key::Physical::Code(keyboard::key::Code::KeyW);
+        assert_eq!(
+            markdown_editor_key_binding(press),
+            Some(text_editor::Binding::Custom(
+                Message::EditorCloseActiveRequested
+            ))
         );
     }
 
     #[test]
     fn plain_enter_keeps_text_editor_newline_behavior() {
         assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE)),
+            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE), false),
             Some(text_editor::Binding::Enter)
+        );
+    }
+
+    #[test]
+    fn plain_enter_accepts_completion_when_popup_is_open() {
+        assert_eq!(
+            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE), true),
+            Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
+        );
+    }
+
+    #[test]
+    fn tab_accepts_completion_when_popup_is_open() {
+        let mut press = key_press(keyboard::Modifiers::NONE);
+        press.key = Key::Named(keyboard::key::Named::Tab);
+        press.modified_key = Key::Named(keyboard::key::Named::Tab);
+        assert_eq!(
+            sql_editor_key_binding(press, true),
+            Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
+        );
+    }
+
+    #[test]
+    fn arrows_and_escape_control_open_completion_popup() {
+        let mut down = key_press(keyboard::Modifiers::NONE);
+        down.key = Key::Named(keyboard::key::Named::ArrowDown);
+        down.modified_key = Key::Named(keyboard::key::Named::ArrowDown);
+        assert_eq!(
+            sql_editor_key_binding(down, true),
+            Some(text_editor::Binding::Custom(Message::SqlCompletionNext))
+        );
+
+        let mut up = key_press(keyboard::Modifiers::NONE);
+        up.key = Key::Named(keyboard::key::Named::ArrowUp);
+        up.modified_key = Key::Named(keyboard::key::Named::ArrowUp);
+        assert_eq!(
+            sql_editor_key_binding(up, true),
+            Some(text_editor::Binding::Custom(Message::SqlCompletionPrevious))
+        );
+
+        let mut escape = key_press(keyboard::Modifiers::NONE);
+        escape.key = Key::Named(keyboard::key::Named::Escape);
+        escape.modified_key = Key::Named(keyboard::key::Named::Escape);
+        assert_eq!(
+            sql_editor_key_binding(escape, true),
+            Some(text_editor::Binding::Custom(Message::SqlCompletionClosed))
         );
     }
 }

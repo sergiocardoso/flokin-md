@@ -1183,6 +1183,7 @@ mod tests {
                 modified: None,
             },
             title: title.into(),
+            source_content: Some(String::new()),
             markdown_content: String::new(),
             properties: properties
                 .into_iter()

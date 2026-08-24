@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{Document, PropertyValue};
+use crate::{display_relation_value, Document, PropertyValue, RelationIndex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableModel {
@@ -45,6 +45,7 @@ pub enum TableCell {
     Bool(bool),
     Number(String),
     String(String),
+    Relation(String),
     Array(Vec<String>),
     Object,
 }
@@ -67,6 +68,15 @@ impl TableModel {
         documents: &[Document],
         sort: Option<&TableSort>,
     ) -> Self {
+        Self::collection_with_relations(collection_id, documents, sort, None)
+    }
+
+    pub fn collection_with_relations(
+        collection_id: &str,
+        documents: &[Document],
+        sort: Option<&TableSort>,
+        relation_index: Option<&RelationIndex>,
+    ) -> Self {
         let documents = documents
             .iter()
             .filter(|document| document.collection_id == collection_id)
@@ -74,7 +84,7 @@ impl TableModel {
         let columns = discover_columns(&documents);
         let mut rows = documents
             .iter()
-            .map(|document| table_row(document, &columns))
+            .map(|document| table_row(document, &columns, relation_index))
             .collect::<Vec<_>>();
 
         rows.sort_by(|left, right| compare_rows(left, right, &columns, sort));
@@ -89,7 +99,7 @@ impl TableCell {
             Self::Missing | Self::Null => String::from("—"),
             Self::Bool(true) => String::from("✓"),
             Self::Bool(false) => String::from("✕"),
-            Self::Number(value) | Self::String(value) => value.clone(),
+            Self::Number(value) | Self::String(value) | Self::Relation(value) => value.clone(),
             Self::Array(values) => {
                 if values.is_empty() {
                     String::from("-")
@@ -150,7 +160,11 @@ fn discover_columns(documents: &[&Document]) -> Vec<TableColumn> {
     columns
 }
 
-fn table_row(document: &Document, columns: &[TableColumn]) -> TableRow {
+fn table_row(
+    document: &Document,
+    columns: &[TableColumn],
+    relation_index: Option<&RelationIndex>,
+) -> TableRow {
     let cells = columns
         .iter()
         .map(|column| {
@@ -160,7 +174,7 @@ fn table_row(document: &Document, columns: &[TableColumn]) -> TableRow {
                 document
                     .properties
                     .get(&column.id)
-                    .map(table_cell)
+                    .map(|value| table_cell(value, relation_index))
                     .unwrap_or(TableCell::Missing)
             }
         })
@@ -236,7 +250,13 @@ fn compare_sorted_cells(
     })
 }
 
-fn table_cell(value: &PropertyValue) -> TableCell {
+fn table_cell(value: &PropertyValue, relation_index: Option<&RelationIndex>) -> TableCell {
+    if let Some(relation_value) =
+        relation_index.and_then(|index| display_relation_value(value, index))
+    {
+        return TableCell::Relation(relation_value);
+    }
+
     match value {
         PropertyValue::Null => TableCell::Null,
         PropertyValue::Bool(value) => TableCell::Bool(*value),
@@ -721,6 +741,7 @@ mod tests {
                 modified: None,
             },
             title: title.to_owned(),
+            source_content: Some(String::new()),
             markdown_content: String::new(),
             properties: properties
                 .into_iter()

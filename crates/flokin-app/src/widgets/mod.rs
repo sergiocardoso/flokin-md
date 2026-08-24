@@ -41,31 +41,22 @@ pub fn tab_button<'a>(label: &'a str, selected: bool, on_press: Message) -> Elem
 
     let underline = if selected {
         container("")
-            .height(2)
+            .height(theme::sizes::TAB_UNDERLINE_HEIGHT)
             .width(Length::Fill)
             .style(theme::tab_underline)
     } else {
-        container("").height(2).width(Length::Fill)
+        container("")
+            .height(theme::sizes::TAB_UNDERLINE_HEIGHT)
+            .width(Length::Fill)
     };
 
     column![
         button(text(label).size(theme::typography::BODY))
             .padding([7.0, 12.0])
+            .height(theme::sizes::TAB_BUTTON_HEIGHT)
             .style(style)
             .on_press(on_press),
         underline
-    ]
-    .spacing(0)
-    .into()
-}
-
-pub fn tab_icon_button(icon_id: Icon, on_press: Message) -> Element<'static, Message> {
-    column![
-        button(icon(icon_id, theme::icons::TOOLBAR, false))
-            .padding([7.0, 10.0])
-            .style(theme::button_tab)
-            .on_press(on_press),
-        container("").height(2).width(Length::Fill)
     ]
     .spacing(0)
     .into()
