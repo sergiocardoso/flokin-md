@@ -1297,23 +1297,28 @@ fn save_editor_tab_task(path: std::path::PathBuf, content: String) -> Task<Messa
 
 fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Task<Message> {
     Task::perform(
-        async move {
-            let path = flokin_core::schema_path(&workspace);
-            if path.exists() {
-                return Err(String::from(
-                    "Já existe um flokin.schema.yaml neste workspace.",
-                ));
-            }
-            save_markdown_file(&path, &content).map_err(|error| {
-                format!(
-                    "Não foi possível criar {}: {error}",
-                    flokin_core::SCHEMA_FILE_NAME
-                )
-            })?;
-            Ok(path)
-        },
+        async move { create_schema_file_if_absent(&workspace, &content) },
         Message::SchemaCreateCompleted,
     )
+}
+
+fn create_schema_file_if_absent(
+    workspace: &std::path::Path,
+    content: &str,
+) -> Result<std::path::PathBuf, String> {
+    let path = flokin_core::schema_path(workspace);
+    if path.exists() {
+        return Err(String::from(
+            "Já existe um flokin.schema.yaml neste workspace.",
+        ));
+    }
+    save_markdown_file(&path, content).map_err(|error| {
+        format!(
+            "Não foi possível criar {}: {error}",
+            flokin_core::SCHEMA_FILE_NAME
+        )
+    })?;
+    Ok(path)
 }
 
 fn rebuild_sql_projection_task(
@@ -1435,7 +1440,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{keyboard_message, FlokinApp};
+    use super::{create_schema_file_if_absent, keyboard_message, FlokinApp};
     use crate::{
         message::{AppMode, Message, SplitterKind},
         services::file_watcher::WatcherMessage,
@@ -1905,6 +1910,23 @@ mod tests {
         let _ = app.update(Message::ResetLayout);
         assert_eq!(app.left_width, 272.0);
         assert!(app.left_visible && app.right_visible);
+    }
+
+    #[test]
+    fn explicit_schema_creation_writes_once_and_never_overwrites() {
+        let workspace = TempWorkspace::new();
+        let content = "version: 1\ncollections: {}\n";
+
+        let path = create_schema_file_if_absent(workspace.path(), content).unwrap();
+
+        assert_eq!(path, workspace.path().join(flokin_core::SCHEMA_FILE_NAME));
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+
+        let error = create_schema_file_if_absent(workspace.path(), "version: 1\ncollections: []\n")
+            .unwrap_err();
+
+        assert!(error.contains("Já existe um flokin.schema.yaml"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 
     #[test]

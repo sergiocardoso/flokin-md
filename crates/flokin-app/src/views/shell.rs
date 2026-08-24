@@ -1,4 +1,4 @@
-use flokin_core::{EditorDialog, ShellModel, SqlCompletionItem};
+use flokin_core::{EditorDialog, ExplicitSchemaState, SchemaType, ShellModel, SqlCompletionItem};
 use iced::widget::{
     button, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
@@ -31,6 +31,8 @@ pub fn view<'a>(
     open_menu: Option<MenuId>,
     menu_anchor_x: f32,
     about_open: bool,
+    schema_create_dialog_open: bool,
+    schema_create_error: Option<&'a str>,
     left_visible: bool,
     right_visible: bool,
     mode: AppMode,
@@ -155,6 +157,12 @@ pub fn view<'a>(
 
     if let Some(dialog) = model.editor.dialog.as_ref() {
         stack![shell, editor_dialog_overlay(dialog, model)].into()
+    } else if schema_create_dialog_open {
+        stack![
+            shell,
+            schema_create_dialog_overlay(model, schema_create_error)
+        ]
+        .into()
     } else {
         shell
     }
@@ -374,6 +382,149 @@ fn editor_dialog_overlay<'a>(
         .height(Length::Fill)
         .align_x(alignment::Horizontal::Center)
         .align_y(alignment::Vertical::Center),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn schema_create_dialog_overlay<'a>(
+    model: &'a ShellModel,
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    let existing_schema = !matches!(
+        model.schema_catalog.explicit_schema,
+        ExplicitSchemaState::Absent
+    );
+    let available_collections = model
+        .schema_catalog
+        .collections
+        .iter()
+        .filter(|collection| collection.document_count > 0)
+        .collect::<Vec<_>>();
+    let mixed_fields = available_collections
+        .iter()
+        .flat_map(|collection| {
+            collection
+                .fields
+                .iter()
+                .filter(|field| field.field_type == SchemaType::Mixed)
+                .map(move |field| format!("{} · {}", collection.display_name, field.name))
+        })
+        .collect::<Vec<_>>();
+
+    let mut content = column![
+        text("Criar schema explícito")
+            .size(theme::typography::TITLE)
+            .style(theme::text_accent),
+        text(format!(
+            "O FlokinMD criará {} na raiz deste workspace.",
+            flokin_core::SCHEMA_FILE_NAME
+        ))
+        .size(theme::typography::BODY)
+        .style(theme::text_normal),
+    ]
+    .spacing(theme::spacing::SM);
+
+    if existing_schema {
+        content = content.push(
+            text("Já existe um flokin.schema.yaml neste workspace.")
+                .size(theme::typography::BODY)
+                .style(theme::text_warning),
+        );
+    } else if available_collections.is_empty() {
+        content = content.push(
+            text("Nenhuma Collection disponível para gerar schema.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        );
+    } else {
+        content = content
+            .push(
+                text("O arquivo será gerado a partir do Schema atualmente inferido.")
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
+            )
+            .push(text("Collections detectadas:").size(theme::typography::BODY));
+        for collection in &available_collections {
+            content = content.push(
+                text(format!(
+                    "{} ({} documentos)",
+                    collection.display_name, collection.document_count
+                ))
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+            );
+        }
+        if !mixed_fields.is_empty() {
+            content = content.push(
+                text(format!(
+                    "Campos Mixed serão omitidos: {}.",
+                    mixed_fields.join(", ")
+                ))
+                .size(theme::typography::BODY)
+                .wrapping(iced::widget::text::Wrapping::Word)
+                .style(theme::text_warning),
+            );
+        }
+    }
+
+    if let Some(error) = error {
+        content = content.push(
+            text(error)
+                .size(theme::typography::BODY)
+                .wrapping(iced::widget::text::Wrapping::Word)
+                .style(theme::text_warning),
+        );
+    }
+
+    let mut actions = row![button(text("Cancelar").size(theme::typography::BODY))
+        .padding([6.0, 12.0])
+        .style(theme::button_toolbar)
+        .on_press(Message::SchemaCreateCanceled)]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    if existing_schema {
+        actions = actions.push(
+            button(text("Abrir schema").size(theme::typography::BODY))
+                .padding([6.0, 12.0])
+                .style(theme::button_selected)
+                .on_press(Message::SchemaOpenRequested),
+        );
+    } else {
+        let create = button(text("Criar schema").size(theme::typography::BODY))
+            .padding([6.0, 12.0])
+            .style(if available_collections.is_empty() {
+                theme::button_ghost
+            } else {
+                theme::button_selected
+            });
+        actions = actions.push(if available_collections.is_empty() {
+            create
+        } else {
+            create.on_press(Message::SchemaCreateConfirmed)
+        });
+    }
+
+    let dialog = container(content.push(actions))
+        .width(theme::sizes::DIALOG_WIDTH)
+        .padding(theme::spacing::LG)
+        .style(theme::overlay_panel);
+
+    stack![
+        mouse_area(
+            container("")
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::overlay_backdrop)
+        )
+        .on_press(Message::SchemaCreateCanceled),
+        container(dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

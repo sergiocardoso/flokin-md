@@ -1,8 +1,8 @@
 use flokin_core::{
     Collection, CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab,
-    EditorViewMode, SchemaField, SchemaSource, SchemaType, ShellModel, SortDirection,
-    SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell,
-    TableColumn, TableModel, TableValueType,
+    EditorTabKind, EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType,
+    ShellModel, SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult,
+    SqlValue, TableCell, TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
     button, column, container, markdown, mouse_area, row, scrollable,
@@ -716,6 +716,7 @@ fn schema_view<'a>(model: &'a ShellModel, schema: &'a CollectionSchema) -> Eleme
         );
     }
 
+    content = content.push(schema_onboarding_panel(model));
     content = content.push(schema_grid(model, schema));
 
     if let Some(field) = model.selected_schema_field() {
@@ -723,6 +724,107 @@ fn schema_view<'a>(model: &'a ShellModel, schema: &'a CollectionSchema) -> Eleme
     }
 
     content.into()
+}
+
+fn schema_onboarding_panel<'a>(model: &'a ShellModel) -> Element<'a, Message> {
+    match &model.schema_catalog.explicit_schema {
+        ExplicitSchemaState::Absent => {
+            let has_collections = model
+                .schema_catalog
+                .collections
+                .iter()
+                .any(|collection| collection.document_count > 0);
+            let mut action = button(
+                text(if has_collections {
+                    "Criar schema explícito"
+                } else {
+                    "Nenhuma Collection disponível para gerar schema"
+                })
+                .size(theme::typography::BODY),
+            )
+            .padding([5.0, 10.0])
+            .style(if has_collections {
+                theme::button_toolbar
+            } else {
+                theme::button_ghost
+            });
+            if has_collections {
+                action = action.on_press(Message::SchemaCreateRequested);
+            }
+            container(
+                row![
+                    column![
+                        text("Schema inferido")
+                            .size(theme::typography::BODY)
+                            .style(theme::text_normal),
+                        text("O FlokinMD detectou esta estrutura automaticamente a partir dos seus documentos. Crie um schema explícito para definir tipos e campos obrigatórios.")
+                            .size(theme::typography::BODY)
+                            .wrapping(Wrapping::Word)
+                            .style(theme::text_muted),
+                    ]
+                    .spacing(theme::spacing::XXS)
+                    .width(Length::Fill),
+                    action,
+                ]
+                .spacing(theme::spacing::MD)
+                .align_y(Alignment::Center),
+            )
+            .padding([8.0, theme::spacing::MD])
+            .width(Length::Fill)
+            .style(theme::elevated)
+            .into()
+        }
+        ExplicitSchemaState::Loaded(_) => container(
+            row![
+                column![
+                    text("Schema explícito")
+                        .size(theme::typography::BODY)
+                        .style(theme::text_normal),
+                    text(flokin_core::SCHEMA_FILE_NAME)
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_muted),
+                ]
+                .spacing(theme::spacing::XXS)
+                .width(Length::Fill),
+                button(text("Abrir schema").size(theme::typography::BODY))
+                    .padding([5.0, 10.0])
+                    .style(theme::button_toolbar)
+                    .on_press(Message::SchemaOpenRequested),
+            ]
+            .spacing(theme::spacing::MD)
+            .align_y(Alignment::Center),
+        )
+        .padding([8.0, theme::spacing::MD])
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into(),
+        ExplicitSchemaState::Invalid(_) => container(
+            row![
+                column![
+                    text("Schema explícito inválido")
+                        .size(theme::typography::BODY)
+                        .style(theme::text_warning),
+                    text(flokin_core::SCHEMA_FILE_NAME)
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_muted),
+                ]
+                .spacing(theme::spacing::XXS)
+                .width(Length::Fill),
+                button(text("Abrir schema").size(theme::typography::BODY))
+                    .padding([5.0, 10.0])
+                    .style(theme::button_toolbar)
+                    .on_press(Message::SchemaOpenRequested),
+            ]
+            .spacing(theme::spacing::MD)
+            .align_y(Alignment::Center),
+        )
+        .padding([8.0, theme::spacing::MD])
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into(),
+    }
 }
 
 fn schema_grid<'a>(model: &'a ShellModel, schema: &'a CollectionSchema) -> Element<'a, Message> {
@@ -1101,7 +1203,11 @@ fn markdown_editor_view<'a>(
         ]
         .spacing(theme::spacing::XXS)
         .width(Length::Fill),
-        editor_view_mode_controls(tab.view_mode),
+        if tab.kind == EditorTabKind::Markdown {
+            editor_view_mode_controls(tab.view_mode)
+        } else {
+            row![].into()
+        },
         save_button(tab),
     ]
     .spacing(theme::spacing::MD)
@@ -1238,6 +1344,7 @@ fn markdown_document_body<'a>(
     app_theme: AppTheme,
 ) -> Element<'a, Message> {
     match tab.view_mode {
+        _ if tab.kind == EditorTabKind::Schema => markdown_editor_body(tab, markdown_editor),
         EditorViewMode::Edit => markdown_editor_body(tab, markdown_editor),
         EditorViewMode::Preview => markdown_preview_body(markdown_preview, app_theme),
         EditorViewMode::Split => {

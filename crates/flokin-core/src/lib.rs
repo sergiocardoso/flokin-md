@@ -23,8 +23,8 @@ pub use mock::mock_shell;
 pub use model::{
     save_markdown_file, workspace_display, Activity, CollectionPanel, DocumentInspector,
     DocumentSourceView, EditorDialog, EditorExternalConflict, EditorState, EditorTab,
-    EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter,
-    HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
+    EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount,
+    HealthFilter, HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
     InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
     SqlExplorerState, WorkspaceDisplay,
 };
@@ -39,11 +39,11 @@ pub use scanner::{
     WorkspaceEvent, WorkspaceUpdate,
 };
 pub use schema::{
-    is_workspace_schema_path, load_explicit_schema, schema_path, schema_type_for_property_value,
-    CollectionSchema, ExplicitCollectionSchema, ExplicitFieldSchema, ExplicitSchema,
-    ExplicitSchemaState, GeneratedExplicitSchema, GeneratedSchemaOmittedField,
-    ObservedSchemaType, SchemaCatalog, SchemaField, SchemaGenerationError, SchemaSource,
-    SchemaType, SchemaWarning, SCHEMA_FILE_NAME, generate_explicit_schema,
+    generate_explicit_schema, is_workspace_schema_path, load_explicit_schema, schema_path,
+    schema_type_for_property_value, CollectionSchema, ExplicitCollectionSchema,
+    ExplicitFieldSchema, ExplicitSchema, ExplicitSchemaState, GeneratedExplicitSchema,
+    GeneratedSchemaOmittedField, ObservedSchemaType, SchemaCatalog, SchemaField,
+    SchemaGenerationError, SchemaSource, SchemaType, SchemaWarning, SCHEMA_FILE_NAME,
 };
 pub use search::{
     search_documents, SearchMatchedField, SearchOutcome, SearchQuery, SearchResult, SearchState,

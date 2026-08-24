@@ -1,4 +1,4 @@
-use flokin_core::{HealthFilter, HealthIssue, HealthSeverity, ShellModel};
+use flokin_core::{ExplicitSchemaState, HealthFilter, HealthIssue, HealthSeverity, ShellModel};
 use iced::widget::{
     button, column, container, row, scrollable,
     scrollable::{Direction, Scrollbar},
@@ -44,6 +44,7 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
+            health_schema_hint(model),
             if issues.is_empty() {
                 empty_state()
             } else {
@@ -57,6 +58,54 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     .padding(theme::spacing::XXL)
     .style(theme::editor)
     .into()
+}
+
+fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
+    match &model.schema_catalog.explicit_schema {
+        ExplicitSchemaState::Absent => container(
+            row![
+                column![
+                    text("Schema explícito não configurado.")
+                        .size(theme::typography::BODY)
+                        .style(theme::text_normal),
+                    text("O banco está usando somente a estrutura inferida.")
+                        .size(theme::typography::BODY)
+                        .style(theme::text_muted),
+                ]
+                .spacing(theme::spacing::XXS)
+                .width(Length::Fill),
+                button(text("Criar schema").size(theme::typography::BODY))
+                    .padding([5.0, 10.0])
+                    .style(theme::button_toolbar)
+                    .on_press(Message::SchemaCreateRequested),
+            ]
+            .spacing(theme::spacing::MD)
+            .align_y(Alignment::Center),
+        )
+        .padding([8.0, theme::spacing::MD])
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into(),
+        ExplicitSchemaState::Invalid(_) => container(
+            row![
+                text("Há um problema em flokin.schema.yaml.")
+                    .size(theme::typography::BODY)
+                    .style(theme::text_warning)
+                    .width(Length::Fill),
+                button(text("Abrir schema").size(theme::typography::BODY))
+                    .padding([5.0, 10.0])
+                    .style(theme::button_toolbar)
+                    .on_press(Message::SchemaOpenRequested),
+            ]
+            .spacing(theme::spacing::MD)
+            .align_y(Alignment::Center),
+        )
+        .padding([8.0, theme::spacing::MD])
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into(),
+        ExplicitSchemaState::Loaded(_) => container(row![]).height(0).into(),
+    }
 }
 
 fn summary_counter<'a>(

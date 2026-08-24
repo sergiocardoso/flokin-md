@@ -951,7 +951,11 @@ impl ShellModel {
     pub fn activate_editor_tab(&mut self, path: PathBuf) -> bool {
         if self.editor.tabs.iter().any(|tab| tab.document_path == path) {
             self.editor.active_path = Some(path.clone());
-            self.selected_document_path = Some(path);
+            self.selected_document_path = self
+                .editor
+                .active_tab()
+                .filter(|tab| tab.kind == EditorTabKind::Markdown)
+                .map(|tab| tab.document_path.clone());
             self.selected_collection = None;
             self.collection_table_sort = None;
             true
@@ -1347,7 +1351,11 @@ impl ShellModel {
                 .get(index.saturating_sub(1))
                 .or_else(|| self.editor.tabs.first())
                 .map(|tab| tab.document_path.clone());
-            self.selected_document_path = self.editor.active_path.clone();
+            self.selected_document_path = self
+                .editor
+                .active_tab()
+                .filter(|tab| tab.kind == EditorTabKind::Markdown)
+                .map(|tab| tab.document_path.clone());
         }
     }
 
@@ -1359,7 +1367,11 @@ impl ShellModel {
                 .iter()
                 .any(|tab| &tab.document_path == path)
             {
-                self.selected_document_path = Some(path.clone());
+                self.selected_document_path = self
+                    .editor
+                    .active_tab()
+                    .filter(|tab| tab.kind == EditorTabKind::Markdown)
+                    .map(|tab| tab.document_path.clone());
                 return;
             }
         }
@@ -1368,7 +1380,11 @@ impl ShellModel {
             .tabs
             .first()
             .map(|tab| tab.document_path.clone());
-        self.selected_document_path = self.editor.active_path.clone();
+        self.selected_document_path = self
+            .editor
+            .active_tab()
+            .filter(|tab| tab.kind == EditorTabKind::Markdown)
+            .map(|tab| tab.document_path.clone());
     }
 
     fn sync_editor_tabs_with_documents(&mut self) {
@@ -1387,16 +1403,14 @@ impl ShellModel {
             })
             .collect::<BTreeMap<_, _>>();
 
-        self.editor
-            .tabs
-            .retain(|tab| match tab.kind {
-                EditorTabKind::Markdown => documents.contains_key(&tab.document_path),
-                EditorTabKind::Schema => self
-                    .current_workspace
-                    .as_ref()
-                    .map(crate::schema_path)
-                    .is_some_and(|path| path == tab.document_path),
-            });
+        self.editor.tabs.retain(|tab| match tab.kind {
+            EditorTabKind::Markdown => documents.contains_key(&tab.document_path),
+            EditorTabKind::Schema => self
+                .current_workspace
+                .as_ref()
+                .map(|root| crate::schema_path(root))
+                .is_some_and(|path| path == tab.document_path),
+        });
 
         for tab in &mut self.editor.tabs {
             if tab.kind != EditorTabKind::Markdown {
@@ -2035,9 +2049,10 @@ fn home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        mock_shell, save_markdown_file, scan_workspace, workspace_update_from_events, Collection,
-        Document, DocumentMetadata, DocumentWarning, ExplicitSchemaState, HealthFilter,
-        HealthIssueKind, PropertyValue, ScanResult, SchemaType, TableModel, WorkspaceEvent,
+        generate_explicit_schema, mock_shell, save_markdown_file, scan_workspace,
+        workspace_update_from_events, Collection, Document, DocumentMetadata, DocumentWarning,
+        ExplicitSchemaState, HealthFilter, HealthIssueKind, PropertyValue, ScanResult, SchemaType,
+        TableModel, WorkspaceEvent,
     };
 
     use std::{
@@ -2049,8 +2064,8 @@ mod tests {
     };
 
     use super::{
-        workspace_display, Activity, EditorViewMode, ExplorerNode, ExplorerNodeId, InspectorModel,
-        InspectorValue, ScanState,
+        workspace_display, Activity, EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId,
+        InspectorModel, InspectorValue, ScanState,
     };
 
     #[test]
@@ -4176,6 +4191,156 @@ mod tests {
             &shell,
             HealthIssueKind::ExplicitSchemaInvalid
         ));
+    }
+
+    #[test]
+    fn absent_explicit_schema_is_not_a_health_issue() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        let shell = shell_from_workspace(&workspace);
+
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Absent
+        ));
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+        assert_eq!(shell.health.summary.errors, 0);
+        assert_eq!(shell.health.summary.warnings, 0);
+    }
+
+    #[test]
+    fn generated_schema_file_update_loads_explicit_schema() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\npriority: 10\n---\n# A\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        let generated = generate_explicit_schema(&shell.schema_catalog).unwrap();
+        workspace.write("flokin.schema.yaml", &generated.yaml);
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+
+        assert!(matches!(
+            shell.schema_catalog.explicit_schema,
+            ExplicitSchemaState::Loaded(_)
+        ));
+        let project = shell.schema_catalog.collection("project").unwrap();
+        assert_eq!(
+            schema_field(project, "priority").field_type,
+            SchemaType::Integer
+        );
+        assert!(schema_field(project, "priority").declared);
+    }
+
+    #[test]
+    fn generated_structural_title_does_not_require_frontmatter_title() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/a.md", "---\ntype: project\n---\n# A title\n");
+        let mut shell = shell_from_workspace(&workspace);
+
+        let generated = generate_explicit_schema(&shell.schema_catalog).unwrap();
+        assert!(generated.yaml.contains("title:"));
+        workspace.write("flokin.schema.yaml", &generated.yaml);
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(
+                workspace.path().join("flokin.schema.yaml"),
+            )],
+        );
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::RequiredFieldMissing
+        ));
+        assert!(!health_has_kind(&shell, HealthIssueKind::TypeMismatch));
+        assert_eq!(shell.health.summary.errors, 0);
+    }
+
+    #[test]
+    fn schema_file_opens_as_special_editor_tab_without_document_selection() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/a.md", "---\ntype: project\n---\n# A\n");
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields: {}\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+
+        assert!(shell.open_schema_tab().unwrap());
+        let tab = shell.active_editor_tab().unwrap();
+        assert_eq!(tab.kind, EditorTabKind::Schema);
+        assert_eq!(tab.title, crate::SCHEMA_FILE_NAME);
+        assert_eq!(tab.relative_path, Path::new(crate::SCHEMA_FILE_NAME));
+        assert_eq!(
+            tab.buffer,
+            "version: 1\ncollections:\n  projects:\n    fields: {}\n"
+        );
+        assert_eq!(shell.selected_document_path, None);
+        assert!(matches!(
+            shell.document_inspector(),
+            InspectorModel::Empty { .. }
+        ));
+    }
+
+    #[test]
+    fn schema_file_editor_save_reloads_health_and_recovers() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        workspace.write(
+            "flokin.schema.yaml",
+            "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n        required: true\n",
+        );
+        let mut shell = shell_from_workspace(&workspace);
+        let schema_path = workspace.path().join("flokin.schema.yaml");
+
+        shell.open_schema_tab().unwrap();
+        shell.update_active_editor_buffer(String::from("version: [broken\n"));
+        save_markdown_file(&schema_path, shell.active_editor_buffer().unwrap()).unwrap();
+        shell.editor_save_completed(&schema_path, "version: [broken\n", Ok(()));
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(schema_path.clone())],
+        );
+
+        assert!(health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+
+        let valid = "version: 1\ncollections:\n  projects:\n    fields:\n      priority:\n        type: integer\n        required: true\n";
+        shell.update_active_editor_buffer(valid.to_owned());
+        save_markdown_file(&schema_path, shell.active_editor_buffer().unwrap()).unwrap();
+        shell.editor_save_completed(&schema_path, valid, Ok(()));
+        apply_events(
+            &mut shell,
+            &workspace,
+            [WorkspaceEvent::Upsert(schema_path)],
+        );
+
+        assert!(!health_has_kind(
+            &shell,
+            HealthIssueKind::ExplicitSchemaInvalid
+        ));
+        assert_eq!(shell.health.summary.errors, 0);
+        assert!(!shell.active_editor_tab().unwrap().dirty);
     }
 
     #[test]
