@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     search_documents, Collection, Document, PropertyValue, ScanError, ScanResult, SearchQuery,
-    SearchState, SortDirection, TableSort, WorkspaceUpdate,
+    SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +178,29 @@ pub struct DocumentTab {
     pub content: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SqlExplorerState {
+    pub open: bool,
+    pub query: String,
+    pub catalog: Option<SqlCatalog>,
+    pub result: Option<SqlQueryResult>,
+    pub error: Option<String>,
+    pub running: bool,
+}
+
+impl SqlExplorerState {
+    pub fn closed() -> Self {
+        Self {
+            open: false,
+            query: String::new(),
+            catalog: None,
+            result: None,
+            error: None,
+            running: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorField {
     pub label: String,
@@ -222,7 +245,7 @@ pub enum InspectorModel {
     Document(DocumentInspector),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellModel {
     pub active_activity: Activity,
     pub current_workspace: Option<PathBuf>,
@@ -234,6 +257,8 @@ pub struct ShellModel {
     pub selected_collection: Option<String>,
     pub collection_table_sort: Option<TableSort>,
     pub search: SearchState,
+    pub sql_explorer: SqlExplorerState,
+    pub collapsed_sql_tables: BTreeSet<String>,
     pub filters: Vec<FilterCount>,
     pub selected_tab: WorkspaceTab,
     pub bottom_tab: BottomTab,
@@ -272,6 +297,12 @@ impl ShellModel {
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.search = SearchState::closed();
+            self.sql_explorer.open = false;
+            self.sql_explorer.catalog = None;
+            self.sql_explorer.result = None;
+            self.sql_explorer.error = None;
+            self.sql_explorer.running = false;
+            self.collapsed_sql_tables.clear();
             self.scan_state = ScanState::Scanning;
         }
     }
@@ -350,6 +381,58 @@ impl ShellModel {
         }
     }
 
+    pub fn open_sql_explorer(&mut self) {
+        self.sql_explorer.open = true;
+        self.selected_document_path = None;
+        self.selected_collection = None;
+        self.collection_table_sort = None;
+        self.search.close();
+    }
+
+    pub fn update_sql_query(&mut self, query: String) {
+        self.sql_explorer.query = query;
+    }
+
+    pub fn toggle_sql_schema_table(&mut self, table_name: String) {
+        if !self.collapsed_sql_tables.remove(&table_name) {
+            self.collapsed_sql_tables.insert(table_name);
+        }
+    }
+
+    pub fn sql_execution_started(&mut self) {
+        self.sql_explorer.running = true;
+        self.sql_explorer.error = None;
+    }
+
+    pub fn sql_execution_completed(&mut self, result: Result<SqlQueryResult, SqlError>) {
+        self.sql_explorer.running = false;
+        match result {
+            Ok(result) => {
+                self.sql_explorer.result = Some(result);
+                self.sql_explorer.error = None;
+            }
+            Err(error) => {
+                self.sql_explorer.error = Some(error.message);
+                self.sql_explorer.result = None;
+            }
+        }
+    }
+
+    pub fn sql_projection_completed(&mut self, catalog: Result<SqlCatalog, SqlError>) {
+        self.sql_explorer.result = None;
+        self.sql_explorer.running = false;
+        match catalog {
+            Ok(catalog) => {
+                self.sql_explorer.catalog = Some(catalog);
+                self.sql_explorer.error = None;
+            }
+            Err(error) => {
+                self.sql_explorer.catalog = None;
+                self.sql_explorer.error = Some(error.message);
+            }
+        }
+    }
+
     pub fn toggle_collection_sort(&mut self, column_id: String) {
         self.collection_table_sort = Some(match self.collection_table_sort.take() {
             Some(sort) if sort.column_id == column_id => TableSort {
@@ -367,9 +450,12 @@ impl ShellModel {
     }
 
     pub fn scan_completed(&mut self, result: ScanResult) {
-        let expanded_paths = expanded_folder_paths(&self.explorer);
+        let expanded_paths =
+            (!self.explorer.is_empty()).then(|| expanded_folder_paths(&self.explorer));
         self.explorer = explorer_from_scan_result(&result);
-        restore_expanded_folder_paths(&mut self.explorer, &expanded_paths);
+        if let Some(expanded_paths) = expanded_paths.as_ref() {
+            restore_expanded_folder_paths(&mut self.explorer, expanded_paths);
+        }
         self.documents = result.documents;
         self.collections = result.collections;
         if let Some(selected_document_path) = self.selected_document_path.as_ref() {
@@ -1042,6 +1128,31 @@ mod tests {
 
         assert_eq!(shell.current_workspace, Some(path));
         assert_eq!(shell.scan_state, ScanState::Scanning);
+    }
+
+    #[test]
+    fn selecting_a_folder_returns_to_file_explorer() {
+        let mut shell = mock_shell();
+        shell.open_sql_explorer();
+
+        shell.workspace_selected(Some(PathBuf::from("/tmp/flokinmd-mdb004-test")));
+
+        assert!(!shell.sql_explorer.open);
+        assert!(shell.explorer.is_empty());
+        assert_eq!(shell.scan_state, ScanState::Scanning);
+    }
+
+    #[test]
+    fn first_scan_keeps_workspace_root_expanded() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "# CARF");
+
+        let shell = shell_from_workspace(&workspace);
+
+        assert_eq!(shell.documents.len(), 1);
+        assert_eq!(shell.explorer.len(), 1);
+        assert!(shell.explorer[0].expanded);
+        assert_eq!(shell.explorer[0].children[0].name, "projects");
     }
 
     #[test]

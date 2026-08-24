@@ -47,6 +47,10 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     {
         status_items.push(String::from("Workspace monitorado"));
     }
+    if model.sql_explorer.open {
+        status_items.push(String::from("SQLite :memory:"));
+        status_items.push(String::from("Read only"));
+    }
     status_items.push(String::from("Markdown"));
 
     let mut row = row![]

@@ -32,15 +32,6 @@ pub fn toolbar_button(
     .on_press(on_press)
 }
 
-pub fn icon_button(icon_id: Icon) -> button::Button<'static, Message> {
-    button(icon(icon_id, theme::icons::TOOLBAR, false))
-        .width(32)
-        .height(30)
-        .padding(0)
-        .style(theme::button_toolbar)
-        .on_press(Message::MockAction)
-}
-
 pub fn tab_button<'a>(label: &'a str, selected: bool, on_press: Message) -> Element<'a, Message> {
     let style = if selected {
         theme::button_tab_selected
@@ -78,14 +69,6 @@ pub fn tab_icon_button(icon_id: Icon, on_press: Message) -> Element<'static, Mes
     ]
     .spacing(0)
     .into()
-}
-
-pub fn divider<'a>() -> Element<'a, Message> {
-    container("")
-        .width(1)
-        .height(Length::Fill)
-        .style(theme::divider)
-        .into()
 }
 
 pub fn icon(icon: Icon, size: f32, accent: bool) -> Element<'static, Message> {

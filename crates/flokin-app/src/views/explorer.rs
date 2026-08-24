@@ -1,6 +1,12 @@
-use flokin_core::{Collection, ExplorerNode, ExplorerNodeKind, ScanState, ShellModel};
-use iced::widget::{button, column, container, row, scrollable, text};
-use iced::{Alignment, Element, Length};
+use flokin_core::{
+    Collection, ExplorerNode, ExplorerNodeKind, ScanState, ShellModel, SqlCatalog, SqlTable,
+};
+use iced::widget::{
+    button, column, container, row, scrollable,
+    scrollable::{Direction, Scrollbar},
+    text,
+};
+use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
     file_icons,
@@ -9,7 +15,7 @@ use crate::{
     widgets,
 };
 
-pub fn view(model: &ShellModel, app_theme: AppTheme) -> Element<'_, Message> {
+pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, Message> {
     let workspace = model.workspace_display();
     let header = column![
         widgets::section_title("EXPLORER"),
@@ -33,11 +39,157 @@ pub fn view(model: &ShellModel, app_theme: AppTheme) -> Element<'_, Message> {
     container(
         column![header, scrollable(tree).height(Length::Fill), filters].spacing(theme::spacing::XL),
     )
-    .width(272)
+    .width(width)
     .height(Length::Fill)
     .padding(theme::spacing::LG)
     .style(theme::panel)
     .into()
+}
+
+pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+    let body: Element<'_, Message> = match model.sql_explorer.catalog.as_ref() {
+        Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model),
+        Some(_) => column![text("Nenhuma Collection disponível.")
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),]
+        .into(),
+        None => column![text(if model.sql_explorer.running {
+            "Construindo schema..."
+        } else {
+            "Abra uma pasta para gerar o schema."
+        })
+        .size(theme::typography::BODY)
+        .style(theme::text_muted),]
+        .into(),
+    };
+
+    container(
+        column![
+            row![
+                widgets::icon(theme::Icon::Database, theme::icons::META, true),
+                text("DATABASE")
+                    .size(theme::typography::TITLE)
+                    .style(theme::text_normal),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+            text("SQLite :memory:")
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            scrollable(body)
+                .direction(Direction::Vertical(Scrollbar::default().spacing(8)))
+                .height(Length::Fill),
+        ]
+        .spacing(theme::spacing::MD),
+    )
+    .width(width)
+    .height(Length::Fill)
+    .padding(theme::spacing::LG)
+    .style(theme::panel)
+    .into()
+}
+
+pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+    let mut collections =
+        column![widgets::section_title("COLLECTIONS")].spacing(theme::spacing::XS);
+    for collection in &model.collections {
+        collections = collections.push(collection_row(
+            collection,
+            model.selected_collection.as_deref(),
+        ));
+    }
+
+    container(
+        column![
+            row![
+                widgets::icon(theme::Icon::Database, theme::icons::META, true),
+                text("DADOS").size(theme::typography::TITLE),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+            scrollable(collections).height(Length::Fill),
+        ]
+        .spacing(theme::spacing::LG),
+    )
+    .width(width)
+    .height(Length::Fill)
+    .padding(theme::spacing::LG)
+    .style(theme::panel)
+    .into()
+}
+
+fn sql_schema<'a>(catalog: &'a SqlCatalog, model: &'a ShellModel) -> Element<'a, Message> {
+    let mut tables = column![].spacing(theme::spacing::SM);
+    for table in &catalog.tables {
+        tables = tables.push(sql_schema_table(
+            table,
+            !model.collapsed_sql_tables.contains(&table.name),
+        ));
+    }
+    tables.into()
+}
+
+fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
+    let chevron = if expanded {
+        theme::Icon::ChevronDown
+    } else {
+        theme::Icon::ChevronRight
+    };
+    let table_name = table.name.clone();
+    let header = button(
+        column![
+            row![
+                widgets::icon(chevron, theme::icons::TREE, false),
+                text(table.display_name.as_str())
+                    .size(theme::typography::BODY)
+                    .style(theme::text_accent),
+            ]
+            .spacing(theme::spacing::XS)
+            .align_y(Alignment::Center),
+            row![
+                container("").width(theme::icons::TREE),
+                text(format!("SQL: {}", table.name))
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::XS)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(theme::spacing::XXS),
+    )
+    .width(Length::Fill)
+    .padding([4.0, 0.0])
+    .style(theme::button_tree)
+    .on_press(Message::SqlSchemaTableToggled(table_name));
+
+    let mut content = column![header].spacing(theme::spacing::XXS);
+    if expanded {
+        for column in &table.columns {
+            content = content.push(
+                row![
+                    container("").width(theme::spacing::LG),
+                    text(column.name.as_str())
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .width(Length::Fill)
+                        .style(theme::text_normal),
+                    container(
+                        text(column.value_type.label())
+                            .font(theme::mono())
+                            .size(theme::typography::LABEL)
+                            .style(theme::text_muted),
+                    )
+                    .width(64)
+                    .align_x(alignment::Horizontal::Right),
+                ]
+                .spacing(theme::spacing::XS)
+                .align_y(Alignment::Center),
+            );
+        }
+    }
+    content.into()
 }
 
 fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Message> {
@@ -79,6 +231,9 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
                 ));
             }
             tree = tree.push(container("").height(theme::spacing::MD));
+            tree = tree.push(widgets::section_title("DATA"));
+            tree = tree.push(sql_explorer_row(model.sql_explorer.open));
+            tree = tree.push(container("").height(theme::spacing::MD));
             tree = tree.push(widgets::section_title("COLLECTIONS"));
             for collection in &model.collections {
                 tree = tree.push(collection_row(
@@ -89,6 +244,33 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
             tree
         }
     }
+}
+
+fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
+    button(
+        row![
+            widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
+            text("SQL Explorer")
+                .size(theme::typography::BODY)
+                .width(Length::Fill)
+                .style(if selected {
+                    theme::text_accent
+                } else {
+                    theme::text_normal
+                }),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([4.0, 4.0])
+    .style(if selected {
+        theme::button_tree_selected
+    } else {
+        theme::button_tree
+    })
+    .on_press(Message::SqlExplorerOpened)
+    .into()
 }
 
 fn scan_message<'a>(message: &'a str) -> iced::widget::Column<'a, Message> {

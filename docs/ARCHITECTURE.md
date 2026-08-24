@@ -65,6 +65,25 @@ The GUI owns only interaction concerns: opening/focusing the toolbar search fiel
 
 The current backend is a deterministic O(n) in-memory scan with simple scoring and snippets. SQLite FTS is an intended future replacement for the search backend/cache, but MDB-008 does not introduce SQLite, SQL, or a persistent search index.
 
+## SQL Projection And Explorer
+
+MDB-009 adds a disposable SQLite projection in `flokin-core` and a read-only SQL Explorer in `flokin-app`.
+
+```text
+Markdown files
+Document Store
+disposable SQLite projection
+SQL Explorer
+```
+
+Markdown files remain the source of truth. SQLite is an in-memory derived projection/cache built only from the currently loaded `Document` values; FlokinMD does not create a `.db` file in the workspace or user folders, and MDB-009 never writes query results back to Markdown.
+
+The projection maps each real Collection to a deterministic SQL table, normalizes and safely quotes SQL identifiers, resolves table/column collisions deterministically, adds standard `title`, `_path`, and `_file_name` columns, and preserves scalar types where practical. Arrays and objects are stored as valid JSON text for this milestone.
+
+MDB-009 accepts only read-only single-statement SQL. The core validates execution with SQLite statement read-only checks and fails closed for write attempts or multiple statements. The UI executes queries outside rendering, displays result metadata and friendly SQL errors, and limits rendered rows.
+
+After watcher updates, manual reindex, or workspace changes, the SQL projection is rebuilt from the current in-memory Document Store. A full rebuild is intentionally acceptable in MDB-009 because it prioritizes correctness and keeps the architecture simple; the projection boundary can be optimized incrementally later without changing Markdown as the source of truth.
+
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.

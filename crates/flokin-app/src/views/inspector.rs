@@ -7,14 +7,14 @@ use iced::{Alignment, Element, Length};
 
 use crate::{message::Message, theme, widgets};
 
-pub fn view(model: &ShellModel) -> Element<'_, Message> {
+pub fn view(model: &ShellModel, width: f32) -> Element<'_, Message> {
     match model.document_inspector() {
-        InspectorModel::Empty { title, description } => empty_state(title, description),
-        InspectorModel::Document(inspector) => document_inspector(inspector),
+        InspectorModel::Empty { title, description } => empty_state(title, description, width),
+        InspectorModel::Document(inspector) => document_inspector(inspector, width),
     }
 }
 
-fn empty_state(title: String, description: String) -> Element<'static, Message> {
+fn empty_state(title: String, description: String, width: f32) -> Element<'static, Message> {
     container(scrollable(
         column![
             section_header("PROPRIEDADES", theme::Icon::Settings),
@@ -26,14 +26,17 @@ fn empty_state(title: String, description: String) -> Element<'static, Message> 
         ]
         .spacing(theme::spacing::MD),
     ))
-    .width(300)
+    .width(width)
     .height(Length::Fill)
     .padding(theme::spacing::LG)
     .style(theme::panel)
     .into()
 }
 
-fn document_inspector(inspector: flokin_core::DocumentInspector) -> Element<'static, Message> {
+fn document_inspector(
+    inspector: flokin_core::DocumentInspector,
+    width: f32,
+) -> Element<'static, Message> {
     let mut content =
         column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::MD);
 
@@ -72,7 +75,7 @@ fn document_inspector(inspector: flokin_core::DocumentInspector) -> Element<'sta
     }
 
     container(scrollable(content))
-        .width(300)
+        .width(width)
         .height(Length::Fill)
         .padding(theme::spacing::LG)
         .style(theme::panel)

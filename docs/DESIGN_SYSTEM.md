@@ -18,6 +18,10 @@ The application supports two in-memory themes:
 - `panel`
 - `editor_background`
 - `editor_gutter`
+- `data_row_odd`
+- `data_row_even`
+- `data_gutter`
+- `data_separator`
 - `border`
 - `border_subtle`
 - `text`
@@ -63,3 +67,16 @@ They are intentionally consistent in weight and size and avoid adding a large ic
 New screens should reuse these tokens before introducing new values. If a new token is needed, document why it belongs in the shared Rust theme instead of hard-coding one-off colors or dimensions.
 
 The visual direction is a native desktop tool with high information density, clear panes, restrained borders, minimal rounding, technical typography, and a purple accent. Dark mode remains the default; light mode should feel equally refined and readable.
+
+## Data Grids
+
+Collection tables and SQL result grids share the view-level data grid language in `views::data_grid`:
+
+- compact 28px rows with a subtle odd/even alternation;
+- a fixed, muted row-number gutter that is not part of the data model;
+- compact headers with a subtle bottom separator;
+- type-aware alignment: text left, numbers right, booleans centered;
+- `—` for NULL or missing values and `✓`/`✕` for booleans;
+- hover and selected-row surfaces take precedence over zebra backgrounds.
+
+Vertical separators remain lighter than horizontal row separators. Data grid tokens are defined once in `theme.rs` and must work in both Dark and Light themes.

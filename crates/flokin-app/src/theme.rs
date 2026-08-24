@@ -1,5 +1,5 @@
 use iced::border::Radius;
-use iced::widget::{button, container, svg, text, text_input};
+use iced::widget::{button, container, svg, text, text_editor as iced_text_editor, text_input};
 use iced::{color, theme as iced_theme, Background, Border, Color, Font, Shadow, Theme};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,10 @@ pub struct Palette {
     pub panel: Color,
     pub editor_background: Color,
     pub editor_gutter: Color,
+    pub data_row_odd: Color,
+    pub data_row_even: Color,
+    pub data_gutter: Color,
+    pub data_separator: Color,
     pub border: Color,
     pub border_subtle: Color,
     pub text: Color,
@@ -69,6 +73,10 @@ impl Palette {
         panel: color!(0x101720),
         editor_background: color!(0x0b1018),
         editor_gutter: color!(0x111925),
+        data_row_odd: color!(0x0b1018),
+        data_row_even: color!(0x0f151f),
+        data_gutter: color!(0x111925),
+        data_separator: color!(0x182231),
         border: color!(0x253144),
         border_subtle: color!(0x1a2433),
         text: color!(0xe8eef8),
@@ -92,6 +100,10 @@ impl Palette {
         panel: color!(0xf9fafc),
         editor_background: color!(0xffffff),
         editor_gutter: color!(0xf1f3f8),
+        data_row_odd: color!(0xffffff),
+        data_row_even: color!(0xf8f9fc),
+        data_gutter: color!(0xf1f3f8),
+        data_separator: color!(0xe4e8f0),
         border: color!(0xd8deea),
         border_subtle: color!(0xe8ecf3),
         text: color!(0x182030),
@@ -144,7 +156,6 @@ pub mod icons {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    Calendar,
     #[allow(dead_code)]
     ChevronRight,
     #[allow(dead_code)]
@@ -153,9 +164,6 @@ pub enum Icon {
     Database,
     FileText,
     Folder,
-    GitBranch,
-    Heart,
-    Link,
     PanelLeft,
     Plus,
     Refresh,
@@ -223,6 +231,25 @@ pub fn icon_style(theme: &Theme, _status: svg::Status) -> svg::Style {
 pub fn icon_accent_style(theme: &Theme, _status: svg::Status) -> svg::Style {
     svg::Style {
         color: Some(palette(theme).accent),
+    }
+}
+
+pub fn text_editor(theme: &Theme, status: iced_text_editor::Status) -> iced_text_editor::Style {
+    let palette = palette(theme);
+    let border_color = match status {
+        iced_text_editor::Status::Focused { .. } => palette.accent,
+        iced_text_editor::Status::Hovered => palette.border,
+        iced_text_editor::Status::Active | iced_text_editor::Status::Disabled => {
+            palette.border_subtle
+        }
+    };
+
+    iced_text_editor::Style {
+        background: Background::Color(palette.editor_background),
+        border: border(border_color, 1.0, radius::SM),
+        placeholder: palette.text_muted,
+        value: palette.text,
+        selection: palette.accent_soft,
     }
 }
 
@@ -319,18 +346,74 @@ pub fn active_line(theme: &Theme) -> container::Style {
     container_style(palette.surface_selected, None, 0.0)
 }
 
-pub fn table_header(theme: &Theme) -> container::Style {
+pub fn table_row(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.editor_background, Some(palette.border_subtle), 0.0)
+}
+
+pub fn data_row(theme: &Theme, row_index: usize, selected: bool) -> container::Style {
+    let palette = palette(theme);
+    let background = if selected {
+        palette.surface_selected
+    } else if row_index.is_multiple_of(2) {
+        palette.data_row_even
+    } else {
+        palette.data_row_odd
+    };
+
+    container_style(background, Some(palette.data_separator), 0.0)
+}
+
+pub fn data_row_button(
+    theme: &Theme,
+    row_index: usize,
+    selected: bool,
+    status: button::Status,
+) -> button::Style {
+    let palette = palette(theme);
+    let background = if selected {
+        palette.surface_selected
+    } else if matches!(status, button::Status::Hovered) {
+        palette.surface_hover
+    } else if row_index.is_multiple_of(2) {
+        palette.data_row_even
+    } else {
+        palette.data_row_odd
+    };
+
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: palette.text,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
+pub fn data_gutter(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.data_gutter, Some(palette.data_separator), 0.0)
+}
+
+pub fn data_header(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(
         palette.elevated_surface,
-        Some(palette.border_subtle),
+        Some(palette.data_separator),
         radius::XS,
     )
 }
 
-pub fn table_row(theme: &Theme) -> container::Style {
+pub fn data_cell(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.editor_background, Some(palette.border_subtle), 0.0)
+    container::Style {
+        border: Border {
+            color: palette.data_separator,
+            width: 0.5,
+            radius: Radius::default(),
+        },
+        ..container::Style::default()
+    }
 }
 
 pub fn table_row_selected(theme: &Theme) -> container::Style {
@@ -393,6 +476,18 @@ pub fn button_ghost(theme: &Theme, status: button::Status) -> button::Style {
         border: Border::default(),
         shadow: Shadow::default(),
         ..button::Style::default()
+    }
+}
+
+pub fn button_menu(theme: &Theme, status: button::Status) -> button::Style {
+    button_chrome(theme, status, false)
+}
+
+pub fn splitter(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        background: Some(Background::Color(palette.border_subtle)),
+        ..container::Style::default()
     }
 }
 
@@ -525,9 +620,6 @@ fn container_style(
 
 pub const fn icon_svg(icon: Icon) -> &'static str {
     match icon {
-        Icon::Calendar => {
-            r#"<svg viewBox="0 0 24 24"><path d="M7 3v4"/><path d="M17 3v4"/><path d="M4 9h16"/><rect x="4" y="5" width="16" height="15" rx="2"/></svg>"#
-        }
         Icon::ChevronRight => r#"<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>"#,
         Icon::ChevronDown => r#"<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>"#,
         Icon::Clock => {
@@ -541,15 +633,6 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Folder => {
             r#"<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>"#
-        }
-        Icon::GitBranch => {
-            r#"<svg viewBox="0 0 24 24"><circle cx="7" cy="6" r="2"/><circle cx="17" cy="6" r="2"/><circle cx="7" cy="18" r="2"/><path d="M7 8v8"/><path d="M9 18c5 0 8-3 8-10"/></svg>"#
-        }
-        Icon::Heart => {
-            r#"<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>"#
-        }
-        Icon::Link => {
-            r#"<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>"#
         }
         Icon::PanelLeft => {
             r#"<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#
