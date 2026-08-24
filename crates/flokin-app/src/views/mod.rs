@@ -1,6 +1,7 @@
 pub mod data_grid;
 pub mod editor;
 pub mod explorer;
+pub mod graph;
 pub mod inspector;
 pub mod settings;
 pub mod shell;

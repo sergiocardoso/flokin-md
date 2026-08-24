@@ -1,3 +1,4 @@
+mod graph;
 mod mock;
 mod model;
 mod relation;
@@ -7,6 +8,11 @@ mod sql;
 mod sql_completion;
 mod table;
 
+pub use graph::{
+    clamp_graph_zoom, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
+    initial_graph_layout, GraphBounds, GraphEdge, GraphEdgeStatus, GraphNode, GraphNodeId,
+    GraphNodeKind, GraphPoint, GraphProjection, GraphViewport, GRAPH_MAX_ZOOM, GRAPH_MIN_ZOOM,
+};
 pub use mock::mock_shell;
 pub use model::{
     save_markdown_file, workspace_display, Activity, DocumentInspector, DocumentSourceView,

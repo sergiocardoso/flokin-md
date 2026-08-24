@@ -61,6 +61,28 @@ The frontmatter property name is the relation type. Relation targets resolve fir
 
 `RelationIndex` is kept in `flokin-core` and contains outgoing and incoming lookups for future Graph and Database Health work, but it is not persisted and does not write Markdown. Watcher updates, full scans, and workspace changes rebuild the index from the current in-memory Document Store. The Iced Inspector only renders and navigates relation projections using the existing selected document identity.
 
+## Relation Graph
+
+MDB-013 adds a disposable graph projection derived only from the loaded Document Store and `RelationIndex`.
+
+```text
+Document Store
+      ↓
+RelationIndex
+      ↓
+GraphProjection
+      ↓
+Graph Layout
+      ↓
+Iced Canvas
+```
+
+`GraphProjection` lives in `flokin-core` and contains GUI-independent document nodes, unresolved/ambiguous problem nodes, and directed relation edges with their relation type preserved. It does not scan files, parse Markdown, infer relations from plain text, or choose arbitrary targets for ambiguous relations. If `RelationIndex` has no edge, the Graph has no edge.
+
+The initial layout is deterministic and disposable. User-dragged node positions are kept only in app memory for the current workspace session; they are not persisted to Markdown or any cache. Watcher updates rebuild `RelationIndex`, refresh `GraphProjection`, drop stale nodes/edges, add new nodes with deterministic positions, and preserve existing in-memory node positions when possible.
+
+The Iced Graph view renders the projection through a native canvas with pan, zoom, fit, focused selected document, node selection, and document opening. Single click selects a real Document node for the existing Inspector without leaving Graph mode. Double click reuses the existing editor tab opening flow. Unresolved and ambiguous targets are rendered as non-document problem nodes and are not navigable as Documents.
+
 ## Markdown Editor And Tabs
 
 MDB-012 replaces the read-only center source viewer with real Markdown tabs and editable buffers.

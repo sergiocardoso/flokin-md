@@ -73,3 +73,17 @@ copy/paste, undo/redo, scrolling, and per-tab state. Iced 0.14 does not expose
 a public text-editor scroll offset, so the zebra layer is intentionally a safe
 visual reading aid rather than a document-line-aware renderer after arbitrary
 internal scrolling.
+
+## Relation Graph
+
+MDB-013 adds graph-specific tokens under `ThemeTokens.colors` and
+`ThemeTokens.sizes` for the native canvas view. The Graph view consumes
+centralized values for background, node surfaces, selected/hover states, node
+borders, edge colors, unresolved/ambiguous warnings, node dimensions, node font
+size, and edge label font size. Graph views should not hard-code RGB colors in
+view code.
+
+MDB-013A extends those tokens for navigation polish: graph toolbar surfaces and
+button states, disabled button color, zoom badge background/text, canvas dot
+grid color, node shadow color, toolbar button size, zoom badge width, and grid
+step are centralized in `crates/flokin-app/src/theme/tokens.rs`.

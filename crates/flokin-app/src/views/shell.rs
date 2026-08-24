@@ -8,7 +8,9 @@ use iced::{alignment, mouse, Alignment, Element, Length};
 use crate::{
     message::{AppMode, MenuAction, MenuId, Message, SplitterKind},
     theme::{self, AppTheme},
-    views, widgets,
+    views,
+    views::graph::GraphViewState,
+    widgets,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -18,6 +20,7 @@ pub fn view<'a>(
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
     sql_completion_items: &'a [SqlCompletionItem],
+    graph_state: &'a GraphViewState,
     sql_completion_selected: usize,
     sql_completion_open: bool,
     left_width: f32,
@@ -52,6 +55,23 @@ pub fn view<'a>(
             sql_completion_selected,
             sql_completion_open,
             sql_editor_height,
+        ));
+        if right_visible {
+            content = content
+                .push(splitter(SplitterKind::Inspector, false))
+                .push(views::inspector::view(model, inspector_width));
+        }
+        content
+    } else if mode == AppMode::Graph {
+        let mut content = row![activity_bar(mode)].height(Length::Fill);
+        if left_visible {
+            content = content
+                .push(views::graph::sidebar(graph_state, left_width))
+                .push(splitter(SplitterKind::LeftSidebar, false));
+        }
+        content = content.push(views::graph::view(
+            graph_state,
+            model.selected_document_path.as_ref(),
         ));
         if right_visible {
             content = content
@@ -207,12 +227,14 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
         MenuId::Navigate => vec![
             ("Arquivos", None, MenuAction::Explorer),
             ("Dados", None, MenuAction::Data),
+            ("Grafo", None, MenuAction::Graph),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
             ("Configurações", None, MenuAction::Settings),
             ("Buscar", Some("Ctrl+K"), MenuAction::Search),
         ],
         MenuId::Data => vec![
             ("Abrir Dados", None, MenuAction::Data),
+            ("Abrir Grafo", None, MenuAction::Graph),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
             ("Executar query", Some("Ctrl+Enter"), MenuAction::ExecuteSql),
         ],
@@ -632,6 +654,7 @@ fn activity_bar(mode: AppMode) -> Element<'static, Message> {
     let entries = [
         (AppMode::Files, theme::Icon::Folder, "Arquivos"),
         (AppMode::Data, theme::Icon::Database, "Dados"),
+        (AppMode::Graph, theme::Icon::Graph, "Grafo"),
         (AppMode::Sql, theme::Icon::Terminal, "SQL Explorer"),
     ];
     let mut top = column![]

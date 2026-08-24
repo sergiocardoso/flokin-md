@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    ExplorerNodeId, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
+    ExplorerNodeId, GraphNodeId, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
 };
 use iced::{keyboard, widget::text_editor, window};
 
@@ -25,6 +25,7 @@ pub enum MenuAction {
     ToggleRightSidebar,
     Explorer,
     Data,
+    Graph,
     SqlExplorer,
     Settings,
     Search,
@@ -36,6 +37,7 @@ pub enum MenuAction {
 pub enum AppMode {
     Files,
     Data,
+    Graph,
     Sql,
     Settings,
 }
@@ -62,6 +64,25 @@ pub enum Message {
     CollectionSelected(String),
     TableHeaderSelected(String),
     MarkdownSelected(PathBuf),
+    GraphFitRequested,
+    GraphFocusSelected,
+    GraphZoomIn,
+    GraphZoomOut,
+    GraphZoomReset,
+    GraphViewportChanged(f32, f32),
+    GraphNodeSelected(GraphNodeId),
+    GraphNodeOpened(GraphNodeId),
+    GraphPanBy(f32, f32),
+    GraphZoomAt {
+        x: f32,
+        y: f32,
+        delta: f32,
+    },
+    GraphNodeDragged {
+        node: GraphNodeId,
+        dx: f32,
+        dy: f32,
+    },
     EditorTabSelected(PathBuf),
     EditorTabCloseRequested(PathBuf),
     MarkdownEditorAction(text_editor::Action),

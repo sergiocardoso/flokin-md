@@ -41,6 +41,11 @@ pub struct RelationDocument {
 }
 
 impl RelationIndex {
+    #[cfg(test)]
+    pub(crate) fn from_relations(relations: Vec<Relation>) -> Self {
+        Self { relations }
+    }
+
     pub fn build(documents: &[Document]) -> Self {
         let mut title_index = BTreeMap::<String, Vec<RelationDocument>>::new();
         let mut path_index = BTreeMap::<String, RelationDocument>::new();

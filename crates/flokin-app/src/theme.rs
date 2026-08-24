@@ -123,6 +123,13 @@ pub mod sizes {
     pub const DIALOG_WIDTH: f32 = tokens::SIZES.dialog_width;
     pub const DIVIDER_WIDTH: f32 = tokens::SIZES.divider_width;
     pub const DIVIDER_HEIGHT: f32 = tokens::SIZES.divider_height;
+    pub const GRAPH_NODE_WIDTH: f32 = tokens::SIZES.graph_node_width;
+    pub const GRAPH_NODE_HEIGHT: f32 = tokens::SIZES.graph_node_height;
+    pub const GRAPH_TOOLBAR_BUTTON_SIZE: f32 = tokens::SIZES.graph_toolbar_button_size;
+    pub const GRAPH_ZOOM_BADGE_WIDTH: f32 = tokens::SIZES.graph_zoom_badge_width;
+    pub const GRAPH_GRID_STEP: f32 = tokens::SIZES.graph_grid_step;
+    pub const GRAPH_NODE_FONT_SIZE: u32 = tokens::SIZES.graph_node_font_size;
+    pub const GRAPH_EDGE_LABEL_FONT_SIZE: u32 = tokens::SIZES.graph_edge_label_font_size;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,8 +142,14 @@ pub enum Icon {
     Database,
     FileText,
     Folder,
+    Focus,
+    Frame,
+    Graph,
+    Minus,
     PanelLeft,
+    Plus,
     Refresh,
+    Reset,
     Save,
     Search,
     Settings,
@@ -319,6 +332,38 @@ pub fn editor(theme: &Theme) -> container::Style {
     )
 }
 
+pub fn graph_panel(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.graph_background, None, 0.0)
+}
+
+pub fn graph_toolbar(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.graph_toolbar_background,
+        Some(palette.graph_toolbar_border),
+        0.0,
+    )
+}
+
+pub fn graph_toolbar_group(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.graph_zoom_badge_background,
+        Some(palette.graph_toolbar_border),
+        radius::SM,
+    )
+}
+
+pub fn graph_zoom_badge(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.graph_zoom_badge_background,
+        Some(palette.graph_toolbar_border),
+        radius::SM,
+    )
+}
+
 pub fn gutter(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
@@ -455,6 +500,29 @@ pub fn button_toolbar(theme: &Theme, status: button::Status) -> button::Style {
 
 pub fn button_activity(theme: &Theme, status: button::Status) -> button::Style {
     button_chrome(theme, status, false)
+}
+
+pub fn button_graph_toolbar(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = palette(theme);
+    let background = match status {
+        button::Status::Active => palette.graph_toolbar_button,
+        button::Status::Hovered => palette.graph_toolbar_button_hover,
+        button::Status::Pressed => palette.graph_toolbar_button_active,
+        button::Status::Disabled => palette.graph_toolbar_button_disabled,
+    };
+    let text_color = if matches!(status, button::Status::Disabled) {
+        palette.text_disabled
+    } else {
+        palette.text
+    };
+
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color,
+        border: border(palette.graph_toolbar_border, 1.0, radius::SM),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
 }
 
 pub fn button_selected(theme: &Theme, status: button::Status) -> button::Style {
@@ -667,14 +735,28 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         Icon::Folder => {
             r#"<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>"#
         }
+        Icon::Focus => {
+            r#"<svg viewBox="0 0 24 24"><path d="M12 5v4"/><path d="M12 15v4"/><path d="M5 12h4"/><path d="M15 12h4"/><circle cx="12" cy="12" r="3"/></svg>"#
+        }
+        Icon::Frame => {
+            r#"<svg viewBox="0 0 24 24"><path d="M8 4H4v4"/><path d="M16 4h4v4"/><path d="M20 16v4h-4"/><path d="M8 20H4v-4"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>"#
+        }
+        Icon::Graph => {
+            r#"<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="8" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/><path d="M8.4 7.8 15.6 6.4"/><path d="M7 9.2 7.7 15.6"/><path d="M10.3 17.4 14.7 16.5"/></svg>"#
+        }
+        Icon::Minus => r#"<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>"#,
         Icon::PanelLeft => {
             r#"<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#
         }
+        Icon::Plus => r#"<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>"#,
         Icon::Refresh => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5"/><path d="M4 12a8 8 0 0 1 14-5"/><path d="M18 3v4h-4"/><path d="M6 21v-4h4"/></svg>"#
         }
         Icon::Save => {
             r#"<svg viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8"/><path d="M8 20v-6h8v6"/></svg>"#
+        }
+        Icon::Reset => {
+            r#"<svg viewBox="0 0 24 24"><path d="M5 8v5h5"/><path d="M6.5 16A7 7 0 1 0 5 12.5"/><path d="M5 13l3.5-3.5"/></svg>"#
         }
         Icon::Search => {
             r#"<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>"#

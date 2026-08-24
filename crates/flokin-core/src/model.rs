@@ -401,6 +401,18 @@ impl ShellModel {
         }
     }
 
+    pub fn select_document_without_opening(&mut self, path: PathBuf) -> bool {
+        if self.documents.iter().any(|document| document.path == path) {
+            self.selected_document_path = Some(path);
+            self.selected_collection = None;
+            self.collection_table_sort = None;
+            self.sql_explorer.open = false;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn select_collection(&mut self, collection_id: String) {
         if self
             .collections

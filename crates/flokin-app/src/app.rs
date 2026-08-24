@@ -1,12 +1,14 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use flokin_core::{
-    complete_sql, default_query, mock_shell, replace_sql_completion, save_markdown_file, ScanError,
-    ShellModel, SqlCompletionItem, WorkspaceEvent, DEFAULT_SQL_COMPLETION_LIMIT,
+    clamp_graph_zoom, complete_sql, default_query, document_node_id, fit_graph_viewport,
+    graph_bounds, graph_collections_map, initial_graph_layout, mock_shell, replace_sql_completion,
+    save_markdown_file, GraphNodeId, GraphProjection, ScanError, ShellModel, SqlCompletionItem,
+    WorkspaceEvent, DEFAULT_SQL_COMPLETION_LIMIT,
 };
 use iced::{
     advanced::widget::{self as advanced_widget, operate},
@@ -21,6 +23,7 @@ use crate::{
     services::{file_dialog, file_watcher},
     theme::{self, AppTheme},
     views,
+    views::graph::GraphViewState,
 };
 
 #[derive(Debug)]
@@ -33,6 +36,7 @@ pub struct FlokinApp {
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
     empty_markdown_editor: text_editor::Content,
     sql_completion: SqlCompletionPopup,
+    graph: GraphViewState,
     workspace_update_running: bool,
     pending_workspace_events: Vec<WorkspaceEvent>,
     close_window_after_dialog: Option<window::Id>,
@@ -66,6 +70,7 @@ impl FlokinApp {
             markdown_editors: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
             sql_completion: SqlCompletionPopup::closed(),
+            graph: GraphViewState::default(),
             workspace_update_running: false,
             pending_workspace_events: Vec::new(),
             close_window_after_dialog: None,
@@ -93,9 +98,13 @@ impl FlokinApp {
         match message {
             Message::AppModeSelected(mode) => {
                 self.mode = mode;
+                if mode == AppMode::Graph {
+                    self.sync_graph_projection(true);
+                }
                 self.model.select_activity(match mode {
                     AppMode::Sql => flokin_core::Activity::Terminal,
                     AppMode::Settings => flokin_core::Activity::Settings,
+                    AppMode::Graph => flokin_core::Activity::Relations,
                     AppMode::Files | AppMode::Data => flokin_core::Activity::Explorer,
                 });
                 if mode == AppMode::Sql {
@@ -133,6 +142,7 @@ impl FlokinApp {
                     match result {
                         Ok(result) => {
                             self.model.scan_completed(result);
+                            self.sync_graph_projection(true);
                             return rebuild_sql_projection_task(
                                 generation,
                                 path,
@@ -180,6 +190,7 @@ impl FlokinApp {
                         Ok(update) => {
                             let changed_paths = update.changed_paths();
                             self.model.workspace_update_completed(update);
+                            self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
                             self.cleanup_markdown_editors();
                             self.workspace_update_running = false;
@@ -213,6 +224,46 @@ impl FlokinApp {
             }
             Message::MarkdownSelected(path) => {
                 self.open_or_activate_document(path);
+            }
+            Message::GraphFitRequested => {
+                self.fit_graph();
+            }
+            Message::GraphFocusSelected => {
+                self.focus_selected_graph_node();
+            }
+            Message::GraphZoomIn => {
+                self.zoom_graph_by(0.18);
+            }
+            Message::GraphZoomOut => {
+                self.zoom_graph_by(-0.18);
+            }
+            Message::GraphZoomReset => {
+                self.reset_graph_zoom();
+            }
+            Message::GraphViewportChanged(width, height) => {
+                self.graph.viewport = Size::new(width, height);
+            }
+            Message::GraphNodeSelected(node) => {
+                if let GraphNodeId::Document(path) = node {
+                    self.model.select_document_without_opening(path);
+                }
+            }
+            Message::GraphNodeOpened(node) => {
+                if let GraphNodeId::Document(path) = node {
+                    self.open_or_activate_document(path);
+                }
+            }
+            Message::GraphPanBy(dx, dy) => {
+                self.graph.pan = iced::Vector::new(self.graph.pan.x + dx, self.graph.pan.y + dy);
+            }
+            Message::GraphZoomAt { x, y, delta } => {
+                self.zoom_graph_at(x, y, delta);
+            }
+            Message::GraphNodeDragged { node, dx, dy } => {
+                if let Some(position) = self.graph.positions.get_mut(&node) {
+                    position.x += dx;
+                    position.y += dy;
+                }
             }
             Message::EditorTabSelected(path) => {
                 if self.model.activate_editor_tab(path) {
@@ -502,6 +553,9 @@ impl FlokinApp {
                     MenuAction::Data => {
                         return self.update(Message::AppModeSelected(AppMode::Data))
                     }
+                    MenuAction::Graph => {
+                        return self.update(Message::AppModeSelected(AppMode::Graph))
+                    }
                     MenuAction::SqlExplorer => {
                         return self.update(Message::AppModeSelected(AppMode::Sql))
                     }
@@ -577,6 +631,7 @@ impl FlokinApp {
                 self.sql_editor_height = crate::theme::sizes::SQL_EDITOR_DEFAULT_HEIGHT;
                 self.left_visible = true;
                 self.right_visible = true;
+                self.reset_graph_layout();
             }
             Message::MockAction => {}
         }
@@ -599,6 +654,7 @@ impl FlokinApp {
             &self.sql_editor,
             markdown_editor,
             &self.sql_completion.items,
+            &self.graph,
             self.sql_completion.selected,
             self.sql_completion.open,
             self.left_width,
@@ -715,6 +771,104 @@ impl FlokinApp {
         self.pending_workspace_save = None;
         self.pending_reindex = false;
         scan_workspace_task(generation, path)
+    }
+
+    fn sync_graph_projection(&mut self, keep_positions: bool) {
+        let collections = graph_collections_map(&self.model.collections);
+        let projection = GraphProjection::build_with_collections(
+            &self.model.documents,
+            &collections,
+            &self.model.relation_index,
+        );
+        let mut positions = if keep_positions {
+            self.graph.positions.clone()
+        } else {
+            BTreeMap::new()
+        };
+        let layout = initial_graph_layout(&projection);
+        positions.retain(|node, _| projection.nodes.iter().any(|current| &current.id == node));
+        for (node, position) in layout {
+            positions.entry(node).or_insert(position);
+        }
+        self.graph.projection = projection;
+        self.graph.positions = positions;
+        if self.graph.viewport.width > 0.0 && self.graph.viewport.height > 0.0 {
+            self.fit_graph();
+        }
+    }
+
+    fn reset_graph_layout(&mut self) {
+        self.graph.positions = initial_graph_layout(&self.graph.projection);
+        self.fit_graph();
+    }
+
+    fn fit_graph(&mut self) {
+        let viewport_width = if self.graph.viewport.width > 0.0 {
+            self.graph.viewport.width
+        } else {
+            900.0
+        };
+        let viewport_height = if self.graph.viewport.height > 0.0 {
+            self.graph.viewport.height
+        } else {
+            600.0
+        };
+        let bounds = graph_bounds(
+            &self.graph.positions,
+            crate::theme::sizes::GRAPH_NODE_WIDTH,
+            crate::theme::sizes::GRAPH_NODE_HEIGHT,
+        );
+        let viewport = fit_graph_viewport(bounds, viewport_width, viewport_height, 72.0);
+        self.graph.pan = iced::Vector::new(viewport.pan_x, viewport.pan_y);
+        self.graph.zoom = viewport.zoom;
+    }
+
+    fn zoom_graph_by(&mut self, delta: f32) {
+        let x = graph_viewport_width(self.graph.viewport) / 2.0;
+        let y = graph_viewport_height(self.graph.viewport) / 2.0;
+        self.zoom_graph_at(x, y, delta);
+    }
+
+    fn zoom_graph_at(&mut self, x: f32, y: f32, delta: f32) {
+        let old_zoom = self.graph.zoom;
+        let new_zoom = clamp_graph_zoom(old_zoom * (1.0 + delta));
+        if (new_zoom - old_zoom).abs() <= f32::EPSILON {
+            return;
+        }
+        let world_x = (x - self.graph.pan.x) / old_zoom;
+        let world_y = (y - self.graph.pan.y) / old_zoom;
+        self.graph.zoom = new_zoom;
+        self.graph.pan = iced::Vector::new(x - world_x * new_zoom, y - world_y * new_zoom);
+    }
+
+    fn reset_graph_zoom(&mut self) {
+        let center_x = graph_viewport_width(self.graph.viewport) / 2.0;
+        let center_y = graph_viewport_height(self.graph.viewport) / 2.0;
+        let old_zoom = self.graph.zoom;
+        if (old_zoom - 1.0).abs() <= f32::EPSILON {
+            return;
+        }
+        let world_x = (center_x - self.graph.pan.x) / old_zoom;
+        let world_y = (center_y - self.graph.pan.y) / old_zoom;
+        self.graph.zoom = 1.0;
+        self.graph.pan = iced::Vector::new(center_x - world_x, center_y - world_y);
+    }
+
+    fn focus_selected_graph_node(&mut self) {
+        let Some(path) = self.model.selected_document_path.as_ref() else {
+            return;
+        };
+        let Some(position) = self.graph.positions.get(&document_node_id(path)) else {
+            return;
+        };
+        let viewport_width = graph_viewport_width(self.graph.viewport);
+        let viewport_height = graph_viewport_height(self.graph.viewport);
+        self.graph.pan = iced::Vector::new(
+            viewport_width / 2.0
+                - (position.x + crate::theme::sizes::GRAPH_NODE_WIDTH / 2.0) * self.graph.zoom,
+            viewport_height / 2.0
+                - (position.y + crate::theme::sizes::GRAPH_NODE_HEIGHT / 2.0) * self.graph.zoom,
+        );
     }
 
     fn ensure_markdown_editor_for_active(&mut self) {
@@ -835,6 +989,22 @@ impl FlokinApp {
         move_editor_cursor_to_offset(&mut self.sql_editor, cursor);
         self.model.update_sql_query(updated);
         self.sql_completion.close();
+    }
+}
+
+fn graph_viewport_width(viewport: Size) -> f32 {
+    if viewport.width > 0.0 {
+        viewport.width
+    } else {
+        900.0
+    }
+}
+
+fn graph_viewport_height(viewport: Size) -> f32 {
+    if viewport.height > 0.0 {
+        viewport.height
+    } else {
+        600.0
     }
 }
 
@@ -1519,6 +1689,9 @@ mod tests {
         let _ = app.update(Message::AppModeSelected(AppMode::Data));
         assert_eq!(app.mode, AppMode::Data);
         assert!(!app.model.sql_explorer.open);
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        assert_eq!(app.mode, AppMode::Graph);
+        assert!(!app.model.sql_explorer.open);
         let _ = app.update(Message::AppModeSelected(AppMode::Sql));
         assert_eq!(app.mode, AppMode::Sql);
         assert!(app.model.sql_explorer.open);
@@ -1528,12 +1701,108 @@ mod tests {
         assert!(app.left_visible && app.right_visible);
     }
 
+    #[test]
+    fn graph_single_click_selects_document_without_opening_tab() {
+        let workspace = TempWorkspace::new();
+        workspace.write("carf.md", "---\ntitle: CARF\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("carf.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        let _ = app.update(Message::GraphNodeSelected(flokin_core::document_node_id(
+            &path,
+        )));
+
+        assert_eq!(app.mode, AppMode::Graph);
+        assert_eq!(app.model.selected_document_path, Some(path));
+        assert!(app.model.editor.tabs.is_empty());
+    }
+
+    #[test]
+    fn graph_double_click_reuses_document_opening_flow() {
+        let workspace = TempWorkspace::new();
+        workspace.write("daily.md", "---\ntitle: CARF Daily\n---\n# Daily\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("daily.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        let _ = app.update(Message::GraphNodeOpened(flokin_core::document_node_id(
+            &path,
+        )));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert_eq!(
+            app.markdown_editors.get(&path).unwrap().text(),
+            "---\ntitle: CARF Daily\n---\n# Daily\n"
+        );
+    }
+
+    #[test]
+    fn graph_mode_does_not_disturb_dirty_editor_buffers() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "A saved\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("A dirty\n"));
+        app.markdown_editors
+            .insert(path.clone(), text_editor::Content::with_text("A dirty\n"));
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        let _ = app.update(Message::AppModeSelected(AppMode::Files));
+
+        assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "A dirty\n");
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+        assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "A dirty\n");
+    }
+
+    #[test]
+    fn graph_state_survives_opening_document_and_returning_to_graph() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        let node = flokin_core::document_node_id(&path);
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        let _ = app.update(Message::GraphNodeDragged {
+            node: node.clone(),
+            dx: 42.0,
+            dy: 11.0,
+        });
+        let position = *app.graph.positions.get(&node).unwrap();
+
+        let _ = app.update(Message::GraphNodeOpened(node.clone()));
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+
+        assert_eq!(app.graph.positions.get(&node).copied(), Some(position));
+    }
+
+    #[test]
+    fn graph_zoom_controls_update_and_reset_zoom() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        app.graph.viewport = iced::Size::new(800.0, 600.0);
+        app.graph.zoom = 1.0;
+
+        let _ = app.update(Message::GraphZoomIn);
+        assert!(app.graph.zoom > 1.0);
+        let _ = app.update(Message::GraphZoomOut);
+        assert!(app.graph.zoom < 1.18);
+        let _ = app.update(Message::GraphZoomReset);
+        assert_eq!(app.graph.zoom, 1.0);
+    }
+
     fn app_from_workspace(workspace: &TempWorkspace) -> FlokinApp {
         let mut app = FlokinApp::new();
         app.model
             .workspace_selected(Some(workspace.path().to_path_buf()));
         app.model
             .scan_completed(scan_workspace(workspace.path()).unwrap());
+        app.sync_graph_projection(false);
         app
     }
 
