@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="FlokinMD logo" width="120" />
-
-# FlokinMD
+<img src="assets/logo.png" alt="FlokinMD logo" width="320" />
 
 ### A local-first database for your Markdown files.
 
