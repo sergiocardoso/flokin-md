@@ -29,11 +29,12 @@ pub use health::{
 pub use mock::mock_shell;
 pub use model::{
     save_markdown_file, workspace_display, Activity, BulkEditOperationKind, BulkEditState,
-    BulkEditValueType, CollectionPanel, DocumentInspector, DocumentSourceView, EditorDialog,
-    EditorExternalConflict, EditorState, EditorTab, EditorTabKind, EditorViewMode, ExplorerNode,
-    ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter, HealthIssueInspector,
-    InspectorField, InspectorModel, InspectorRelation, InspectorRelationStatus, InspectorValue,
-    RelationDocumentSummary, ScanState, ShellModel, SqlExplorerState, WorkspaceDisplay,
+    BulkEditStep, BulkEditValueType, CollectionPanel, DocumentInspector, DocumentSourceView,
+    EditorDialog, EditorExternalConflict, EditorState, EditorTab, EditorTabKind, EditorViewMode,
+    ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter,
+    HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
+    InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
+    SqlExplorerState, WorkspaceDisplay,
 };
 pub use relation::{
     display_relation_value, parse_wikilink, relation_display_property, Relation, RelationDocument,

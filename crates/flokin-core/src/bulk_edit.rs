@@ -172,6 +172,10 @@ pub fn validate_bulk_edit_operation(
     operation: &BulkEditOperation,
     schema_catalog: &SchemaCatalog,
 ) -> Result<Vec<String>, String> {
+    validate_property_name(operation.property())?;
+    if let BulkEditOperation::SetProperty { value, .. } = operation {
+        validate_value_syntax(value)?;
+    }
     let Some(schema) = schema_catalog.collection(collection_id) else {
         return Ok(Vec::new());
     };
@@ -195,6 +199,9 @@ pub fn validate_bulk_edit_operation(
                 if matches!(field.field_type, SchemaType::Array | SchemaType::Object) {
                     return Err(String::from("Bulk edit deste tipo ainda não é suportado."));
                 }
+                if schema.source == SchemaSource::Explicit && !field.declared {
+                    warnings.push(String::from("Campo não declarado no schema explícito."));
+                }
             } else if schema.source == SchemaSource::Explicit {
                 warnings.push(String::from("Campo não declarado no schema explícito."));
             }
@@ -212,6 +219,40 @@ pub fn validate_bulk_edit_operation(
     }
 
     Ok(warnings)
+}
+
+fn validate_property_name(property: &str) -> Result<(), String> {
+    let property = property.trim();
+    if property.is_empty() {
+        return Err(String::from("Informe uma propriedade."));
+    }
+    if property.chars().any(|character| {
+        character == '\n' || character == '\r' || character == ':' || character == '#'
+    }) {
+        return Err(String::from("Nome de propriedade inválido."));
+    }
+    Ok(())
+}
+
+fn validate_value_syntax(value: &BulkEditValue) -> Result<(), String> {
+    match value {
+        BulkEditValue::Integer(raw) => raw
+            .trim()
+            .parse::<i64>()
+            .map(|_| ())
+            .map_err(|_| String::from("O valor Integer precisa ser um número inteiro válido.")),
+        BulkEditValue::Float(raw) => raw
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|_| ())
+            .ok_or_else(|| String::from("O valor Float precisa ser um número válido.")),
+        BulkEditValue::Relation(target) if target.trim().is_empty() => {
+            Err(String::from("Informe o alvo da Relation."))
+        }
+        _ => Ok(()),
+    }
 }
 
 impl BulkEditOperation {
@@ -623,6 +664,7 @@ pub fn apply_bulk_edit_plan(plan: &BulkEditPlan) -> Result<BulkEditResult, BulkE
         .filter(|change| change.status == BulkEditChangeStatus::Changed)
         .collect::<Vec<_>>();
 
+    let mut originals = Vec::with_capacity(changed.len());
     for change in &changed {
         let current = read_current(change)?;
         if content_fingerprint(&current) != change.original_fingerprint {
@@ -636,49 +678,53 @@ pub fn apply_bulk_edit_plan(plan: &BulkEditPlan) -> Result<BulkEditResult, BulkE
                 message: String::from("Conteúdo final ausente."),
             });
         }
-        let file = fs::OpenOptions::new()
+        let metadata =
+            fs::metadata(&change.path).map_err(|error| BulkEditApplyError::Preflight {
+                path: change.path.clone(),
+                message: error.to_string(),
+            })?;
+        if !metadata.is_file() {
+            return Err(BulkEditApplyError::Preflight {
+                path: change.path.clone(),
+                message: String::from("O caminho não é um arquivo regular."),
+            });
+        }
+        fs::OpenOptions::new()
             .write(true)
             .open(&change.path)
             .map_err(|error| BulkEditApplyError::Preflight {
                 path: change.path.clone(),
                 message: error.to_string(),
             })?;
-        drop(file);
+        originals.push((change.path.clone(), current));
     }
 
     let mut staged = Vec::<(PathBuf, PathBuf, String)>::new();
-    for change in &changed {
+    for (change, (path, original)) in changed.iter().zip(originals) {
         let temp_path = temp_path_for(&change.path, "stage");
         if let Err(error) = fs::write(&temp_path, change.new_content.as_deref().unwrap()) {
             cleanup_paths(staged.iter().map(|(_, temp, _)| temp));
+            let _ = fs::remove_file(&temp_path);
             return Err(BulkEditApplyError::Stage {
                 path: change.path.clone(),
                 message: error.to_string(),
             });
         }
-        let original = fs::read_to_string(&change.path).map_err(|error| {
-            cleanup_paths(staged.iter().map(|(_, temp, _)| temp));
-            let _ = fs::remove_file(&temp_path);
-            BulkEditApplyError::Preflight {
-                path: change.path.clone(),
-                message: error.to_string(),
-            }
-        })?;
-        staged.push((change.path.clone(), temp_path, original));
+        staged.push((path, temp_path, original));
     }
 
     let mut committed = Vec::<(PathBuf, String)>::new();
-    for (path, temp_path, original) in staged {
-        if let Err(error) = fs::rename(&temp_path, &path) {
+    for (index, (path, temp_path, original)) in staged.iter().enumerate() {
+        if let Err(error) = fs::rename(temp_path, path) {
             let rollback_failed = rollback(committed);
-            let _ = fs::remove_file(&temp_path);
+            cleanup_paths(staged[index..].iter().map(|(_, temp, _)| temp));
             return Err(BulkEditApplyError::Commit {
-                path,
+                path: path.clone(),
                 message: error.to_string(),
                 rollback_failed,
             });
         }
-        committed.push((path, original));
+        committed.push((path.clone(), original.clone()));
     }
 
     Ok(BulkEditResult {
@@ -710,8 +756,12 @@ fn temp_path_for(path: &Path, label: &str) -> PathBuf {
         .file_name()
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
     parent.join(format!(
-        ".{file_name}.flokinmd-bulk-{label}-{}.tmp",
+        ".{file_name}.flokinmd-bulk-{label}-{}-{nonce}.tmp",
         std::process::id()
     ))
 }
@@ -1103,6 +1153,93 @@ mod tests {
         )
         .unwrap();
         assert_eq!(warnings, vec!["Campo não declarado no schema explícito."]);
+    }
+
+    #[test]
+    fn validates_numeric_and_relation_input_before_planning() {
+        let catalog = SchemaCatalog::default();
+        assert!(validate_bulk_edit_operation(
+            "project",
+            &BulkEditOperation::SetProperty {
+                property: String::from("priority"),
+                value: BulkEditValue::Integer(String::from("high")),
+            },
+            &catalog,
+        )
+        .is_err());
+        assert!(validate_bulk_edit_operation(
+            "project",
+            &BulkEditOperation::SetProperty {
+                property: String::from("score"),
+                value: BulkEditValue::Float(String::from("NaN")),
+            },
+            &catalog,
+        )
+        .is_err());
+        assert!(validate_bulk_edit_operation(
+            "project",
+            &BulkEditOperation::SetProperty {
+                property: String::from("owner"),
+                value: BulkEditValue::Relation(String::from(" ")),
+            },
+            &catalog,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn successful_apply_updates_only_changed_files_and_cleans_staging() {
+        let workspace = TestWorkspace::new("bulk-apply");
+        workspace.write("a.md", "---\nstatus: active\n---\n# A\n");
+        workspace.write("b.md", "---\nstatus: archived\n---\n# B\n");
+        let scan = scan_workspace(workspace.path()).unwrap();
+        let schema = SchemaCatalog::build(
+            &scan.documents,
+            &scan.collections,
+            &RelationIndex::build(&scan.documents),
+            ExplicitSchemaState::Absent,
+        );
+        let plan = build_bulk_edit_plan(
+            BulkEditSelection::new(
+                scan.documents[0].collection_id.clone(),
+                scan.documents
+                    .iter()
+                    .map(|document| document.path.clone())
+                    .collect(),
+            ),
+            BulkEditOperation::SetProperty {
+                property: String::from("status"),
+                value: BulkEditValue::String(String::from("archived")),
+            },
+            &scan.documents,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(plan.summary().changed, 1);
+        assert_eq!(plan.summary().no_change, 1);
+
+        let result = apply_bulk_edit_plan(&plan).unwrap();
+        assert_eq!(result.changed_paths.len(), 1);
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("a.md")).unwrap(),
+            "---\nstatus: archived\n---\n# A\n"
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("b.md")).unwrap(),
+            "---\nstatus: archived\n---\n# B\n"
+        );
+        let leftovers = fs::read_dir(workspace.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("flokinmd-bulk-")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
     }
 
     struct TestWorkspace {

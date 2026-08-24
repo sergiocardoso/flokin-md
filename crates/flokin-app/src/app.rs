@@ -353,6 +353,12 @@ impl FlokinApp {
             Message::BulkEditCanceled => {
                 self.model.close_bulk_edit();
             }
+            Message::BulkEditBackToConfigure => {
+                self.model.return_to_bulk_configuration();
+            }
+            Message::BulkNewPropertyRequested => {
+                self.model.set_bulk_property(String::new());
+            }
             Message::BulkOperationSelected(kind) => {
                 self.model.set_bulk_operation_kind(kind);
             }
@@ -371,7 +377,7 @@ impl FlokinApp {
             Message::BulkBoolValueSelected(value) => {
                 self.model.set_bulk_bool_value(value);
             }
-            Message::BulkPreviewRequested | Message::BulkPreviewRegenerate => {
+            Message::BulkPreviewRequested => {
                 self.model.build_bulk_preview();
             }
             Message::BulkApplyRequested => {

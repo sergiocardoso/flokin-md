@@ -357,6 +357,7 @@ pub enum CollectionPanel {
 pub struct BulkEditState {
     pub selected_paths: BTreeSet<PathBuf>,
     pub editor_open: bool,
+    pub step: BulkEditStep,
     pub operation_kind: BulkEditOperationKind,
     pub property: String,
     pub new_property: String,
@@ -367,6 +368,13 @@ pub struct BulkEditState {
     pub error: Option<String>,
     pub last_result: Option<String>,
     pub stale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BulkEditStep {
+    #[default]
+    Configure,
+    Review,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -392,6 +400,7 @@ impl Default for BulkEditState {
         Self {
             selected_paths: BTreeSet::new(),
             editor_open: false,
+            step: BulkEditStep::Configure,
             operation_kind: BulkEditOperationKind::Set,
             property: String::new(),
             new_property: String::new(),
@@ -625,6 +634,7 @@ impl ShellModel {
                 .unwrap_or_default();
         }
         self.bulk_edit.editor_open = true;
+        self.bulk_edit.step = BulkEditStep::Configure;
         self.bulk_edit.plan = None;
         self.bulk_edit.error = None;
         self.bulk_edit.last_result = None;
@@ -634,6 +644,7 @@ impl ShellModel {
 
     pub fn close_bulk_edit(&mut self) {
         self.bulk_edit.editor_open = false;
+        self.bulk_edit.step = BulkEditStep::Configure;
         self.bulk_edit.plan = None;
         self.bulk_edit.error = None;
         self.bulk_edit.stale = false;
@@ -700,6 +711,7 @@ impl ShellModel {
         ) {
             Ok(plan) => {
                 self.bulk_edit.plan = Some(plan);
+                self.bulk_edit.step = BulkEditStep::Review;
                 self.bulk_edit.error = None;
                 self.bulk_edit.stale = false;
                 true
@@ -710,6 +722,13 @@ impl ShellModel {
                 false
             }
         }
+    }
+
+    pub fn return_to_bulk_configuration(&mut self) {
+        self.bulk_edit.step = BulkEditStep::Configure;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.stale = false;
     }
 
     pub fn bulk_apply_completed(&mut self, result: Result<usize, String>) {
@@ -2423,8 +2442,8 @@ mod tests {
     };
 
     use super::{
-        workspace_display, Activity, EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId,
-        InspectorModel, InspectorValue, ScanState,
+        workspace_display, Activity, BulkEditStep, EditorTabKind, EditorViewMode, ExplorerNode,
+        ExplorerNodeId, InspectorModel, InspectorValue, ScanState,
     };
 
     #[test]
@@ -5045,6 +5064,21 @@ mod tests {
             .find(|field| field.label == label)
             .unwrap()
             .value
+    }
+
+    #[test]
+    fn bulk_edit_review_back_returns_to_configuration_without_writing() {
+        let mut shell = mock_shell();
+        shell.bulk_edit.editor_open = true;
+        shell.bulk_edit.step = BulkEditStep::Review;
+        shell.bulk_edit.value = String::from("archived");
+
+        shell.return_to_bulk_configuration();
+
+        assert_eq!(shell.bulk_edit.step, BulkEditStep::Configure);
+        assert!(shell.bulk_edit.plan.is_none());
+        assert_eq!(shell.bulk_edit.value, "archived");
+        assert!(shell.bulk_edit.editor_open);
     }
 
     fn string(value: &str) -> PropertyValue {

@@ -155,6 +155,13 @@ immutable plan, per-file change status, validation, focused YAML patching, and
 staged batch application. The Iced layer owns only interaction state and
 rendering.
 
+Selection is keyed by the document's absolute path and is independent from
+`selected_document_path`, which continues to drive the Inspector. Sorting a
+collection therefore changes row order without changing the selected files.
+The operation parser validates scalar syntax before a plan is created; an
+explicit schema validates declared types and required removals, while an
+undeclared field produces a preview warning.
+
 Preview is mandatory. A bulk operation never writes files directly from a row
 selection click; the app first builds a `BulkEditPlan` with per-file
 `Changed`, `NoChange`, `Blocked`, or `Unsupported` status and a focused diff.
@@ -175,11 +182,17 @@ Dirty editor tabs and tabs with external conflicts block the affected files in
 preview. If any file is blocked or unsupported, Apply is disabled for the whole
 batch. Clean open tabs are updated later by the normal watcher path.
 
-Multi-file writes use best-effort staged safety: preflight all changed files,
-write staged temporary files, replace files, and attempt rollback for already
-replaced files if a later replacement fails. Successful operations do not leave
-persistent backups. This is not persistent History/Undo; MDB-018 remains the
-future durable recovery feature.
+Multi-file writes use best-effort staged safety: reread and fingerprint every
+changed file, validate readability/writability for the whole batch, write all
+temporary files, then replace files. If a later replacement fails, temporary
+files are removed and already replaced files are restored from the captured
+originals. Successful operations do not leave persistent backups. This is not
+persistent History/Undo; MDB-018 remains the future durable recovery feature.
+
+Changing the workspace, collection, selection, or operation invalidates the
+stored plan. Watcher events touching a previewed path mark it stale, and apply
+rechecks the filesystem even when no watcher event was observed, so a preview
+cannot silently write over a newer Markdown source.
 
 After a successful batch, the app enqueues normal workspace events for changed
 paths. DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search,
