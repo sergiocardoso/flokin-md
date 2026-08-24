@@ -51,9 +51,17 @@ pub struct BulkEditFileChange {
     pub original_fingerprint: u64,
     pub before: Option<String>,
     pub after: Option<String>,
+    pub property_changes: Vec<FrontmatterPropertyChange>,
     pub status: BulkEditChangeStatus,
     pub reason: Option<String>,
     pub new_content: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrontmatterPropertyChange {
+    pub property: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +155,7 @@ impl BulkEditValue {
         }
     }
 
-    fn yaml_scalar(&self) -> String {
+    pub fn yaml_scalar(&self) -> String {
         match self {
             Self::String(value) => quote_yaml_string(value),
             Self::Integer(value) | Self::Float(value) => value.trim().to_owned(),
@@ -382,6 +390,7 @@ fn blocked_change(
         status: BulkEditChangeStatus::Blocked,
         reason: Some(reason.to_owned()),
         new_content: None,
+        property_changes: Vec::new(),
     }
 }
 
@@ -400,6 +409,11 @@ fn plan_file_change(
             path: document.path.clone(),
             relative_path: document.relative_path.clone(),
             original_fingerprint: fingerprint,
+            property_changes: vec![FrontmatterPropertyChange {
+                property: operation.property().to_owned(),
+                before: before.clone(),
+                after: after.clone(),
+            }],
             before,
             after,
             status: BulkEditChangeStatus::Changed,
@@ -412,6 +426,7 @@ fn plan_file_change(
             original_fingerprint: fingerprint,
             before,
             after: None,
+            property_changes: Vec::new(),
             status: BulkEditChangeStatus::NoChange,
             reason: Some(String::from("No change")),
             new_content: None,
@@ -422,6 +437,7 @@ fn plan_file_change(
             original_fingerprint: fingerprint,
             before: None,
             after: None,
+            property_changes: Vec::new(),
             status: BulkEditChangeStatus::Unsupported,
             reason: Some(message),
             new_content: None,
@@ -441,6 +457,98 @@ enum PatchOutcome {
 }
 
 fn patch_frontmatter(source: &str, operation: &BulkEditOperation) -> Result<PatchOutcome, String> {
+    let property = operation.property().to_owned();
+    let values = match operation {
+        BulkEditOperation::SetProperty { value, .. } => vec![(property, Some(value.clone()))],
+        BulkEditOperation::RemoveProperty { .. } => vec![(property, None)],
+    };
+    let outcome = patch_frontmatter_properties(source, &values)?;
+    Ok(match outcome {
+        FrontmatterPatchOutcome::Changed {
+            property_changes,
+            content,
+        } => {
+            let first = property_changes.first().cloned();
+            PatchOutcome::Changed {
+                before: first.as_ref().and_then(|change| change.before.clone()),
+                after: first.and_then(|change| change.after),
+                content,
+            }
+        }
+        FrontmatterPatchOutcome::NoChange { property_changes } => PatchOutcome::NoChange {
+            before: property_changes
+                .first()
+                .and_then(|change| change.before.clone()),
+        },
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrontmatterPatchOutcome {
+    Changed {
+        property_changes: Vec<FrontmatterPropertyChange>,
+        content: String,
+    },
+    NoChange {
+        property_changes: Vec<FrontmatterPropertyChange>,
+    },
+}
+
+pub fn patch_frontmatter_properties(
+    source: &str,
+    changes: &[(String, Option<BulkEditValue>)],
+) -> Result<FrontmatterPatchOutcome, String> {
+    let mut content = source.to_owned();
+    let mut property_changes = Vec::new();
+    let mut changed = false;
+    for (property, value) in changes {
+        let operation = match value {
+            Some(value) => BulkEditOperation::SetProperty {
+                property: property.clone(),
+                value: value.clone(),
+            },
+            None => BulkEditOperation::RemoveProperty {
+                property: property.clone(),
+            },
+        };
+        match patch_frontmatter_one(content.as_str(), &operation)? {
+            PatchOutcome::Changed {
+                before,
+                after,
+                content: next_content,
+            } => {
+                changed = true;
+                property_changes.push(FrontmatterPropertyChange {
+                    property: property.clone(),
+                    before,
+                    after,
+                });
+                content = next_content;
+            }
+            PatchOutcome::NoChange { before } => {
+                property_changes.push(FrontmatterPropertyChange {
+                    property: property.clone(),
+                    before,
+                    after: None,
+                });
+            }
+        }
+    }
+
+    if changed {
+        Ok(FrontmatterPatchOutcome::Changed {
+            property_changes,
+            content,
+        })
+    } else {
+        Ok(FrontmatterPatchOutcome::NoChange { property_changes })
+    }
+}
+
+fn patch_frontmatter_one(
+    source: &str,
+    operation: &BulkEditOperation,
+) -> Result<PatchOutcome, String> {
     let newline = detect_newline(source);
     let Some(bounds) = frontmatter_bounds(source) else {
         return match operation {

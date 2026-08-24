@@ -254,7 +254,7 @@ The current backend is a deterministic O(n) in-memory scan with simple scoring a
 
 ## SQL Projection And Explorer
 
-MDB-009 adds a disposable SQLite projection in `flokin-core` and a read-only SQL Explorer in `flokin-app`.
+MDB-009 adds a disposable SQLite projection in `flokin-core` and a SQL Explorer in `flokin-app`.
 
 ```text
 Markdown files
@@ -267,7 +267,45 @@ Markdown files remain the source of truth. SQLite is an in-memory derived projec
 
 The projection maps each real Collection to a deterministic SQL table, normalizes and safely quotes SQL identifiers, resolves table/column collisions deterministically, adds standard `title`, `_path`, and `_file_name` columns, and preserves scalar types where practical. Arrays and objects are stored as valid JSON text for this milestone.
 
-MDB-009 accepts only read-only single-statement SQL. The core validates execution with SQLite statement read-only checks and fails closed for write attempts or multiple statements. The UI executes queries outside rendering, displays result metadata and friendly SQL errors, and limits rendered rows.
+Consulta mode accepts only read-only single-statement SQL. The core validates execution with SQLite statement read-only checks and fails closed for write attempts or multiple statements. `UPDATE` in Consulta mode is rejected with an explicit message requiring Atualizacao mode. The UI executes queries outside rendering, displays result metadata and friendly SQL errors, and limits rendered rows.
+
+MDB-017 adds SQL Write Preview for `UPDATE` only. `INSERT`, `DELETE`, `ALTER`, `CREATE`, and `DROP` remain deferred because they imply file creation, deletion, or structure changes. The write path is:
+
+```text
+SQL text
+   ↓
+SQL parser
+   ↓
+Validate UPDATE subset
+   ↓
+Disposable SQLite simulation
+   ↓
+Before/After diff by _path
+   ↓
+SqlWritePlan / BulkEditPlan
+   ↓
+Markdown Preview
+   ↓
+Existing Preflight
+   ↓
+Existing Staged Safe Writer
+   ↓
+Filesystem
+   ↓
+Watcher
+   ↓
+Document Store
+   ↓
+Rebuilt SQLite projection
+```
+
+`flokin-core` uses `sqlparser-rs` to structurally validate that Atualizacao mode receives exactly one `UPDATE` statement and to identify the target Collection table and modified columns. The target table must be one of the real normalized Collection tables from `SqlCatalog`; helper columns such as `_path` and `_file_name`, and structural `title`, are not writable.
+
+SQLite remains only a calculator. The app builds a fresh in-memory projection for preview, captures matching rows by `_path`, executes the `UPDATE` inside a savepoint, reads final values for the matched `_path`s, and always rolls the savepoint back. The live projection used by SQL results is not modified during preview.
+
+The resulting `SqlWritePlan` maps rows back to real Documents only through `_path`, converts final scalar values to Markdown frontmatter values, and then stores a `BulkEditPlan` using the existing multi-file safe writer. Multiple `SET` columns for the same document are patched into one final file content and staged once. Supported write values are String, Integer, Float, Boolean, Null, and explicit Relation wikilinks; Array/Object and unsafe Mixed fields are blocked. `NULL` is serialized as a present `null` property, not as removal.
+
+Preview is mandatory. Ctrl+Enter in Atualizacao mode creates the preview and never writes files. Apply reuses the existing dirty-tab, external-conflict, fingerprint, staging, commit, and rollback checks from Bulk Edit. Watcher events mark previews stale and successful writes reenter the normal filesystem watcher pipeline; DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search, and SQL projection converge from Markdown instead of being manually patched.
 
 After watcher updates, manual reindex, or workspace changes, the SQL projection is rebuilt from the current in-memory Document Store. A full rebuild is intentionally acceptable in MDB-009 because it prioritizes correctness and keeps the architecture simple; the projection boundary can be optimized incrementally later without changing Markdown as the source of truth.
 

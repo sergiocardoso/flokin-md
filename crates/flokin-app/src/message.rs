@@ -2,7 +2,8 @@ use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
     BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
-    GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
+    GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlExplorerMode, SqlQueryResult,
+    SqlWritePlan, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -152,9 +153,15 @@ pub enum Message {
     SqlCompletionAccepted,
     SqlCompletionSelected(usize),
     SqlCompletionClosed,
+    SqlModeSelected(SqlExplorerMode),
     SqlExecute,
     SqlProjectionCompleted(u64, PathBuf, Result<SqlCatalog, SqlError>),
     SqlQueryCompleted(Result<SqlQueryResult, SqlError>),
+    SqlUpdatePreviewCompleted(Result<SqlWritePlan, SqlError>),
+    SqlUpdateBackToEditor,
+    SqlUpdatePreviewCanceled,
+    SqlUpdateApplyRequested,
+    SqlUpdateApplyCompleted(Result<(Vec<PathBuf>, usize), String>),
     KeyboardEvent(keyboard::Event),
     ThemeToggled,
     ThemeSelected(bool),

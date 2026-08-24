@@ -2,8 +2,8 @@ use flokin_core::{
     BulkEditChangeStatus, BulkEditOperationKind, BulkEditStep, BulkEditValueType, Collection,
     CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind,
     EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel,
-    SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue,
-    TableCell, TableColumn, TableModel, TableValueType,
+    SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlExplorerMode,
+    SqlQueryResult, SqlValue, SqlWritePlan, TableCell, TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
     button, column, container, markdown, mouse_area, pick_list, row, scrollable,
@@ -197,18 +197,32 @@ fn sql_explorer_view<'a>(
     sql_completion_open: bool,
     sql_editor_height: f32,
 ) -> Element<'a, Message> {
+    let update_mode = model.sql_explorer.mode == SqlExplorerMode::Update;
+    let action_label = if model.sql_explorer.running {
+        if update_mode {
+            "Revisando..."
+        } else {
+            "Executando..."
+        }
+    } else if update_mode {
+        "Revisar atualização"
+    } else {
+        "Executar"
+    };
     let header = row![
         text("Query 1")
             .size(theme::typography::TITLE)
             .style(theme::text_normal),
+        sql_mode_button("Consulta", SqlExplorerMode::Query, model.sql_explorer.mode),
+        sql_mode_button(
+            "Atualização",
+            SqlExplorerMode::Update,
+            model.sql_explorer.mode
+        ),
         iced::widget::Space::new().width(Length::Fill),
         button(widgets::icon_text(
             theme::Icon::Terminal,
-            if model.sql_explorer.running {
-                "Executando..."
-            } else {
-                "Executar"
-            },
+            action_label,
             theme::icons::TOOLBAR,
             false
         ))
@@ -223,10 +237,20 @@ fn sql_explorer_view<'a>(
     ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
+    let context_text = if update_mode {
+        "SQL Updates são convertidos em alterações Markdown e sempre exigem preview."
+    } else {
+        "Modo Consulta é read-only."
+    };
+    let placeholder = if update_mode {
+        "UPDATE projects\nSET status = 'archived'\nWHERE status = 'active';"
+    } else {
+        "SELECT *\nFROM projects\nLIMIT 100;"
+    };
 
     let editor_widget = container(
         text_editor(sql_editor)
-            .placeholder("SELECT *\nFROM projects\nLIMIT 100;")
+            .placeholder(placeholder)
             .on_action(Message::SqlEditorAction)
             .key_binding(move |press| sql_editor_key_binding(press, sql_completion_open))
             .font(theme::mono())
@@ -261,6 +285,9 @@ fn sql_explorer_view<'a>(
     .on_press(Message::SplitterPressed(SplitterKind::SqlEditor, 0.0))
     .interaction(iced::mouse::Interaction::ResizingVertically);
     let body = column![
+        text(context_text)
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
         editor,
         editor_splitter,
         container(results).height(Length::Fill)
@@ -274,6 +301,23 @@ fn sql_explorer_view<'a>(
         .height(Length::Fill)
         .padding(theme::spacing::MD)
         .style(theme::document_surface)
+        .into()
+}
+
+fn sql_mode_button(
+    label: &'static str,
+    mode: SqlExplorerMode,
+    current: SqlExplorerMode,
+) -> Element<'static, Message> {
+    button(text(label).size(theme::typography::LABEL))
+        .height(28)
+        .padding([0.0, theme::spacing::MD])
+        .style(if current == mode {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        })
+        .on_press(Message::SqlModeSelected(mode))
         .into()
 }
 
@@ -379,7 +423,16 @@ fn sql_completion_row<'a>(
 
 fn sql_results(model: &ShellModel) -> Element<'_, Message> {
     let metadata = if model.sql_explorer.running {
-        String::from("Executando...")
+        if model.sql_explorer.mode == SqlExplorerMode::Update {
+            String::from("Revisando atualização...")
+        } else {
+            String::from("Executando...")
+        }
+    } else if let Some(plan) = model.sql_explorer.write_plan.as_ref() {
+        format!(
+            "{} documentos correspondem • {} serão alterados",
+            plan.matched_rows, plan.affected_rows
+        )
     } else if let Some(result) = model.sql_explorer.result.as_ref() {
         let mut text = format!(
             "{} rows • {} ms",
@@ -422,13 +475,29 @@ fn sql_results(model: &ShellModel) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(theme::elevated)
         .into()
+    } else if let Some(plan) = model.sql_explorer.write_plan.as_ref() {
+        sql_update_preview(model, plan)
     } else if let Some(result) = model.sql_explorer.result.as_ref() {
         result_grid(result)
+    } else if let Some(result) = model.sql_explorer.last_result.as_ref() {
+        container(
+            text(result.as_str())
+                .size(theme::typography::BODY)
+                .style(theme::text_accent),
+        )
+        .padding(theme::spacing::MD)
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into()
     } else {
         container(
-            text("Execute uma consulta SELECT para ver o grid.")
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
+            text(if model.sql_explorer.mode == SqlExplorerMode::Update {
+                "Revise uma atualização UPDATE para ver o preview."
+            } else {
+                "Execute uma consulta SELECT para ver o grid."
+            })
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
         )
         .padding(theme::spacing::MD)
         .width(Length::Fill)
@@ -440,6 +509,163 @@ fn sql_results(model: &ShellModel) -> Element<'_, Message> {
         .spacing(theme::spacing::SM)
         .height(Length::Fill)
         .into()
+}
+
+fn sql_update_preview<'a>(model: &'a ShellModel, plan: &'a SqlWritePlan) -> Element<'a, Message> {
+    let summary = plan.mutation_plan.summary();
+    let mut list = column![].spacing(theme::spacing::SM);
+    if plan.matched_rows == 0 {
+        list = list.push(
+            text("Nenhum documento corresponde a esta atualização.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        );
+    } else if plan.affected_rows == 0 {
+        list = list.push(
+            text(format!(
+                "{} documentos correspondem, mas nenhuma alteração é necessária.",
+                plan.matched_rows
+            ))
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+        );
+    }
+    for warning in &plan.warnings {
+        list = list.push(
+            text(warning.as_str())
+                .size(theme::typography::BODY)
+                .style(theme::text_warning),
+        );
+    }
+    for change in &plan.mutation_plan.changes {
+        let status = match change.status {
+            BulkEditChangeStatus::Changed => "Alterado",
+            BulkEditChangeStatus::NoChange => "Sem alteração",
+            BulkEditChangeStatus::Blocked => "Bloqueado",
+            BulkEditChangeStatus::Unsupported => "Não suportado",
+        };
+        let mut item = column![row![
+            text(change.relative_path.display().to_string())
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_normal)
+                .width(Length::Fill),
+            text(status)
+                .size(theme::typography::LABEL)
+                .style(match change.status {
+                    BulkEditChangeStatus::Changed => theme::text_accent,
+                    BulkEditChangeStatus::NoChange => theme::text_muted,
+                    BulkEditChangeStatus::Blocked | BulkEditChangeStatus::Unsupported => {
+                        theme::text_warning
+                    }
+                }),
+        ]
+        .align_y(Alignment::Center)]
+        .spacing(theme::spacing::XXS);
+        for property_change in &change.property_changes {
+            if let Some(before) = property_change.before.as_ref() {
+                item = item.push(
+                    text(format!("- {before}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_warning),
+                );
+            }
+            if let Some(after) = property_change.after.as_ref() {
+                item = item.push(
+                    text(format!("+ {after}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_accent),
+                );
+            }
+        }
+        if let Some(reason) = change.reason.as_ref() {
+            item = item.push(
+                text(reason.as_str())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            );
+        }
+        list = list.push(
+            container(item)
+                .padding(theme::spacing::SM)
+                .style(theme::surface),
+        );
+    }
+    let count = summary.changed;
+    let label = if count == 1 {
+        String::from("Aplicar 1 alteração")
+    } else {
+        format!("Aplicar {count} alterações")
+    };
+    let apply = button(text(label).size(theme::typography::LABEL))
+        .height(34)
+        .padding([0.0, theme::spacing::MD])
+        .style(
+            if plan.mutation_plan.can_apply() && !model.sql_explorer.stale {
+                theme::button_selected
+            } else {
+                theme::button_toolbar
+            },
+        );
+    let apply = if plan.mutation_plan.can_apply() && !model.sql_explorer.stale {
+        apply.on_press(Message::SqlUpdateApplyRequested)
+    } else {
+        apply
+    };
+    let stale_message: Element<'_, Message> = if model.sql_explorer.stale {
+        text("O workspace mudou desde a geração do preview.")
+            .size(theme::typography::BODY)
+            .style(theme::text_warning)
+            .into()
+    } else {
+        container("").height(0).into()
+    };
+    let footer = row![
+        button(text("Voltar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::SqlUpdateBackToEditor),
+        button(text("Cancelar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::SqlUpdatePreviewCanceled),
+        container("").width(Length::Fill),
+        apply,
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    column![
+        text("Revisar atualização")
+            .size(theme::typography::TITLE)
+            .style(theme::text_accent),
+        text(plan.sql.as_str())
+            .font(theme::mono())
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        row![
+            text(format!("{} documentos correspondem", plan.matched_rows))
+                .size(theme::typography::LABEL),
+            text(format!("{} serão alterados", summary.changed)).size(theme::typography::LABEL),
+            text(format!("{} sem alteração", summary.no_change)).size(theme::typography::LABEL),
+            text(format!(
+                "{} bloqueados",
+                summary.blocked + summary.unsupported
+            ))
+            .size(theme::typography::LABEL),
+        ]
+        .spacing(theme::spacing::MD),
+        stale_message,
+        scrollable(list).height(Length::Fill),
+        footer,
+    ]
+    .spacing(theme::spacing::MD)
+    .height(Length::Fill)
+    .into()
 }
 
 fn result_grid(result: &SqlQueryResult) -> Element<'_, Message> {
@@ -1625,21 +1851,42 @@ fn bulk_preview<'a>(
         ]
         .align_y(Alignment::Center)]
         .spacing(theme::spacing::XXS);
-        if let Some(before) = change.before.as_ref() {
-            item = item.push(
-                text(format!("- {before}"))
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_warning),
-            );
-        }
-        if let Some(after) = change.after.as_ref() {
-            item = item.push(
-                text(format!("+ {after}"))
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_accent),
-            );
+        if change.property_changes.is_empty() {
+            if let Some(before) = change.before.as_ref() {
+                item = item.push(
+                    text(format!("- {before}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_warning),
+                );
+            }
+            if let Some(after) = change.after.as_ref() {
+                item = item.push(
+                    text(format!("+ {after}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_accent),
+                );
+            }
+        } else {
+            for property_change in &change.property_changes {
+                if let Some(before) = property_change.before.as_ref() {
+                    item = item.push(
+                        text(format!("- {before}"))
+                            .font(theme::mono())
+                            .size(theme::typography::LABEL)
+                            .style(theme::text_warning),
+                    );
+                }
+                if let Some(after) = property_change.after.as_ref() {
+                    item = item.push(
+                        text(format!("+ {after}"))
+                            .font(theme::mono())
+                            .size(theme::typography::LABEL)
+                            .style(theme::text_accent),
+                    );
+                }
+            }
         }
         if let Some(reason) = change.reason.as_ref() {
             item = item.push(

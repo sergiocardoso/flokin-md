@@ -8,7 +8,7 @@ use flokin_core::{
     apply_bulk_edit_plan, clamp_graph_zoom, complete_sql, default_query, document_node_id,
     fit_graph_viewport, graph_bounds, graph_collections_map, initial_graph_layout, mock_shell,
     replace_sql_completion, save_markdown_file, BulkEditApplyError, BulkEditPlan, GraphNodeId,
-    GraphProjection, ScanError, ShellModel, SqlCompletionItem, WorkspaceEvent,
+    GraphProjection, ScanError, ShellModel, SqlCompletionItem, SqlExplorerMode, WorkspaceEvent,
     DEFAULT_SQL_COMPLETION_LIMIT,
 };
 use iced::{
@@ -213,6 +213,7 @@ impl FlokinApp {
                         Ok(update) => {
                             let changed_paths = update.changed_paths();
                             self.model.mark_bulk_preview_stale_for_paths(&changed_paths);
+                            self.model.mark_sql_preview_stale_for_paths(&changed_paths);
                             self.model.workspace_update_completed(update);
                             self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
@@ -674,15 +675,27 @@ impl FlokinApp {
             Message::SqlCompletionClosed => {
                 self.sql_completion.close();
             }
+            Message::SqlModeSelected(mode) => {
+                self.model.set_sql_mode(mode);
+            }
             Message::SqlExecute => {
                 self.sql_completion.close();
                 self.model.update_sql_query(self.sql_editor.text());
                 self.model.sql_execution_started();
-                return execute_sql_task(
-                    self.model.documents.clone(),
-                    self.model.collections.clone(),
-                    self.model.sql_explorer.query.clone(),
-                );
+                return match self.model.sql_explorer.mode {
+                    SqlExplorerMode::Query => execute_sql_task(
+                        self.model.documents.clone(),
+                        self.model.collections.clone(),
+                        self.model.sql_explorer.query.clone(),
+                    ),
+                    SqlExplorerMode::Update => preview_sql_update_task(
+                        self.model.documents.clone(),
+                        self.model.collections.clone(),
+                        self.model.editor.clone(),
+                        self.model.schema_catalog.clone(),
+                        self.model.sql_explorer.query.clone(),
+                    ),
+                };
             }
             Message::SqlProjectionCompleted(generation, path, result) => {
                 if generation != self.workspace_generation
@@ -705,6 +718,48 @@ impl FlokinApp {
             Message::SqlQueryCompleted(result) => {
                 self.model.sql_execution_completed(result);
             }
+            Message::SqlUpdatePreviewCompleted(result) => {
+                self.model.sql_update_preview_completed(result);
+            }
+            Message::SqlUpdateBackToEditor => {
+                self.model.sql_explorer.write_plan = None;
+                self.model.sql_explorer.error = None;
+                self.model.sql_explorer.stale = false;
+            }
+            Message::SqlUpdatePreviewCanceled => {
+                self.model.sql_explorer.write_plan = None;
+                self.model.sql_explorer.error = None;
+                self.model.sql_explorer.stale = false;
+            }
+            Message::SqlUpdateApplyRequested => {
+                if self.model.sql_explorer.stale {
+                    self.model.sql_explorer.error = Some(String::from(
+                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
+                    ));
+                    return Task::none();
+                }
+                let Some(plan) = self.model.sql_explorer.write_plan.clone() else {
+                    return Task::none();
+                };
+                if !plan.mutation_plan.can_apply() {
+                    return Task::none();
+                }
+                return apply_sql_update_task(plan.mutation_plan);
+            }
+            Message::SqlUpdateApplyCompleted(result) => match result {
+                Ok((paths, count)) => {
+                    self.model.sql_update_apply_completed(Ok(count));
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return self.enqueue_workspace_events(
+                            workspace,
+                            paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.model.sql_update_apply_completed(Err(error));
+                }
+            },
             Message::KeyboardEvent(event) => {
                 if let Some(message) = keyboard_message(
                     event,
@@ -1497,6 +1552,41 @@ fn execute_sql_task(
             projection.execute_read(&query, flokin_core::DEFAULT_RESULT_LIMIT)
         },
         Message::SqlQueryCompleted,
+    )
+}
+
+fn preview_sql_update_task(
+    documents: Vec<flokin_core::Document>,
+    collections: Vec<flokin_core::Collection>,
+    editor: flokin_core::EditorState,
+    schema_catalog: flokin_core::SchemaCatalog,
+    query: String,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            flokin_core::SqlProjection::preview_update(
+                &query,
+                &documents,
+                &collections,
+                &editor,
+                &schema_catalog,
+            )
+        },
+        Message::SqlUpdatePreviewCompleted,
+    )
+}
+
+fn apply_sql_update_task(plan: BulkEditPlan) -> Task<Message> {
+    Task::perform(
+        async move {
+            apply_bulk_edit_plan(&plan)
+                .map(|result| {
+                    let count = result.changed_paths.len();
+                    (result.changed_paths, count)
+                })
+                .map_err(format_bulk_apply_error)
+        },
+        Message::SqlUpdateApplyCompleted,
     )
 }
 

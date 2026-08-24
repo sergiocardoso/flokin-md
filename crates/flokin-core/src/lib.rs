@@ -13,9 +13,10 @@ mod table;
 
 pub use bulk_edit::{
     apply_bulk_edit_plan, build_bulk_edit_plan, content_fingerprint, explicit_schema_loaded,
-    selectable_properties, validate_bulk_edit_operation, BulkEditApplyError, BulkEditChangeStatus,
-    BulkEditFileChange, BulkEditOperation, BulkEditPlan, BulkEditResult, BulkEditSelection,
-    BulkEditSummary, BulkEditValue,
+    patch_frontmatter_properties, selectable_properties, validate_bulk_edit_operation,
+    BulkEditApplyError, BulkEditChangeStatus, BulkEditFileChange, BulkEditOperation, BulkEditPlan,
+    BulkEditResult, BulkEditSelection, BulkEditSummary, BulkEditValue, FrontmatterPatchOutcome,
+    FrontmatterPropertyChange,
 };
 pub use graph::{
     clamp_graph_zoom, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
@@ -34,7 +35,7 @@ pub use model::{
     ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter,
     HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
     InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
-    SqlExplorerState, WorkspaceDisplay,
+    SqlExplorerMode, SqlExplorerState, WorkspaceDisplay,
 };
 pub use relation::{
     display_relation_value, parse_wikilink, relation_display_property, Relation, RelationDocument,
@@ -59,7 +60,8 @@ pub use search::{
 };
 pub use sql::{
     default_query, normalize_identifier, SqlCatalog, SqlColumn, SqlColumnType, SqlError,
-    SqlProjection, SqlQueryResult, SqlResultColumn, SqlTable, SqlValue, DEFAULT_RESULT_LIMIT,
+    SqlProjection, SqlQueryResult, SqlResultColumn, SqlTable, SqlValue, SqlWritePlan,
+    DEFAULT_RESULT_LIMIT,
 };
 pub use sql_completion::{
     complete_sql, completion_context, quote_identifier_if_needed, replace_sql_completion,

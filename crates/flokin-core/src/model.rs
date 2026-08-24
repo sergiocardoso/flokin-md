@@ -10,8 +10,8 @@ use crate::{
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
     Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue,
     Relation, RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SchemaType,
-    SearchQuery, SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort,
-    WorkspaceUpdate,
+    SearchQuery, SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, SqlWritePlan,
+    TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,10 +136,21 @@ pub struct FilterCount {
 pub struct SqlExplorerState {
     pub open: bool,
     pub query: String,
+    pub mode: SqlExplorerMode,
     pub catalog: Option<SqlCatalog>,
     pub result: Option<SqlQueryResult>,
+    pub write_plan: Option<SqlWritePlan>,
     pub error: Option<String>,
+    pub last_result: Option<String>,
     pub running: bool,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SqlExplorerMode {
+    #[default]
+    Query,
+    Update,
 }
 
 impl SqlExplorerState {
@@ -147,10 +158,14 @@ impl SqlExplorerState {
         Self {
             open: false,
             query: String::new(),
+            mode: SqlExplorerMode::Query,
             catalog: None,
             result: None,
+            write_plan: None,
             error: None,
+            last_result: None,
             running: false,
+            stale: false,
         }
     }
 }
@@ -762,6 +777,15 @@ impl ShellModel {
         }
     }
 
+    pub fn mark_sql_preview_stale_for_paths(&mut self, changed_paths: &[PathBuf]) {
+        if self.sql_explorer.write_plan.is_none() {
+            return;
+        };
+        if !changed_paths.is_empty() {
+            self.sql_explorer.stale = true;
+        }
+    }
+
     pub fn bulk_property_options(&self) -> Vec<String> {
         let Some(collection_id) = self.selected_collection.as_deref() else {
             return Vec::new();
@@ -931,7 +955,23 @@ impl ShellModel {
     }
 
     pub fn update_sql_query(&mut self, query: String) {
-        self.sql_explorer.query = query;
+        if self.sql_explorer.query != query {
+            self.sql_explorer.query = query;
+            self.sql_explorer.write_plan = None;
+            self.sql_explorer.stale = false;
+            self.sql_explorer.last_result = None;
+        }
+    }
+
+    pub fn set_sql_mode(&mut self, mode: SqlExplorerMode) {
+        if self.sql_explorer.mode != mode {
+            self.sql_explorer.mode = mode;
+            self.sql_explorer.result = None;
+            self.sql_explorer.write_plan = None;
+            self.sql_explorer.error = None;
+            self.sql_explorer.last_result = None;
+            self.sql_explorer.stale = false;
+        }
     }
 
     pub fn toggle_sql_schema_table(&mut self, table_name: String) {
@@ -943,6 +983,10 @@ impl ShellModel {
     pub fn sql_execution_started(&mut self) {
         self.sql_explorer.running = true;
         self.sql_explorer.error = None;
+        self.sql_explorer.result = None;
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.last_result = None;
+        self.sql_explorer.stale = false;
     }
 
     pub fn sql_execution_completed(&mut self, result: Result<SqlQueryResult, SqlError>) {
@@ -951,10 +995,50 @@ impl ShellModel {
             Ok(result) => {
                 self.sql_explorer.result = Some(result);
                 self.sql_explorer.error = None;
+                self.sql_explorer.write_plan = None;
             }
             Err(error) => {
                 self.sql_explorer.error = Some(error.message);
                 self.sql_explorer.result = None;
+                self.sql_explorer.write_plan = None;
+            }
+        }
+    }
+
+    pub fn sql_update_preview_completed(&mut self, result: Result<SqlWritePlan, SqlError>) {
+        self.sql_explorer.running = false;
+        match result {
+            Ok(plan) => {
+                self.sql_explorer.write_plan = Some(plan);
+                self.sql_explorer.result = None;
+                self.sql_explorer.error = None;
+                self.sql_explorer.last_result = None;
+                self.sql_explorer.stale = false;
+            }
+            Err(error) => {
+                self.sql_explorer.error = Some(error.message);
+                self.sql_explorer.write_plan = None;
+                self.sql_explorer.result = None;
+            }
+        }
+    }
+
+    pub fn sql_update_apply_completed(&mut self, result: Result<usize, String>) {
+        self.sql_explorer.running = false;
+        match result {
+            Ok(count) => {
+                self.sql_explorer.last_result = Some(if count == 1 {
+                    String::from("1 documento atualizado.")
+                } else {
+                    format!("{count} documentos atualizados.")
+                });
+                self.sql_explorer.write_plan = None;
+                self.sql_explorer.error = None;
+                self.sql_explorer.stale = false;
+            }
+            Err(error) => {
+                self.sql_explorer.error = Some(error);
+                self.sql_explorer.stale = true;
             }
         }
     }
@@ -972,6 +1056,8 @@ impl ShellModel {
                 self.sql_explorer.error = Some(error.message);
             }
         }
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.stale = false;
     }
 
     pub fn toggle_collection_sort(&mut self, column_id: String) {
@@ -1005,6 +1091,8 @@ impl ShellModel {
         self.rebuild_health();
         self.sync_editor_tabs_with_documents();
         self.sync_schema_editor_tab_with_file(&result.root);
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.stale = false;
         if let Some(selected_document_path) = self.selected_document_path.as_ref() {
             if !self
                 .documents
