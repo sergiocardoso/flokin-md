@@ -786,6 +786,8 @@ impl FlokinApp {
             self.open_menu,
             self.menu_anchor_x,
             self.about_open,
+            self.schema_create_dialog_open,
+            self.schema_create_error.as_deref(),
             self.left_visible,
             self.right_visible,
             self.mode,
