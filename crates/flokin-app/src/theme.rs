@@ -127,6 +127,10 @@ pub mod sizes {
     pub const MENU_BAR_HEIGHT: f32 = tokens::SIZES.menu_bar_height;
     pub const MENU_WIDTH: f32 = tokens::SIZES.menu_width;
     pub const MENU_TOP_OFFSET: f32 = tokens::SIZES.menu_top_offset;
+    pub const MENU_ITEM_HEIGHT: f32 = tokens::SIZES.menu_item_height;
+    pub const MENU_PADDING_Y: f32 = tokens::SIZES.menu_padding_y;
+    pub const MENU_PADDING_X: f32 = tokens::SIZES.menu_padding_x;
+    pub const MENU_POPUP_PADDING: f32 = tokens::SIZES.menu_popup_padding;
     pub const SEARCH_OVERLAY_WIDTH: f32 = tokens::SIZES.search_overlay_width;
     pub const SEARCH_OVERLAY_HEIGHT: f32 = tokens::SIZES.search_overlay_height;
     pub const SEARCH_RESULTS_HEIGHT: f32 = tokens::SIZES.search_results_height;

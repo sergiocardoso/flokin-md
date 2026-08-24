@@ -196,6 +196,11 @@ fn top_shell<'a>(
         .width(theme::sizes::TOOLBAR_SEARCH_WIDTH)
         .style(theme::input_embedded);
 
+    let search_message = if open_menu.is_some() {
+        Message::MenuAction(MenuAction::Search)
+    } else {
+        Message::SearchOpened
+    };
     let search = mouse_area(
         container(
             row![
@@ -214,12 +219,16 @@ fn top_shell<'a>(
         .padding([0.0, theme::spacing::MD])
         .style(theme::surface),
     )
-    .on_press(Message::SearchOpened);
+    .on_press(search_message);
 
     let left_toggle = top_icon_button(
         theme::Icon::PanelLeft,
         left_visible,
-        Message::ToggleLeftSidebar,
+        if open_menu.is_some() {
+            Message::MenuAction(MenuAction::ToggleLeftSidebar)
+        } else {
+            Message::ToggleLeftSidebar
+        },
         if left_visible {
             "Ocultar barra lateral esquerda"
         } else {
@@ -229,7 +238,11 @@ fn top_shell<'a>(
     let right_toggle = top_icon_button(
         theme::Icon::Split,
         right_visible,
-        Message::ToggleRightSidebar,
+        if open_menu.is_some() {
+            Message::MenuAction(MenuAction::ToggleRightSidebar)
+        } else {
+            Message::ToggleRightSidebar
+        },
         if right_visible {
             "Ocultar barra lateral direita"
         } else {
@@ -251,7 +264,11 @@ fn top_shell<'a>(
         .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding([0.0, 12.0])
         .style(theme::button_selected)
-        .on_press(Message::ThemeToggled),
+        .on_press(if open_menu.is_some() {
+            Message::MenuAction(MenuAction::ToggleTheme)
+        } else {
+            Message::ThemeToggled
+        }),
         text("Alternar tema"),
         iced::widget::tooltip::Position::Bottom,
     );
@@ -398,30 +415,14 @@ fn menu_overlay<'a>(menu: MenuId) -> Element<'a, Message> {
         anchor_prefix = anchor_prefix.push(menu_trigger_placeholder(label));
     }
 
-    let mut trigger_layer = row![brand_mark()]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center);
-    for (label, id) in items {
-        trigger_layer = trigger_layer.push(menu_trigger(label, id, Some(menu)));
-    }
-
     stack![
         column![
-            mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(theme::sizes::MENU_BAR_HEIGHT),
-            )
-            .on_press(Message::MenuClosed),
+            iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
             mouse_area(container("").height(Length::Fill).width(Length::Fill))
                 .on_press(Message::MenuClosed),
         ]
         .width(Length::Fill)
         .height(Length::Fill),
-        container(trigger_layer.height(theme::sizes::MENU_BAR_HEIGHT))
-            .padding([0.0, theme::spacing::XL])
-            .height(theme::sizes::MENU_BAR_HEIGHT)
-            .width(Length::Fill),
         column![
             iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
             row![anchor_prefix, menu_items(menu)].spacing(theme::spacing::SM),
@@ -472,29 +473,32 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
         ],
         MenuId::Help => vec![("Sobre FlokinMD", None, MenuAction::About)],
     };
-    let mut items = column![].spacing(2);
+    let mut items = column![];
     for (label, shortcut, action) in entries {
         let mut content = row![text(label)
             .size(theme::typography::BODY)
+            .wrapping(iced::widget::text::Wrapping::None)
             .width(Length::Fill)];
         if let Some(shortcut) = shortcut {
             content = content.push(
                 text(shortcut)
                     .font(theme::mono())
                     .size(theme::typography::LABEL)
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(theme::text_muted),
             );
         }
         items = items.push(
             button(content.align_y(Alignment::Center))
                 .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
-                .padding([8.0, 10.0])
+                .height(theme::sizes::MENU_ITEM_HEIGHT)
+                .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
                 .style(theme::button_menu)
                 .on_press(Message::MenuAction(action)),
         );
     }
     container(items)
-        .padding(4)
+        .padding(theme::sizes::MENU_POPUP_PADDING)
         .style(theme::overlay_panel)
         .into()
 }
