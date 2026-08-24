@@ -1,17 +1,18 @@
 use flokin_core::{
-    Collection, CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab,
-    EditorTabKind, EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType,
-    ShellModel, SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult,
-    SqlValue, TableCell, TableColumn, TableModel, TableValueType,
+    BulkEditChangeStatus, BulkEditOperationKind, BulkEditValueType, Collection, CollectionPanel,
+    CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind, EditorViewMode,
+    ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel, SortDirection,
+    SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell,
+    TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
     button, column, container, markdown, mouse_area, row, scrollable,
     scrollable::{Direction, Scrollbar},
     stack, text,
     text::{LineHeight, Wrapping},
-    text_editor,
+    text_editor, text_input,
 };
-use iced::{keyboard, keyboard::Key, Alignment, Element, Length};
+use iced::{keyboard, keyboard::Key, Alignment, Element, Length, Padding};
 
 use crate::{
     message::{Message, SplitterKind},
@@ -28,8 +29,8 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
             Message::SqlExplorerOpened,
         )])
         .height(theme::sizes::TAB_HEIGHT)
-        .padding([0.0, theme::spacing::SM])
-        .style(theme::surface)
+        .padding([theme::spacing::XS, theme::spacing::MD])
+        .style(theme::document_header)
         .into();
     }
 
@@ -40,8 +41,8 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
             Message::MockAction,
         )])
         .height(theme::sizes::TAB_HEIGHT)
-        .padding([0.0, theme::spacing::SM])
-        .style(theme::surface)
+        .padding([theme::spacing::XS, theme::spacing::MD])
+        .style(theme::document_header)
         .into();
     }
 
@@ -52,15 +53,15 @@ pub fn tabs(model: &ShellModel) -> Element<'_, Message> {
         }
         return container(scrollable(tabs).direction(Direction::Horizontal(Scrollbar::default())))
             .height(theme::sizes::TAB_HEIGHT)
-            .padding([0.0, theme::spacing::SM])
-            .style(theme::surface)
+            .padding([theme::spacing::XS, theme::spacing::MD])
+            .style(theme::document_header)
             .into();
     }
 
     container(row![])
         .height(theme::sizes::TAB_HEIGHT)
-        .padding([0.0, theme::spacing::SM])
-        .style(theme::surface)
+        .padding([theme::spacing::XS, theme::spacing::MD])
+        .style(theme::document_header)
         .into()
 }
 
@@ -69,15 +70,16 @@ fn editor_tab<'a>(model: &'a ShellModel, tab: &'a EditorTab) -> Element<'a, Mess
     let label = editor_tab_label(model, tab);
     let dirty = if tab.dirty { " ●" } else { "" };
     let style = if active {
-        theme::button_selected
+        theme::button_tab_selected
     } else {
-        theme::button_toolbar
+        theme::button_tab
     };
 
     row![
         button(
             row![text(format!("{label}{dirty}"))
                 .size(theme::typography::BODY)
+                .line_height(LineHeight::Relative(1.0))
                 .style(if active {
                     theme::text_accent
                 } else {
@@ -86,7 +88,7 @@ fn editor_tab<'a>(model: &'a ShellModel, tab: &'a EditorTab) -> Element<'a, Mess
             .align_y(Alignment::Center)
         )
         .height(theme::sizes::TAB_BUTTON_HEIGHT)
-        .padding([4.0, 9.0])
+        .padding([0.0, theme::spacing::LG])
         .style(style)
         .on_press(Message::EditorTabSelected(tab.document_path.clone())),
         button(widgets::icon(
@@ -97,7 +99,7 @@ fn editor_tab<'a>(model: &'a ShellModel, tab: &'a EditorTab) -> Element<'a, Mess
         .width(theme::sizes::TAB_CLOSE_WIDTH)
         .height(theme::sizes::TAB_BUTTON_HEIGHT)
         .padding(0)
-        .style(theme::button_toolbar)
+        .style(theme::button_tab)
         .on_press(Message::EditorTabCloseRequested(tab.document_path.clone()))
     ]
     .spacing(0)
@@ -198,23 +200,21 @@ fn sql_explorer_view<'a>(
     let header = row![
         text("Query 1")
             .size(theme::typography::TITLE)
-            .style(theme::text_normal)
-            .width(Length::Fill),
-        button(
-            row![
-                widgets::icon(theme::Icon::Terminal, theme::icons::TOOLBAR, false),
-                text(if model.sql_explorer.running {
-                    "Executando..."
-                } else {
-                    "Executar"
-                })
-                .size(theme::typography::BODY),
-            ]
-            .spacing(theme::spacing::SM)
-            .align_y(Alignment::Center),
-        )
-        .padding([5.0, 10.0])
-        .style(theme::button_toolbar)
+            .style(theme::text_normal),
+        iced::widget::Space::new().width(Length::Fill),
+        button(widgets::icon_text(
+            theme::Icon::Terminal,
+            if model.sql_explorer.running {
+                "Executando..."
+            } else {
+                "Executar"
+            },
+            theme::icons::TOOLBAR,
+            false
+        ))
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .padding([0.0, 10.0])
+        .style(theme::button_primary)
         .on_press(Message::SqlExecute),
         text("Ctrl+Enter")
             .font(theme::mono())
@@ -269,11 +269,11 @@ fn sql_explorer_view<'a>(
     .height(Length::Fill)
     .width(Length::Fill);
 
-    container(column![header, body].spacing(theme::spacing::SM))
+    container(column![header, body].spacing(theme::spacing::MD))
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(theme::spacing::LG)
-        .style(theme::editor)
+        .padding(theme::spacing::MD)
+        .style(theme::document_surface)
         .into()
 }
 
@@ -587,9 +587,10 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
             .unwrap_or_else(empty_schema_view),
     };
 
-    container(
+    let page = container(
         column![
             collection_header(collection, property_count, model),
+            bulk_selection_toolbar(model),
             content
         ]
         .spacing(theme::spacing::LG),
@@ -597,8 +598,13 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
     .width(Length::Fill)
     .height(Length::Fill)
     .padding(theme::spacing::XXL)
-    .style(theme::editor)
-    .into()
+    .style(theme::editor);
+
+    if model.bulk_edit.editor_open {
+        stack![page, bulk_edit_overlay(model)].into()
+    } else {
+        page.into()
+    }
 }
 
 fn collection_header<'a>(
@@ -675,6 +681,37 @@ fn empty_schema_view<'a>() -> Element<'a, Message> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
+    .into()
+}
+
+fn bulk_selection_toolbar(model: &ShellModel) -> Element<'_, Message> {
+    let count = model.bulk_edit.selected_paths.len();
+    if count == 0 || model.collection_panel != CollectionPanel::Data {
+        return container("").height(0).into();
+    }
+
+    container(
+        row![
+            text(format!("{count} selecionados"))
+                .size(theme::typography::BODY)
+                .style(theme::text_muted)
+                .width(Length::Fill),
+            button(text("Editar em massa").size(theme::typography::LABEL))
+                .height(28)
+                .padding([0.0, theme::spacing::MD])
+                .style(theme::button_selected)
+                .on_press(Message::BulkEditOpened),
+            button(text("Limpar seleção").size(theme::typography::LABEL))
+                .height(28)
+                .padding([0.0, theme::spacing::MD])
+                .style(theme::button_toolbar)
+                .on_press(Message::BulkSelectionCleared),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .padding([theme::spacing::XS, theme::spacing::SM])
+    .style(theme::surface)
     .into()
 }
 
@@ -1044,14 +1081,30 @@ fn schema_detail_item<'a>(label: &'static str, value: String) -> Element<'a, Mes
 }
 
 fn table_view<'a>(model: &'a ShellModel, table: TableModel) -> Element<'a, Message> {
-    let width = data_grid::grid_width(true, table.columns.iter().map(|column| column.width as f32));
+    let select_width = 34.0;
+    let width = data_grid::grid_width(true, table.columns.iter().map(|column| column.width as f32))
+        + select_width;
     let mut rows = column![table_header(&table.columns, model, width)].spacing(0);
 
     for (row_index, row_model) in table.rows.into_iter().enumerate() {
         let selected = model.selected_document_path.as_ref() == Some(&row_model.document_path);
-        let mut cells = row![data_grid::row_gutter(row_index, selected)]
-            .spacing(0)
-            .align_y(Alignment::Center);
+        let bulk_selected = model
+            .bulk_edit
+            .selected_paths
+            .contains(&row_model.document_path);
+        let checkbox_path = row_model.document_path.clone();
+        let mut cells = row![
+            data_grid::selection_cell(
+                checkbox_label(bulk_selected),
+                select_width,
+                Message::BulkSelectionToggled(checkbox_path),
+                selected,
+                row_index,
+            ),
+            data_grid::row_gutter(row_index, selected)
+        ]
+        .spacing(0)
+        .align_y(Alignment::Center);
 
         for (column, cell) in table.columns.iter().zip(row_model.cells) {
             cells = cells.push(table_cell(column, cell, selected));
@@ -1088,9 +1141,25 @@ fn table_header<'a>(
     model: &'a ShellModel,
     width: f32,
 ) -> Element<'a, Message> {
-    let mut header = row![data_grid::header_gutter()]
-        .spacing(0)
-        .align_y(Alignment::Center);
+    let all_selected = if let Some(collection_id) = model.selected_collection.as_deref() {
+        let docs = model.collection_documents(collection_id);
+        !docs.is_empty()
+            && docs
+                .iter()
+                .all(|document| model.bulk_edit.selected_paths.contains(&document.path))
+    } else {
+        false
+    };
+    let mut header = row![
+        data_grid::selection_header(
+            checkbox_label(all_selected),
+            34.0,
+            Message::BulkSelectAllVisible(!all_selected),
+        ),
+        data_grid::header_gutter()
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center);
 
     for column in columns {
         header = header.push(header_cell(column.clone(), model));
@@ -1175,6 +1244,364 @@ fn table_cell<'a>(column: &TableColumn, cell: TableCell, selected: bool) -> Elem
     )
 }
 
+fn checkbox_label(selected: bool) -> &'static str {
+    if selected {
+        "[x]"
+    } else {
+        "[ ]"
+    }
+}
+
+fn bulk_edit_overlay(model: &ShellModel) -> Element<'_, Message> {
+    let mut panel = column![
+        row![
+            text("Editar em massa")
+                .size(theme::typography::TITLE)
+                .style(theme::text_accent)
+                .width(Length::Fill),
+            button(widgets::icon(theme::Icon::X, theme::icons::TOOLBAR, false))
+                .width(30)
+                .height(30)
+                .padding(0)
+                .style(theme::button_toolbar)
+                .on_press(Message::BulkEditCanceled),
+        ]
+        .align_y(Alignment::Center),
+        text(format!(
+            "{} documentos selecionados",
+            model.bulk_edit.selected_paths.len()
+        ))
+        .size(theme::typography::BODY)
+        .style(theme::text_muted),
+        bulk_operation_controls(model),
+        bulk_property_controls(model),
+    ]
+    .spacing(theme::spacing::MD);
+
+    if model.bulk_edit.operation_kind == BulkEditOperationKind::Set {
+        panel = panel.push(bulk_value_controls(model));
+    }
+
+    if let Some(error) = model.bulk_edit.error.as_deref() {
+        panel = panel.push(
+            text(error)
+                .size(theme::typography::BODY)
+                .style(theme::text_error),
+        );
+    }
+    if let Some(result) = model.bulk_edit.last_result.as_deref() {
+        panel = panel.push(
+            text(result)
+                .size(theme::typography::BODY)
+                .style(theme::text_success),
+        );
+    }
+
+    panel = if let Some(plan) = model.bulk_edit.plan.as_ref() {
+        panel.push(bulk_preview(model, plan))
+    } else {
+        panel.push(
+            row![
+                button(text("Cancelar").size(theme::typography::LABEL))
+                    .height(30)
+                    .padding([0.0, theme::spacing::MD])
+                    .style(theme::button_toolbar)
+                    .on_press(Message::BulkEditCanceled),
+                button(text("Gerar preview").size(theme::typography::LABEL))
+                    .height(30)
+                    .padding([0.0, theme::spacing::MD])
+                    .style(theme::button_selected)
+                    .on_press(Message::BulkPreviewRequested),
+            ]
+            .spacing(theme::spacing::SM),
+        )
+    };
+
+    stack![
+        mouse_area(
+            container("")
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::overlay_backdrop)
+        )
+        .on_press(Message::BulkEditCanceled),
+        container(panel)
+            .width(760)
+            .max_height(620)
+            .padding(theme::spacing::XL)
+            .style(theme::overlay_panel)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn bulk_operation_controls(model: &ShellModel) -> Element<'_, Message> {
+    row![
+        bulk_operation_button("Set property", BulkEditOperationKind::Set, model),
+        bulk_operation_button("Remove property", BulkEditOperationKind::Remove, model),
+    ]
+    .spacing(theme::spacing::XS)
+    .into()
+}
+
+fn bulk_operation_button(
+    label: &'static str,
+    kind: BulkEditOperationKind,
+    model: &ShellModel,
+) -> Element<'static, Message> {
+    button(text(label).size(theme::typography::LABEL))
+        .height(28)
+        .padding([0.0, theme::spacing::MD])
+        .style(if model.bulk_edit.operation_kind == kind {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        })
+        .on_press(Message::BulkOperationSelected(kind))
+        .into()
+}
+
+fn bulk_property_controls(model: &ShellModel) -> Element<'_, Message> {
+    let mut options = row![]
+        .spacing(theme::spacing::XS)
+        .align_y(Alignment::Center);
+    for property in model.bulk_property_options().into_iter().take(8) {
+        let selected =
+            model.bulk_edit.property == property && model.bulk_edit.new_property.is_empty();
+        options = options.push(
+            button(text(property.clone()).size(theme::typography::LABEL))
+                .height(26)
+                .padding([0.0, theme::spacing::SM])
+                .style(if selected {
+                    theme::button_selected
+                } else {
+                    theme::button_toolbar
+                })
+                .on_press(Message::BulkPropertySelected(property)),
+        );
+    }
+
+    column![
+        text("Propriedade")
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        options,
+        text_input("Nova propriedade...", &model.bulk_edit.new_property)
+            .padding(theme::spacing::SM)
+            .size(theme::typography::BODY)
+            .style(theme::input)
+            .on_input(Message::BulkNewPropertyChanged),
+    ]
+    .spacing(theme::spacing::XS)
+    .into()
+}
+
+fn bulk_value_controls(model: &ShellModel) -> Element<'_, Message> {
+    let types = [
+        ("String", BulkEditValueType::String),
+        ("Integer", BulkEditValueType::Integer),
+        ("Float", BulkEditValueType::Float),
+        ("Boolean", BulkEditValueType::Boolean),
+        ("Null", BulkEditValueType::Null),
+        ("Relation", BulkEditValueType::Relation),
+    ];
+    let mut type_row = row![].spacing(theme::spacing::XS);
+    for (label, value_type) in types {
+        type_row = type_row.push(
+            button(text(label).size(theme::typography::LABEL))
+                .height(26)
+                .padding([0.0, theme::spacing::SM])
+                .style(if model.bulk_edit.value_type == value_type {
+                    theme::button_selected
+                } else {
+                    theme::button_toolbar
+                })
+                .on_press(Message::BulkValueTypeSelected(value_type)),
+        );
+    }
+
+    let input: Element<'_, Message> = match model.bulk_edit.value_type {
+        BulkEditValueType::Boolean => row![
+            button(text("true").size(theme::typography::LABEL))
+                .height(28)
+                .padding([0.0, theme::spacing::MD])
+                .style(if model.bulk_edit.bool_value {
+                    theme::button_selected
+                } else {
+                    theme::button_toolbar
+                })
+                .on_press(Message::BulkBoolValueSelected(true)),
+            button(text("false").size(theme::typography::LABEL))
+                .height(28)
+                .padding([0.0, theme::spacing::MD])
+                .style(if !model.bulk_edit.bool_value {
+                    theme::button_selected
+                } else {
+                    theme::button_toolbar
+                })
+                .on_press(Message::BulkBoolValueSelected(false)),
+        ]
+        .spacing(theme::spacing::XS)
+        .into(),
+        BulkEditValueType::Null => text("Valor final: null")
+            .size(theme::typography::BODY)
+            .style(theme::text_muted)
+            .into(),
+        BulkEditValueType::Relation => text_input("CARF", &model.bulk_edit.value)
+            .padding(theme::spacing::SM)
+            .size(theme::typography::BODY)
+            .style(theme::input)
+            .on_input(Message::BulkValueChanged)
+            .into(),
+        _ => text_input("Valor", &model.bulk_edit.value)
+            .padding(theme::spacing::SM)
+            .size(theme::typography::BODY)
+            .style(theme::input)
+            .on_input(Message::BulkValueChanged)
+            .into(),
+    };
+
+    column![
+        text("Tipo e valor")
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        type_row,
+        input,
+    ]
+    .spacing(theme::spacing::XS)
+    .into()
+}
+
+fn bulk_preview<'a>(
+    model: &'a ShellModel,
+    plan: &'a flokin_core::BulkEditPlan,
+) -> Element<'a, Message> {
+    let summary = plan.summary();
+    let mut list = column![].spacing(theme::spacing::SM);
+    for change in &plan.changes {
+        let status = match change.status {
+            BulkEditChangeStatus::Changed => "Changed",
+            BulkEditChangeStatus::NoChange => "No change",
+            BulkEditChangeStatus::Blocked => "Blocked",
+            BulkEditChangeStatus::Unsupported => "Unsupported",
+        };
+        let mut item = column![row![
+            text(change.relative_path.display().to_string())
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_normal)
+                .width(Length::Fill),
+            text(status)
+                .size(theme::typography::LABEL)
+                .style(match change.status {
+                    BulkEditChangeStatus::Changed => theme::text_accent,
+                    BulkEditChangeStatus::NoChange => theme::text_muted,
+                    BulkEditChangeStatus::Blocked | BulkEditChangeStatus::Unsupported => {
+                        theme::text_warning
+                    }
+                }),
+        ]
+        .align_y(Alignment::Center)]
+        .spacing(theme::spacing::XXS);
+        if let Some(before) = change.before.as_ref() {
+            item = item.push(
+                text(format!("- {before}"))
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_warning),
+            );
+        }
+        if let Some(after) = change.after.as_ref() {
+            item = item.push(
+                text(format!("+ {after}"))
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_accent),
+            );
+        }
+        if let Some(reason) = change.reason.as_ref() {
+            item = item.push(
+                text(reason)
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            );
+        }
+        list = list.push(
+            container(item)
+                .padding(theme::spacing::SM)
+                .style(theme::surface),
+        );
+    }
+
+    for warning in &plan.warnings {
+        list = list.push(
+            text(warning)
+                .size(theme::typography::BODY)
+                .style(theme::text_warning),
+        );
+    }
+
+    let apply_label = format!("Aplicar {} alterações", summary.changed);
+    let apply = button(text(apply_label).size(theme::typography::LABEL))
+        .height(30)
+        .padding([0.0, theme::spacing::MD])
+        .style(if plan.can_apply() && !model.bulk_edit.stale {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        });
+    let apply = if plan.can_apply() && !model.bulk_edit.stale {
+        apply.on_press(Message::BulkApplyRequested)
+    } else {
+        apply
+    };
+
+    let stale_message: Element<'_, Message> = if model.bulk_edit.stale {
+        text("O workspace mudou desde a geração do preview.")
+            .size(theme::typography::BODY)
+            .style(theme::text_warning)
+            .into()
+    } else {
+        container("").height(0).into()
+    };
+
+    column![
+        text("Revisar alterações")
+            .size(theme::typography::TITLE)
+            .style(theme::text_accent),
+        row![
+            text(format!("Selected {}", summary.selected)).size(theme::typography::LABEL),
+            text(format!("Will change {}", summary.changed)).size(theme::typography::LABEL),
+            text(format!("No change {}", summary.no_change)).size(theme::typography::LABEL),
+            text(format!("Blocked {}", summary.blocked + summary.unsupported))
+                .size(theme::typography::LABEL),
+        ]
+        .spacing(theme::spacing::MD),
+        stale_message,
+        scrollable(list).height(260),
+        row![
+            button(text("Cancelar").size(theme::typography::LABEL))
+                .height(30)
+                .padding([0.0, theme::spacing::MD])
+                .style(theme::button_toolbar)
+                .on_press(Message::BulkEditCanceled),
+            button(text("Gerar novo preview").size(theme::typography::LABEL))
+                .height(30)
+                .padding([0.0, theme::spacing::MD])
+                .style(theme::button_toolbar)
+                .on_press(Message::BulkPreviewRegenerate),
+            apply,
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(theme::spacing::MD)
+    .into()
+}
+
 fn collection_alignment(value_type: TableValueType) -> iced::alignment::Horizontal {
     match value_type {
         TableValueType::Number => iced::alignment::Horizontal::Right,
@@ -1191,30 +1618,40 @@ fn markdown_editor_view<'a>(
     app_theme: AppTheme,
     _model: &'a ShellModel,
 ) -> Element<'a, Message> {
-    let header = row![
-        column![
-            text(tab.title.as_str())
-                .size(theme::typography::TITLE)
-                .style(theme::text_accent),
-            text(tab.relative_path.display().to_string())
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted),
+    let header = container(
+        row![
+            row![
+                widgets::icon(theme::Icon::FileText, theme::icons::META, true),
+                column![
+                    text(tab.title.as_str())
+                        .size(theme::typography::TITLE)
+                        .style(theme::text_normal),
+                    text(tab.relative_path.display().to_string())
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_muted),
+                ]
+                .spacing(theme::spacing::XXS)
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+            if tab.kind == EditorTabKind::Markdown {
+                editor_view_mode_controls(tab.view_mode)
+            } else {
+                row![].into()
+            },
+            save_button(tab),
         ]
-        .spacing(theme::spacing::XXS)
-        .width(Length::Fill),
-        if tab.kind == EditorTabKind::Markdown {
-            editor_view_mode_controls(tab.view_mode)
-        } else {
-            row![].into()
-        },
-        save_button(tab),
-    ]
-    .spacing(theme::spacing::MD)
-    .align_y(Alignment::Center);
+        .spacing(theme::spacing::MD)
+        .align_y(Alignment::Center),
+    )
+    .height(theme::sizes::DOCUMENT_HEADER_HEIGHT)
+    .padding([0.0, theme::spacing::LG])
+    .style(theme::document_header);
 
     let mut content = column![header]
-        .spacing(theme::spacing::SM)
+        .spacing(theme::spacing::LG)
         .height(Length::Fill);
 
     if let Some(error) = tab.save_error.as_ref() {
@@ -1244,19 +1681,28 @@ fn markdown_editor_view<'a>(
     container(content)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(theme::spacing::LG)
-        .style(theme::editor)
+        .padding(Padding {
+            top: 0.0,
+            right: theme::spacing::LG,
+            bottom: theme::spacing::LG,
+            left: theme::spacing::LG,
+        })
         .into()
 }
 
 fn editor_view_mode_controls<'a>(active: EditorViewMode) -> Element<'a, Message> {
-    row![
-        editor_view_mode_button("Editar", EditorViewMode::Edit, active),
-        editor_view_mode_button("Dividido", EditorViewMode::Split, active),
-        editor_view_mode_button("Prévia", EditorViewMode::Preview, active),
-    ]
-    .spacing(theme::spacing::XS)
-    .align_y(Alignment::Center)
+    container(
+        row![
+            editor_view_mode_button("Editar", EditorViewMode::Edit, active),
+            editor_view_mode_button("Dividido", EditorViewMode::Split, active),
+            editor_view_mode_button("Prévia", EditorViewMode::Preview, active),
+        ]
+        .spacing(0)
+        .align_y(Alignment::Center),
+    )
+    .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+    .padding(2.0)
+    .style(theme::segmented_control)
     .into()
 }
 
@@ -1265,8 +1711,9 @@ fn editor_view_mode_button<'a>(
     mode: EditorViewMode,
     active: EditorViewMode,
 ) -> Element<'a, Message> {
-    button(text(label).size(theme::typography::LABEL))
-        .height(28)
+    button(widgets::button_label(label))
+        .width(86)
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT - 4.0)
         .padding([0.0, theme::spacing::MD])
         .style(if mode == active {
             theme::button_selected
@@ -1278,19 +1725,18 @@ fn editor_view_mode_button<'a>(
 }
 
 fn save_button<'a>(tab: &'a EditorTab) -> Element<'a, Message> {
-    let control = button(
-        row![
-            widgets::icon(theme::Icon::Save, theme::icons::TOOLBAR, !tab.dirty),
-            text("Salvar").size(theme::typography::BODY)
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
-    )
-    .padding([5.0, 10.0])
+    let control = button(widgets::icon_text(
+        theme::Icon::Save,
+        "Salvar",
+        theme::icons::TOOLBAR,
+        !tab.dirty,
+    ))
+    .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+    .padding([0.0, 13.0])
     .style(if tab.dirty {
-        theme::button_toolbar
+        theme::button_selected
     } else {
-        theme::button_ghost
+        theme::button_accent_outline
     });
 
     let control = if tab.dirty {
@@ -1424,11 +1870,10 @@ fn markdown_preview_body<'a>(
     };
 
     container(
-        scrollable(
-            container(body)
-                .width(Length::Fill)
-                .padding([theme::spacing::XL, theme::spacing::XXL]),
-        )
+        scrollable(container(body).width(Length::Fill).padding([
+            theme::spacing::XXL + theme::spacing::SM,
+            theme::spacing::XXL + theme::spacing::SM,
+        ]))
         .direction(Direction::Vertical(Scrollbar::default()))
         .width(Length::Fill)
         .height(Length::Fill),
@@ -1453,15 +1898,15 @@ fn markdown_editor_body<'a>(
             .size(theme::typography::EDITOR)
             .line_height(LineHeight::Relative(theme::sizes::EDITOR_LINE_HEIGHT_RATIO,))
             .height(Length::Fill)
-            .padding(theme::spacing::MD)
+            .padding([theme::spacing::XL, theme::spacing::XXL])
             .wrapping(Wrapping::None)
             .style(theme::markdown_text_editor)
     ]
     .height(Length::Fill)
     .width(Length::Fill);
 
-    row![line_number_gutter(markdown_editor.line_count()), editor]
-        .spacing(0)
+    container(row![line_number_gutter(markdown_editor.line_count()), editor].spacing(0))
+        .style(theme::editor)
         .height(Length::Fill)
         .width(Length::Fill)
         .into()
@@ -1470,7 +1915,7 @@ fn markdown_editor_body<'a>(
 fn editor_zebra_background<'a>() -> Element<'a, Message> {
     iced::widget::responsive(|size| {
         let line_height = editor_line_height_px();
-        let usable_height = (size.height - theme::spacing::MD * 2.0).max(0.0);
+        let usable_height = (size.height - theme::spacing::LG * 2.0).max(0.0);
         let visible_rows = (usable_height / line_height).ceil() as usize + 1;
         let mut rows = column![].spacing(0);
 
@@ -1486,7 +1931,7 @@ fn editor_zebra_background<'a>() -> Element<'a, Message> {
         container(rows)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding([theme::spacing::MD, 0.0])
+            .padding([theme::spacing::XL, 0.0])
             .into()
     })
     .width(Length::Fill)
@@ -1517,7 +1962,7 @@ fn line_number_gutter<'a>(line_count: usize) -> Element<'a, Message> {
     container(scrollable(lines).height(Length::Fill))
         .width(theme::sizes::EDITOR_GUTTER_WIDTH)
         .height(Length::Fill)
-        .padding([theme::spacing::MD, theme::spacing::SM])
+        .padding([theme::spacing::XL, theme::spacing::SM])
         .style(theme::gutter)
         .into()
 }

@@ -18,7 +18,9 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
         column![
             row![
                 column![
-                    text("Database Health").size(22).style(theme::text_accent),
+                    text("Database Health")
+                        .size(theme::typography::TITLE)
+                        .style(theme::text_normal),
                     text(format!("{} documentos", summary.total_documents))
                         .size(theme::typography::BODY)
                         .style(theme::text_muted),
@@ -55,8 +57,8 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .padding(theme::spacing::XXL)
-    .style(theme::editor)
+    .padding(theme::spacing::LG)
+    .style(theme::document_surface)
     .into()
 }
 
@@ -75,8 +77,9 @@ fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
                 .spacing(theme::spacing::XXS)
                 .width(Length::Fill),
                 button(text("Criar schema").size(theme::typography::BODY))
-                    .padding([5.0, 10.0])
-                    .style(theme::button_toolbar)
+                    .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+                    .padding([0.0, 10.0])
+                    .style(theme::button_primary)
                     .on_press(Message::SchemaCreateRequested),
             ]
             .spacing(theme::spacing::MD)
@@ -93,7 +96,8 @@ fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
                     .style(theme::text_warning)
                     .width(Length::Fill),
                 button(text("Abrir schema").size(theme::typography::BODY))
-                    .padding([5.0, 10.0])
+                    .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+                    .padding([0.0, 10.0])
                     .style(theme::button_toolbar)
                     .on_press(Message::SchemaOpenRequested),
             ]
@@ -138,7 +142,7 @@ fn filter_button(
     model: &ShellModel,
 ) -> Element<'static, Message> {
     button(text(label).size(theme::typography::LABEL))
-        .height(28)
+        .height(theme::sizes::TAB_BUTTON_HEIGHT)
         .padding([0.0, theme::spacing::MD])
         .style(if model.health_filter == filter {
             theme::button_selected
@@ -151,17 +155,19 @@ fn filter_button(
 
 fn empty_state<'a>() -> Element<'a, Message> {
     container(
-        row![
+        column![
             widgets::icon(theme::Icon::Health, theme::icons::META, true),
             text("Nenhuma issue encontrada.")
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         ]
         .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        .align_x(Alignment::Center),
     )
     .width(Length::Fill)
     .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
     .into()
 }
 
@@ -289,8 +295,8 @@ fn cell<'a>(
 
 fn severity_label(severity: HealthSeverity) -> String {
     match severity {
-        HealthSeverity::Error => String::from("✕ Error"),
-        HealthSeverity::Warning => String::from("⚠ Warning"),
+        HealthSeverity::Error => String::from("Error"),
+        HealthSeverity::Warning => String::from("Warning"),
         HealthSeverity::Info => String::from("Info"),
     }
 }

@@ -1,8 +1,8 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    CollectionPanel, EditorViewMode, ExplorerNodeId, GraphNodeId, HealthFilter, ScanResult,
-    SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
+    BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
+    GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -85,6 +85,21 @@ pub enum Message {
     SchemaCreateCompleted(Result<PathBuf, String>),
     SchemaOpenRequested,
     TableHeaderSelected(String),
+    BulkSelectionToggled(PathBuf),
+    BulkSelectAllVisible(bool),
+    BulkSelectionCleared,
+    BulkEditOpened,
+    BulkEditCanceled,
+    BulkOperationSelected(BulkEditOperationKind),
+    BulkPropertySelected(String),
+    BulkNewPropertyChanged(String),
+    BulkValueTypeSelected(BulkEditValueType),
+    BulkValueChanged(String),
+    BulkBoolValueSelected(bool),
+    BulkPreviewRequested,
+    BulkPreviewRegenerate,
+    BulkApplyRequested,
+    BulkApplyCompleted(Result<(Vec<PathBuf>, usize), String>),
     MarkdownSelected(PathBuf),
     GraphFitRequested,
     GraphFocusSelected,
@@ -143,7 +158,7 @@ pub enum Message {
     ThemeToggled,
     ThemeSelected(bool),
     MenuToggled(MenuId),
-    MenuTriggerMoved(MenuId, f32),
+    MenuHovered(MenuId),
     MenuAction(MenuAction),
     MenuClosed,
     AboutClosed,

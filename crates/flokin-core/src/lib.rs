@@ -1,3 +1,4 @@
+mod bulk_edit;
 mod graph;
 mod health;
 mod mock;
@@ -10,6 +11,12 @@ mod sql;
 mod sql_completion;
 mod table;
 
+pub use bulk_edit::{
+    apply_bulk_edit_plan, build_bulk_edit_plan, content_fingerprint, explicit_schema_loaded,
+    selectable_properties, validate_bulk_edit_operation, BulkEditApplyError, BulkEditChangeStatus,
+    BulkEditFileChange, BulkEditOperation, BulkEditPlan, BulkEditResult, BulkEditSelection,
+    BulkEditSummary, BulkEditValue,
+};
 pub use graph::{
     clamp_graph_zoom, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
     initial_graph_layout, GraphBounds, GraphEdge, GraphEdgeStatus, GraphNode, GraphNodeId,
@@ -21,12 +28,12 @@ pub use health::{
 };
 pub use mock::mock_shell;
 pub use model::{
-    save_markdown_file, workspace_display, Activity, CollectionPanel, DocumentInspector,
-    DocumentSourceView, EditorDialog, EditorExternalConflict, EditorState, EditorTab,
-    EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount,
-    HealthFilter, HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
-    InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
-    SqlExplorerState, WorkspaceDisplay,
+    save_markdown_file, workspace_display, Activity, BulkEditOperationKind, BulkEditState,
+    BulkEditValueType, CollectionPanel, DocumentInspector, DocumentSourceView, EditorDialog,
+    EditorExternalConflict, EditorState, EditorTab, EditorTabKind, EditorViewMode, ExplorerNode,
+    ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter, HealthIssueInspector,
+    InspectorField, InspectorModel, InspectorRelation, InspectorRelationStatus, InspectorValue,
+    RelationDocumentSummary, ScanState, ShellModel, SqlExplorerState, WorkspaceDisplay,
 };
 pub use relation::{
     display_relation_value, parse_wikilink, relation_display_property, Relation, RelationDocument,

@@ -1,4 +1,4 @@
-use iced::widget::{container, text};
+use iced::widget::{button, container, text};
 use iced::{alignment, Element};
 
 use crate::{message::Message, theme};
@@ -61,6 +61,51 @@ pub fn header_cell<'a>(
         .padding([7.0, theme::spacing::SM])
         .style(theme::data_header)
         .into()
+}
+
+pub fn selection_header<'a>(label: &'a str, width: f32, message: Message) -> Element<'a, Message> {
+    container(
+        button(
+            text(label)
+                .font(theme::mono())
+                .size(theme::typography::LABEL),
+        )
+        .width(width)
+        .height(HEADER_HEIGHT)
+        .padding(0)
+        .style(theme::button_table_header)
+        .on_press(message),
+    )
+    .width(width)
+    .height(HEADER_HEIGHT)
+    .style(theme::data_header)
+    .into()
+}
+
+pub fn selection_cell<'a>(
+    label: &'a str,
+    width: f32,
+    message: Message,
+    selected: bool,
+    row_index: usize,
+) -> Element<'a, Message> {
+    container(
+        button(
+            text(label)
+                .font(theme::mono())
+                .size(theme::typography::LABEL),
+        )
+        .width(width)
+        .height(ROW_HEIGHT)
+        .padding(0)
+        .style(theme::button_ghost)
+        .on_press(message),
+    )
+    .width(width)
+    .height(ROW_HEIGHT)
+    .align_x(alignment::Horizontal::Center)
+    .style(move |theme| theme::data_row(theme, row_index, selected))
+    .into()
 }
 
 pub fn grid_width(gutter: bool, columns: impl Iterator<Item = f32>) -> f32 {

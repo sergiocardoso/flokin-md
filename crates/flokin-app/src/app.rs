@@ -5,10 +5,11 @@ use std::{
 };
 
 use flokin_core::{
-    clamp_graph_zoom, complete_sql, default_query, document_node_id, fit_graph_viewport,
-    graph_bounds, graph_collections_map, initial_graph_layout, mock_shell, replace_sql_completion,
-    save_markdown_file, GraphNodeId, GraphProjection, ScanError, ShellModel, SqlCompletionItem,
-    WorkspaceEvent, DEFAULT_SQL_COMPLETION_LIMIT,
+    apply_bulk_edit_plan, clamp_graph_zoom, complete_sql, default_query, document_node_id,
+    fit_graph_viewport, graph_bounds, graph_collections_map, initial_graph_layout, mock_shell,
+    replace_sql_completion, save_markdown_file, BulkEditApplyError, BulkEditPlan, GraphNodeId,
+    GraphProjection, ScanError, ShellModel, SqlCompletionItem, WorkspaceEvent,
+    DEFAULT_SQL_COMPLETION_LIMIT,
 };
 use iced::{
     advanced::widget::{self as advanced_widget, operate},
@@ -56,10 +57,23 @@ pub struct FlokinApp {
     sql_editor_height: f32,
     splitter: Option<(SplitterKind, f32, f32)>,
     cursor: (f32, f32),
-    menu_anchor_x: f32,
     left_visible: bool,
     right_visible: bool,
     mode: AppMode,
+}
+
+fn toggle_menu(
+    open: Option<crate::message::MenuId>,
+    menu: crate::message::MenuId,
+) -> Option<crate::message::MenuId> {
+    (open != Some(menu)).then_some(menu)
+}
+
+fn hover_menu(
+    open: Option<crate::message::MenuId>,
+    menu: crate::message::MenuId,
+) -> Option<crate::message::MenuId> {
+    open.map(|_| menu)
 }
 
 impl FlokinApp {
@@ -93,7 +107,6 @@ impl FlokinApp {
             sql_editor_height: crate::theme::sizes::SQL_EDITOR_DEFAULT_HEIGHT,
             splitter: None,
             cursor: (0.0, 0.0),
-            menu_anchor_x: 0.0,
             left_visible: true,
             right_visible: true,
             mode: AppMode::Files,
@@ -119,6 +132,9 @@ impl FlokinApp {
                 } else {
                     self.model.sql_explorer.open = false;
                     self.sql_completion.close();
+                    if mode == AppMode::Files {
+                        self.restore_active_document_selection();
+                    }
                 }
             }
             Message::ExplorerNodeToggled(id) => {
@@ -196,6 +212,7 @@ impl FlokinApp {
                         }
                         Ok(update) => {
                             let changed_paths = update.changed_paths();
+                            self.model.mark_bulk_preview_stale_for_paths(&changed_paths);
                             self.model.workspace_update_completed(update);
                             self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
@@ -320,6 +337,73 @@ impl FlokinApp {
             Message::TableHeaderSelected(column_id) => {
                 self.model.toggle_collection_sort(column_id);
             }
+            Message::BulkSelectionToggled(path) => {
+                self.model.toggle_bulk_selection(path);
+            }
+            Message::BulkSelectAllVisible(select_all) => {
+                self.model
+                    .set_bulk_selection_for_current_collection(select_all);
+            }
+            Message::BulkSelectionCleared => {
+                self.model.clear_bulk_selection();
+            }
+            Message::BulkEditOpened => {
+                self.model.open_bulk_edit();
+            }
+            Message::BulkEditCanceled => {
+                self.model.close_bulk_edit();
+            }
+            Message::BulkOperationSelected(kind) => {
+                self.model.set_bulk_operation_kind(kind);
+            }
+            Message::BulkPropertySelected(property) => {
+                self.model.set_bulk_property(property);
+            }
+            Message::BulkNewPropertyChanged(property) => {
+                self.model.set_bulk_new_property(property);
+            }
+            Message::BulkValueTypeSelected(value_type) => {
+                self.model.set_bulk_value_type(value_type);
+            }
+            Message::BulkValueChanged(value) => {
+                self.model.set_bulk_value(value);
+            }
+            Message::BulkBoolValueSelected(value) => {
+                self.model.set_bulk_bool_value(value);
+            }
+            Message::BulkPreviewRequested | Message::BulkPreviewRegenerate => {
+                self.model.build_bulk_preview();
+            }
+            Message::BulkApplyRequested => {
+                if self.model.bulk_edit.stale {
+                    self.model.bulk_edit.error = Some(String::from(
+                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
+                    ));
+                    return Task::none();
+                }
+                let Some(plan) = self.model.bulk_edit.plan.clone() else {
+                    self.model.build_bulk_preview();
+                    return Task::none();
+                };
+                if !plan.can_apply() {
+                    return Task::none();
+                }
+                return apply_bulk_edit_task(plan);
+            }
+            Message::BulkApplyCompleted(result) => match result {
+                Ok((paths, count)) => {
+                    self.model.bulk_apply_completed(Ok(count));
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return self.enqueue_workspace_events(
+                            workspace,
+                            paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.model.bulk_apply_completed(Err(error));
+                }
+            },
             Message::MarkdownSelected(path) => {
                 self.open_or_activate_document(path);
             }
@@ -616,9 +700,12 @@ impl FlokinApp {
                 self.model.sql_execution_completed(result);
             }
             Message::KeyboardEvent(event) => {
-                if let Some(message) =
-                    keyboard_message(event, self.model.search.open, self.open_menu.is_some())
-                {
+                if let Some(message) = keyboard_message(
+                    event,
+                    self.model.search.open,
+                    self.open_menu.is_some(),
+                    self.model.bulk_edit.editor_open,
+                ) {
                     return self.update(message);
                 }
             }
@@ -632,16 +719,8 @@ impl FlokinApp {
                     AppTheme::Dark
                 };
             }
-            Message::MenuToggled(menu) => {
-                self.open_menu = if self.open_menu == Some(menu) {
-                    None
-                } else {
-                    Some(menu)
-                };
-            }
-            Message::MenuTriggerMoved(_menu, local_x) => {
-                self.menu_anchor_x = (self.cursor.0 - local_x).max(0.0);
-            }
+            Message::MenuToggled(menu) => self.open_menu = toggle_menu(self.open_menu, menu),
+            Message::MenuHovered(menu) => self.open_menu = hover_menu(self.open_menu, menu),
             Message::MenuAction(action) => {
                 self.open_menu = None;
                 match action {
@@ -784,7 +863,6 @@ impl FlokinApp {
             self.schema_width,
             self.sql_editor_height,
             self.open_menu,
-            self.menu_anchor_x,
             self.about_open,
             self.schema_create_dialog_open,
             self.schema_create_error.as_deref(),
@@ -884,6 +962,24 @@ impl FlokinApp {
         self.sql_completion.close();
         self.ensure_markdown_editor_for_active();
         self.ensure_markdown_preview_for_active();
+    }
+
+    fn restore_active_document_selection(&mut self) {
+        let Some(path) = self.model.editor.active_path.clone().or_else(|| {
+            self.model
+                .editor
+                .tabs
+                .iter()
+                .find(|tab| tab.kind == flokin_core::EditorTabKind::Markdown)
+                .map(|tab| tab.document_path.clone())
+        }) else {
+            return;
+        };
+
+        if self.model.activate_editor_tab(path) {
+            self.ensure_markdown_editor_for_active();
+            self.ensure_markdown_preview_for_active();
+        }
     }
 
     fn switch_workspace(&mut self, path: std::path::PathBuf) -> Task<Message> {
@@ -1302,6 +1398,53 @@ fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Ta
     )
 }
 
+fn apply_bulk_edit_task(plan: BulkEditPlan) -> Task<Message> {
+    Task::perform(
+        async move {
+            apply_bulk_edit_plan(&plan)
+                .map(|result| {
+                    let count = result.changed_paths.len();
+                    (result.changed_paths, count)
+                })
+                .map_err(format_bulk_apply_error)
+        },
+        Message::BulkApplyCompleted,
+    )
+}
+
+fn format_bulk_apply_error(error: BulkEditApplyError) -> String {
+    match error {
+        BulkEditApplyError::StalePreview { .. } => String::from(
+            "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
+        ),
+        BulkEditApplyError::Preflight { path, message } => {
+            format!("Preflight falhou para {}: {message}", path.display())
+        }
+        BulkEditApplyError::Stage { path, message } => {
+            format!("Não foi possível preparar {}: {message}", path.display())
+        }
+        BulkEditApplyError::Commit {
+            path,
+            message,
+            rollback_failed,
+        } => {
+            if rollback_failed.is_empty() {
+                format!("Bulk edit falhou ao substituir {}: {message}. Arquivos já alterados foram restaurados.", path.display())
+            } else {
+                let paths = rollback_failed
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "Bulk edit falhou e {} arquivo(s) não puderam ser restaurados: {paths}",
+                    rollback_failed.len()
+                )
+            }
+        }
+    }
+}
+
 fn create_schema_file_if_absent(
     workspace: &std::path::Path,
     content: &str,
@@ -1371,7 +1514,12 @@ fn debounce_search_task(target: Instant) -> Task<Message> {
     )
 }
 
-fn keyboard_message(event: keyboard::Event, search_open: bool, menu_open: bool) -> Option<Message> {
+fn keyboard_message(
+    event: keyboard::Event,
+    search_open: bool,
+    menu_open: bool,
+    bulk_open: bool,
+) -> Option<Message> {
     let keyboard::Event::KeyPressed {
         key,
         modified_key,
@@ -1385,6 +1533,10 @@ fn keyboard_message(event: keyboard::Event, search_open: bool, menu_open: bool) 
 
     if menu_open && matches!(key, Key::Named(Named::Escape)) {
         return Some(Message::MenuClosed);
+    }
+
+    if bulk_open && matches!(key, Key::Named(Named::Escape)) {
+        return Some(Message::BulkEditCanceled);
     }
 
     if modifiers.command()
@@ -1440,9 +1592,11 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{create_schema_file_if_absent, keyboard_message, FlokinApp};
+    use super::{
+        create_schema_file_if_absent, hover_menu, keyboard_message, toggle_menu, FlokinApp,
+    };
     use crate::{
-        message::{AppMode, Message, SplitterKind},
+        message::{AppMode, MenuId, Message, SplitterKind},
         services::file_watcher::WatcherMessage,
         theme::AppTheme,
     };
@@ -1454,6 +1608,25 @@ mod tests {
         assert_eq!(app.model.active_activity, Activity::Explorer);
         assert_eq!(app.model.current_workspace, None);
         assert_eq!(app.theme, AppTheme::Dark);
+    }
+
+    #[test]
+    fn menu_clicks_have_single_toggle_state() {
+        assert_eq!(toggle_menu(None, MenuId::File), Some(MenuId::File));
+        assert_eq!(toggle_menu(Some(MenuId::File), MenuId::File), None);
+        assert_eq!(
+            toggle_menu(Some(MenuId::File), MenuId::View),
+            Some(MenuId::View)
+        );
+    }
+
+    #[test]
+    fn menu_hover_only_switches_an_open_menu() {
+        assert_eq!(hover_menu(None, MenuId::View), None);
+        assert_eq!(
+            hover_menu(Some(MenuId::File), MenuId::View),
+            Some(MenuId::View)
+        );
     }
 
     #[test]
@@ -1827,6 +2000,7 @@ mod tests {
             },
             false,
             false,
+            false,
         );
 
         assert_eq!(message, Some(Message::SearchOpened));
@@ -1844,9 +2018,9 @@ mod tests {
             repeat: false,
         };
 
-        assert_eq!(keyboard_message(event.clone(), false, false), None);
+        assert_eq!(keyboard_message(event.clone(), false, false, false), None);
         assert_eq!(
-            keyboard_message(event, true, false),
+            keyboard_message(event, true, false, false),
             Some(Message::SearchNext)
         );
     }
@@ -1864,8 +2038,12 @@ mod tests {
         };
 
         assert_eq!(
-            keyboard_message(event, false, true),
+            keyboard_message(event.clone(), false, true, false),
             Some(Message::MenuClosed)
+        );
+        assert_eq!(
+            keyboard_message(event, false, false, true),
+            Some(Message::BulkEditCanceled)
         );
     }
 
@@ -1887,7 +2065,10 @@ mod tests {
         let _ = app.update(Message::ToggleLeftSidebar);
         let _ = app.update(Message::ToggleLeftSidebar);
         assert!(app.left_visible);
-        assert_eq!(app.left_width, 340.0);
+        assert_eq!(
+            app.left_width,
+            crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH + 68.0
+        );
     }
 
     #[test]
@@ -1908,8 +2089,34 @@ mod tests {
         assert!(app.model.sql_explorer.open);
         app.left_width = 360.0;
         let _ = app.update(Message::ResetLayout);
-        assert_eq!(app.left_width, 272.0);
+        assert_eq!(app.left_width, crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH);
         assert!(app.left_visible && app.right_visible);
+    }
+
+    #[test]
+    fn returning_to_files_restores_active_document_context() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "carf-daily.md",
+            "---\ntitle: CARF Daily\n---\n# CARF Daily\n",
+        );
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("carf-daily.md");
+
+        let _ = app.update(Message::MarkdownSelected(path.clone()));
+        assert_eq!(app.model.editor.active_path.as_ref(), Some(&path));
+        assert_eq!(app.model.selected_document_path.as_ref(), Some(&path));
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Sql));
+        assert!(app.model.sql_explorer.open);
+        assert!(app.model.editor.active_path.is_none());
+        assert!(app.model.selected_document_path.is_none());
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Files));
+        assert_eq!(app.model.editor.active_path.as_ref(), Some(&path));
+        assert_eq!(app.model.selected_document_path.as_ref(), Some(&path));
+        assert!(app.markdown_editors.contains_key(&path));
+        assert!(app.markdown_previews.contains_key(&path));
     }
 
     #[test]

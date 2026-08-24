@@ -6,10 +6,12 @@ use std::{
 };
 
 use crate::{
-    build_health, load_explicit_schema, relation_display_property, search_documents, Collection,
-    DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue, Relation,
-    RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SearchQuery, SearchState,
-    SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort, WorkspaceUpdate,
+    build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
+    search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
+    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue,
+    Relation, RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SchemaType,
+    SearchQuery, SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort,
+    WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,6 +331,7 @@ pub struct ShellModel {
     pub workspace_errors: Vec<ScanError>,
     pub selected_schema_field: Option<(String, String)>,
     pub collection_panel: CollectionPanel,
+    pub bulk_edit: BulkEditState,
     pub editor: EditorState,
     pub sql_explorer: SqlExplorerState,
     pub collapsed_sql_tables: BTreeSet<String>,
@@ -348,6 +351,59 @@ pub enum CollectionPanel {
     #[default]
     Data,
     Schema,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkEditState {
+    pub selected_paths: BTreeSet<PathBuf>,
+    pub editor_open: bool,
+    pub operation_kind: BulkEditOperationKind,
+    pub property: String,
+    pub new_property: String,
+    pub value_type: BulkEditValueType,
+    pub value: String,
+    pub bool_value: bool,
+    pub plan: Option<BulkEditPlan>,
+    pub error: Option<String>,
+    pub last_result: Option<String>,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BulkEditOperationKind {
+    #[default]
+    Set,
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BulkEditValueType {
+    #[default]
+    String,
+    Integer,
+    Float,
+    Boolean,
+    Null,
+    Relation,
+}
+
+impl Default for BulkEditState {
+    fn default() -> Self {
+        Self {
+            selected_paths: BTreeSet::new(),
+            editor_open: false,
+            operation_kind: BulkEditOperationKind::Set,
+            property: String::new(),
+            new_property: String::new(),
+            value_type: BulkEditValueType::String,
+            value: String::new(),
+            bool_value: true,
+            plan: None,
+            error: None,
+            last_result: None,
+            stale: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,6 +447,7 @@ impl ShellModel {
             self.workspace_errors.clear();
             self.selected_schema_field = None;
             self.collection_panel = CollectionPanel::Data;
+            self.bulk_edit = BulkEditState::default();
             self.editor = EditorState::default();
             self.sql_explorer.open = false;
             self.sql_explorer.catalog = None;
@@ -480,6 +537,9 @@ impl ShellModel {
             .iter()
             .any(|collection| collection.id == collection_id)
         {
+            if self.selected_collection.as_deref() != Some(collection_id.as_str()) {
+                self.bulk_edit = BulkEditState::default();
+            }
             self.selected_collection = Some(collection_id);
             self.selected_document_path = None;
             self.editor.active_path = None;
@@ -491,6 +551,9 @@ impl ShellModel {
     pub fn select_collection_panel(&mut self, panel: CollectionPanel) {
         self.collection_panel = panel;
         self.selected_schema_field = None;
+        if panel != CollectionPanel::Data {
+            self.close_bulk_edit();
+        }
     }
 
     pub fn select_schema_field(&mut self, collection_id: String, field_name: String) -> bool {
@@ -504,6 +567,276 @@ impl ShellModel {
         } else {
             false
         }
+    }
+
+    pub fn toggle_bulk_selection(&mut self, path: PathBuf) -> bool {
+        let Some(collection_id) = self.selected_collection.as_deref() else {
+            return false;
+        };
+        if !self
+            .documents
+            .iter()
+            .any(|document| document.path == path && document.collection_id == collection_id)
+        {
+            return false;
+        }
+        if !self.bulk_edit.selected_paths.remove(&path) {
+            self.bulk_edit.selected_paths.insert(path);
+        }
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.last_result = None;
+        self.bulk_edit.stale = false;
+        true
+    }
+
+    pub fn set_bulk_selection_for_current_collection(&mut self, select_all: bool) {
+        self.bulk_edit.selected_paths.clear();
+        if select_all {
+            if let Some(collection_id) = self.selected_collection.as_deref() {
+                self.bulk_edit.selected_paths.extend(
+                    self.documents
+                        .iter()
+                        .filter(|document| document.collection_id == collection_id)
+                        .map(|document| document.path.clone()),
+                );
+            }
+        }
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.last_result = None;
+        self.bulk_edit.stale = false;
+    }
+
+    pub fn clear_bulk_selection(&mut self) {
+        self.bulk_edit.selected_paths.clear();
+        self.close_bulk_edit();
+    }
+
+    pub fn open_bulk_edit(&mut self) -> bool {
+        if self.bulk_edit.selected_paths.is_empty() || self.selected_collection.is_none() {
+            return false;
+        }
+        if self.bulk_edit.property.is_empty() {
+            self.bulk_edit.property = self
+                .bulk_property_options()
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+        }
+        self.bulk_edit.editor_open = true;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.last_result = None;
+        self.bulk_edit.stale = false;
+        true
+    }
+
+    pub fn close_bulk_edit(&mut self) {
+        self.bulk_edit.editor_open = false;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.stale = false;
+    }
+
+    pub fn set_bulk_operation_kind(&mut self, kind: BulkEditOperationKind) {
+        self.bulk_edit.operation_kind = kind;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+    }
+
+    pub fn set_bulk_property(&mut self, property: String) {
+        self.bulk_edit.property = property;
+        self.bulk_edit.new_property.clear();
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.infer_bulk_value_type();
+    }
+
+    pub fn set_bulk_new_property(&mut self, property: String) {
+        self.bulk_edit.new_property = property;
+        self.bulk_edit.property.clear();
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.infer_bulk_value_type();
+    }
+
+    pub fn set_bulk_value_type(&mut self, value_type: BulkEditValueType) {
+        self.bulk_edit.value_type = value_type;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+    }
+
+    pub fn set_bulk_value(&mut self, value: String) {
+        self.bulk_edit.value = value;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+    }
+
+    pub fn set_bulk_bool_value(&mut self, value: bool) {
+        self.bulk_edit.bool_value = value;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+    }
+
+    pub fn build_bulk_preview(&mut self) -> bool {
+        let Some(collection_id) = self.selected_collection.clone() else {
+            self.bulk_edit.error = Some(String::from("Nenhuma Collection selecionada."));
+            return false;
+        };
+        let Some(operation) = self.current_bulk_operation() else {
+            return false;
+        };
+        let selection = BulkEditSelection::new(
+            collection_id,
+            self.bulk_edit.selected_paths.iter().cloned().collect(),
+        );
+        match build_bulk_edit_plan(
+            selection,
+            operation,
+            &self.documents,
+            &self.editor,
+            &self.schema_catalog,
+        ) {
+            Ok(plan) => {
+                self.bulk_edit.plan = Some(plan);
+                self.bulk_edit.error = None;
+                self.bulk_edit.stale = false;
+                true
+            }
+            Err(error) => {
+                self.bulk_edit.error = Some(error);
+                self.bulk_edit.plan = None;
+                false
+            }
+        }
+    }
+
+    pub fn bulk_apply_completed(&mut self, result: Result<usize, String>) {
+        match result {
+            Ok(count) => {
+                self.bulk_edit.last_result =
+                    Some(format!("{count} arquivos atualizados com sucesso."));
+                self.bulk_edit.selected_paths.clear();
+                self.bulk_edit.editor_open = false;
+                self.bulk_edit.plan = None;
+                self.bulk_edit.error = None;
+                self.bulk_edit.stale = false;
+            }
+            Err(error) => {
+                self.bulk_edit.error = Some(error);
+                self.bulk_edit.stale = true;
+            }
+        }
+    }
+
+    pub fn mark_bulk_preview_stale_for_paths(&mut self, changed_paths: &[PathBuf]) {
+        let Some(plan) = self.bulk_edit.plan.as_ref() else {
+            return;
+        };
+        if plan
+            .changes
+            .iter()
+            .any(|change| changed_paths.iter().any(|path| path == &change.path))
+        {
+            self.bulk_edit.stale = true;
+        }
+    }
+
+    pub fn bulk_property_options(&self) -> Vec<String> {
+        let Some(collection_id) = self.selected_collection.as_deref() else {
+            return Vec::new();
+        };
+        crate::selectable_properties(
+            self.schema_catalog.collection(collection_id),
+            &self.collection_documents(collection_id),
+        )
+    }
+
+    fn current_bulk_property(&self) -> Option<String> {
+        let property = if self.bulk_edit.new_property.trim().is_empty() {
+            self.bulk_edit.property.trim()
+        } else {
+            self.bulk_edit.new_property.trim()
+        };
+        if property.is_empty() {
+            None
+        } else {
+            Some(property.to_owned())
+        }
+    }
+
+    fn current_bulk_operation(&mut self) -> Option<BulkEditOperation> {
+        let Some(property) = self.current_bulk_property() else {
+            self.bulk_edit.error = Some(String::from("Informe uma propriedade."));
+            return None;
+        };
+        match self.bulk_edit.operation_kind {
+            BulkEditOperationKind::Remove => Some(BulkEditOperation::RemoveProperty { property }),
+            BulkEditOperationKind::Set => {
+                let value = self.current_bulk_value()?;
+                Some(BulkEditOperation::SetProperty { property, value })
+            }
+        }
+    }
+
+    fn current_bulk_value(&mut self) -> Option<BulkEditValue> {
+        let raw = self.bulk_edit.value.trim();
+        match self.bulk_edit.value_type {
+            BulkEditValueType::String => Some(BulkEditValue::String(self.bulk_edit.value.clone())),
+            BulkEditValueType::Integer => {
+                if raw.parse::<i64>().is_ok() {
+                    Some(BulkEditValue::Integer(raw.to_owned()))
+                } else {
+                    self.bulk_edit.error = Some(String::from("Valor precisa ser Integer."));
+                    None
+                }
+            }
+            BulkEditValueType::Float => {
+                if raw.parse::<f64>().is_ok() {
+                    Some(BulkEditValue::Float(raw.to_owned()))
+                } else {
+                    self.bulk_edit.error = Some(String::from("Valor precisa ser Float."));
+                    None
+                }
+            }
+            BulkEditValueType::Boolean => Some(BulkEditValue::Boolean(self.bulk_edit.bool_value)),
+            BulkEditValueType::Null => Some(BulkEditValue::Null),
+            BulkEditValueType::Relation => {
+                if raw.is_empty() {
+                    self.bulk_edit.error = Some(String::from("Informe o alvo da relação."));
+                    None
+                } else {
+                    Some(BulkEditValue::Relation(raw.to_owned()))
+                }
+            }
+        }
+    }
+
+    fn infer_bulk_value_type(&mut self) {
+        let property = if self.bulk_edit.new_property.trim().is_empty() {
+            self.bulk_edit.property.trim()
+        } else {
+            self.bulk_edit.new_property.trim()
+        };
+        let Some(collection_id) = self.selected_collection.as_deref() else {
+            return;
+        };
+        let Some(field) = self
+            .schema_catalog
+            .collection(collection_id)
+            .and_then(|schema| schema.fields.iter().find(|field| field.name == property))
+        else {
+            return;
+        };
+        self.bulk_edit.value_type = match field.field_type {
+            SchemaType::Integer => BulkEditValueType::Integer,
+            SchemaType::Float => BulkEditValueType::Float,
+            SchemaType::Boolean => BulkEditValueType::Boolean,
+            SchemaType::Relation => BulkEditValueType::Relation,
+            SchemaType::Null => BulkEditValueType::Null,
+            _ => BulkEditValueType::String,
+        };
     }
 
     pub fn select_health_filter(&mut self, filter: HealthFilter) {
@@ -671,8 +1004,10 @@ impl ShellModel {
                 self.selected_collection = None;
                 self.collection_table_sort = None;
                 self.selected_schema_field = None;
+                self.bulk_edit = BulkEditState::default();
             }
         }
+        self.retain_bulk_selection_in_current_collection();
         let warnings = self
             .documents
             .iter()
@@ -769,6 +1104,7 @@ impl ShellModel {
                 self.selected_collection = None;
                 self.collection_table_sort = None;
                 self.selected_schema_field = None;
+                self.bulk_edit = BulkEditState::default();
             }
         }
 
@@ -781,6 +1117,7 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.retain_bulk_selection_in_current_collection();
 
         let expanded_paths = expanded_folder_paths(&self.explorer);
         let result = ScanResult {
@@ -834,6 +1171,7 @@ impl ShellModel {
         self.workspace_errors.clear();
         self.selected_schema_field = None;
         self.collection_panel = CollectionPanel::Data;
+        self.bulk_edit = BulkEditState::default();
         self.editor = EditorState::default();
         self.scan_state = ScanState::Failed(message);
     }
@@ -1331,6 +1669,27 @@ impl ShellModel {
             if !self.health.issues.iter().any(|issue| &issue.id == issue_id) {
                 self.selected_health_issue_id = None;
             }
+        }
+    }
+
+    fn retain_bulk_selection_in_current_collection(&mut self) {
+        let Some(collection_id) = self.selected_collection.as_deref() else {
+            self.bulk_edit = BulkEditState::default();
+            return;
+        };
+        let allowed = self
+            .documents
+            .iter()
+            .filter(|document| document.collection_id == collection_id)
+            .map(|document| document.path.clone())
+            .collect::<BTreeSet<_>>();
+        self.bulk_edit
+            .selected_paths
+            .retain(|path| allowed.contains(path));
+        if self.bulk_edit.selected_paths.is_empty() {
+            self.close_bulk_edit();
+        } else if self.bulk_edit.plan.is_some() {
+            self.bulk_edit.stale = true;
         }
     }
 

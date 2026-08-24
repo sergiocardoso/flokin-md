@@ -126,6 +126,66 @@ Health issues use structured severity and category enums. Severities are `Error`
 
 The Health View is a read-only diagnostic screen. It shows compact counts, dense issue rows, simple filters, issue selection, Inspector details, and an Open document action that reuses the existing editor-tab flow. It does not implement health scores, automatic fixes, schema editing, migrations, write SQL, Git, AI, or Markdown write-back.
 
+## Bulk Edit
+
+MDB-016 adds safe frontmatter-only bulk editing from Data mode.
+
+```text
+Bulk selection
+      ↓
+BulkEditOperation
+      ↓
+BulkEditPlan
+      ↓
+Preview
+      ↓
+Preflight
+      ↓
+Staged Batch Write
+      ↓
+Filesystem
+      ↓
+Watcher
+      ↓
+Document Store + projections
+```
+
+`flokin-core` owns the GUI-independent bulk edit model: selection, operation,
+immutable plan, per-file change status, validation, focused YAML patching, and
+staged batch application. The Iced layer owns only interaction state and
+rendering.
+
+Preview is mandatory. A bulk operation never writes files directly from a row
+selection click; the app first builds a `BulkEditPlan` with per-file
+`Changed`, `NoChange`, `Blocked`, or `Unsupported` status and a focused diff.
+The plan stores an optimistic concurrency fingerprint for each selected file.
+Before apply, every changed file is reread and compared to the preview
+baseline; any stale, missing, unreadable, or unwritable file aborts the entire
+batch.
+
+Bulk edit supports only top-level YAML scalar fields in this milestone:
+String, Integer, Float, Boolean, Null, and Relation values. Relation input is
+serialized as an explicit wikilink such as `"[[CARF]]"`. Arrays, objects, and
+other complex YAML shapes are marked unsupported instead of being rewritten.
+Patches target only the affected property line or append a new top-level field
+before the closing frontmatter delimiter. Markdown body content is not parsed or
+rewritten, and line endings are preserved where practical.
+
+Dirty editor tabs and tabs with external conflicts block the affected files in
+preview. If any file is blocked or unsupported, Apply is disabled for the whole
+batch. Clean open tabs are updated later by the normal watcher path.
+
+Multi-file writes use best-effort staged safety: preflight all changed files,
+write staged temporary files, replace files, and attempt rollback for already
+replaced files if a later replacement fails. Successful operations do not leave
+persistent backups. This is not persistent History/Undo; MDB-018 remains the
+future durable recovery feature.
+
+After a successful batch, the app enqueues normal workspace events for changed
+paths. DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search,
+and SQL converge through the existing Document Store pipeline instead of being
+manually patched from the bulk editor.
+
 ## Markdown Editor And Tabs
 
 MDB-012 replaces the read-only center source viewer with real Markdown tabs and editable buffers.
