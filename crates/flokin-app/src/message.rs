@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Instant};
 use flokin_core::{
     BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
     GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlExplorerMode, SqlQueryResult,
-    SqlWritePlan, WorkspaceUpdate,
+    SqlWritePlan, WorkspaceUpdate, MutationHistoryEntry, BulkEditPlan,
 };
 use iced::{
     keyboard,
@@ -48,6 +48,7 @@ pub enum AppMode {
     Health,
     Sql,
     Settings,
+    History,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +102,7 @@ pub enum Message {
     BulkBoolValueSelected(bool),
     BulkPreviewRequested,
     BulkApplyRequested,
-    BulkApplyCompleted(Result<(Vec<PathBuf>, usize), String>),
+    BulkApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
     MarkdownSelected(PathBuf),
     GraphFitRequested,
     GraphFocusSelected,
@@ -161,7 +162,18 @@ pub enum Message {
     SqlUpdateBackToEditor,
     SqlUpdatePreviewCanceled,
     SqlUpdateApplyRequested,
-    SqlUpdateApplyCompleted(Result<(Vec<PathBuf>, usize), String>),
+    SqlUpdateApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
+    HistoryLoaded(Result<Vec<MutationHistoryEntry>, String>),
+    HistoryEntrySelected(String),
+    HistoryUndoRequested,
+    HistoryUndoPreviewCompleted(Result<BulkEditPlan, String>),
+    HistoryUndoPreviewCanceled,
+    HistoryUndoApplyRequested,
+    HistoryUndoApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
+    HistoryClearRequested,
+    HistoryClearCanceled,
+    HistoryClearConfirmed,
+    HistoryClearCompleted(Result<(), String>),
     KeyboardEvent(keyboard::Event),
     ThemeToggled,
     ThemeSelected(bool),

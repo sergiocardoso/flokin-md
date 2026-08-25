@@ -49,6 +49,7 @@ pub struct BulkEditFileChange {
     pub path: PathBuf,
     pub relative_path: PathBuf,
     pub original_fingerprint: u64,
+    pub original_content: Option<String>,
     pub before: Option<String>,
     pub after: Option<String>,
     pub property_changes: Vec<FrontmatterPropertyChange>,
@@ -57,7 +58,7 @@ pub struct BulkEditFileChange {
     pub new_content: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FrontmatterPropertyChange {
     pub property: String,
     pub before: Option<String>,
@@ -385,6 +386,7 @@ fn blocked_change(
         path,
         relative_path,
         original_fingerprint,
+        original_content: None,
         before: None,
         after: None,
         status: BulkEditChangeStatus::Blocked,
@@ -409,6 +411,7 @@ fn plan_file_change(
             path: document.path.clone(),
             relative_path: document.relative_path.clone(),
             original_fingerprint: fingerprint,
+            original_content: Some(source.to_owned()),
             property_changes: vec![FrontmatterPropertyChange {
                 property: operation.property().to_owned(),
                 before: before.clone(),
@@ -424,6 +427,7 @@ fn plan_file_change(
             path: document.path.clone(),
             relative_path: document.relative_path.clone(),
             original_fingerprint: fingerprint,
+            original_content: Some(source.to_owned()),
             before,
             after: None,
             property_changes: Vec::new(),
@@ -435,6 +439,7 @@ fn plan_file_change(
             path: document.path.clone(),
             relative_path: document.relative_path.clone(),
             original_fingerprint: fingerprint,
+            original_content: Some(source.to_owned()),
             before: None,
             after: None,
             property_changes: Vec::new(),

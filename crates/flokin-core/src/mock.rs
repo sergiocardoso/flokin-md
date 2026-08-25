@@ -1,5 +1,7 @@
 use crate::model::{Activity, CollectionPanel, FilterCount, HealthFilter, ScanState, ShellModel};
-use crate::{DatabaseHealth, RelationIndex, SchemaCatalog, SearchState, SqlExplorerState};
+use crate::{
+    DatabaseHealth, HistoryState, RelationIndex, SchemaCatalog, SearchState, SqlExplorerState,
+};
 use std::collections::BTreeSet;
 
 pub fn mock_shell() -> ShellModel {
@@ -26,6 +28,7 @@ pub fn mock_shell() -> ShellModel {
         bulk_edit: crate::model::BulkEditState::default(),
         editor: crate::model::EditorState::default(),
         sql_explorer: SqlExplorerState::closed(),
+        history: HistoryState::default(),
         collapsed_sql_tables: BTreeSet::new(),
         filters: vec![
             FilterCount {

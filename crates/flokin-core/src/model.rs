@@ -9,9 +9,9 @@ use crate::{
     build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
     Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue,
-    Relation, RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SchemaType,
-    SearchQuery, SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, SqlWritePlan,
-    TableSort, WorkspaceUpdate,
+    HistoryState, MutationHistoryEntry, Relation, RelationIndex, RelationStatus, ScanError,
+    ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection, SqlCatalog,
+    SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +349,7 @@ pub struct ShellModel {
     pub bulk_edit: BulkEditState,
     pub editor: EditorState,
     pub sql_explorer: SqlExplorerState,
+    pub history: HistoryState,
     pub collapsed_sql_tables: BTreeSet<String>,
     pub filters: Vec<FilterCount>,
 }
@@ -478,6 +479,7 @@ impl ShellModel {
             self.sql_explorer.result = None;
             self.sql_explorer.error = None;
             self.sql_explorer.running = false;
+            self.history = HistoryState::default();
             self.collapsed_sql_tables.clear();
             self.scan_state = ScanState::Scanning;
         }
@@ -492,6 +494,106 @@ impl ShellModel {
 
     pub fn select_activity(&mut self, activity: Activity) {
         self.active_activity = activity;
+    }
+
+    pub fn history_loaded(&mut self, result: Result<Vec<MutationHistoryEntry>, String>) {
+        match result {
+            Ok(entries) => {
+                self.history.entries = entries;
+                if let Some(selected) = self.history.selected_entry_id.as_ref() {
+                    if !self.history.entries.iter().any(|entry| &entry.id == selected) {
+                        self.history.selected_entry_id = None;
+                    }
+                }
+                if self.history.selected_entry_id.is_none() {
+                    self.history.selected_entry_id =
+                        self.history.entries.first().map(|entry| entry.id.clone());
+                }
+                self.history.error = None;
+                self.history.undo_plan = None;
+                self.history.clear_confirm = false;
+            }
+            Err(error) => {
+                self.history.entries.clear();
+                self.history.selected_entry_id = None;
+                self.history.error = Some(error);
+                self.history.undo_plan = None;
+            }
+        }
+    }
+
+    pub fn select_history_entry(&mut self, id: String) -> bool {
+        if self.history.entries.iter().any(|entry| entry.id == id) {
+            self.history.selected_entry_id = Some(id);
+            self.history.undo_plan = None;
+            self.history.error = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn selected_history_entry(&self) -> Option<&MutationHistoryEntry> {
+        self.history.selected_entry()
+    }
+
+    pub fn undo_preview_completed(&mut self, result: Result<BulkEditPlan, String>) {
+        match result {
+            Ok(plan) => {
+                self.history.undo_plan = Some(plan);
+                self.history.error = None;
+                self.history.last_result = None;
+            }
+            Err(error) => {
+                self.history.undo_plan = None;
+                self.history.error = Some(error);
+            }
+        }
+    }
+
+    pub fn cancel_undo_preview(&mut self) {
+        self.history.undo_plan = None;
+        self.history.error = None;
+    }
+
+    pub fn undo_apply_completed(&mut self, result: Result<usize, String>) {
+        match result {
+            Ok(count) => {
+                self.history.undo_plan = None;
+                self.history.error = None;
+                self.history.last_result = Some(if count == 1 {
+                    String::from("1 arquivo restaurado.")
+                } else {
+                    format!("{count} arquivos restaurados.")
+                });
+            }
+            Err(error) => {
+                self.history.error = Some(error);
+            }
+        }
+    }
+
+    pub fn request_clear_history(&mut self) {
+        self.history.clear_confirm = true;
+        self.history.error = None;
+    }
+
+    pub fn cancel_clear_history(&mut self) {
+        self.history.clear_confirm = false;
+    }
+
+    pub fn clear_history_completed(&mut self, result: Result<(), String>) {
+        self.history.clear_confirm = false;
+        match result {
+            Ok(()) => {
+                self.history.entries.clear();
+                self.history.selected_entry_id = None;
+                self.history.undo_plan = None;
+                self.history.error = None;
+                self.history.last_result = Some(String::from("Histórico do workspace limpo."));
+            }
+            Err(error) => self.history.error = Some(error),
+        }
     }
 
     pub fn toggle_explorer_node(&mut self, id: ExplorerNodeId) -> bool {

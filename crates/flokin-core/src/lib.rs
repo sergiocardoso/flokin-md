@@ -1,6 +1,7 @@
 mod bulk_edit;
 mod graph;
 mod health;
+mod history;
 mod mock;
 mod model;
 mod relation;
@@ -26,6 +27,12 @@ pub use graph::{
 pub use health::{
     build_health, CollectionHealthSummary, DatabaseHealth, HealthCategory, HealthIssue,
     HealthIssueKind, HealthSeverity, HealthSummary,
+};
+pub use history::{
+    build_undo_plan, bulk_history_entry, new_history_id, now_unix_seconds, sql_history_entry,
+    undo_history_entry, workspace_identity, HistoryFileChange, HistoryState,
+    MutationHistoryEntry, MutationHistoryStore, MutationSource, UndoBuildError,
+    HISTORY_RETENTION_LIMIT, HISTORY_STORAGE_VERSION,
 };
 pub use mock::mock_shell;
 pub use model::{
