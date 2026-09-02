@@ -6,7 +6,7 @@ use iced::widget::{
     text::Wrapping,
     text_input,
 };
-use iced::{Alignment, Element, Length};
+use iced::{alignment, Alignment, Element, Length};
 
 use crate::{i18n::I18nCatalog, message::Message, theme, views::data_grid, widgets};
 
@@ -159,16 +159,22 @@ fn summary_counter<'a>(
 }
 
 fn filter_button(label: String, filter: HealthFilter, model: &ShellModel) -> Element<'_, Message> {
-    button(text(label).size(theme::typography::LABEL))
-        .height(theme::sizes::TAB_BUTTON_HEIGHT)
-        .padding([0.0, theme::spacing::MD])
-        .style(if model.health_filter == filter {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        })
-        .on_press(Message::HealthFilterSelected(filter))
-        .into()
+    button(
+        container(text(label).size(theme::typography::LABEL))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(theme::sizes::TAB_BUTTON_HEIGHT)
+    .padding([0.0, theme::spacing::MD])
+    .style(if model.health_filter == filter {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    })
+    .on_press(Message::HealthFilterSelected(filter))
+    .into()
 }
 
 fn empty_state<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {

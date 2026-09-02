@@ -8,3 +8,4 @@ pub mod inspector;
 pub mod settings;
 pub mod shell;
 pub mod status_bar;
+pub mod welcome;

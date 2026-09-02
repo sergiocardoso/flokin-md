@@ -1,17 +1,16 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use flokin_core::{
-    apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom, complete_sql,
+    apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom,
     default_query, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
-    initial_graph_layout, mock_shell, replace_sql_completion, save_markdown_file,
+    initial_graph_layout, mock_shell, save_markdown_file,
     sql_history_entry, undo_history_entry, workspace_identity, BulkEditApplyError, BulkEditPlan,
     GraphNodeId, GraphProjection, MutationHistoryEntry, MutationHistoryStore, ScanError,
-    ShellModel, SqlCompletionItem, SqlExplorerMode, SqlWritePlan, WorkspaceEvent,
-    DEFAULT_SQL_COMPLETION_LIMIT,
+    ShellModel, SqlExplorerMode, SqlWritePlan, WorkspaceEvent,
 };
 use iced::{
     advanced::widget::{self as advanced_widget, operate},
@@ -42,7 +41,6 @@ pub struct FlokinApp {
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
     empty_markdown_editor: text_editor::Content,
     markdown_previews: HashMap<PathBuf, MarkdownPreviewCache>,
-    sql_completion: SqlCompletionPopup,
     graph: GraphViewState,
     workspace_update_running: bool,
     pending_workspace_events: Vec<WorkspaceEvent>,
@@ -65,6 +63,7 @@ pub struct FlokinApp {
     left_visible: bool,
     right_visible: bool,
     mode: AppMode,
+    workspace_restore_notice: Option<String>,
 }
 
 fn toggle_menu(
@@ -103,7 +102,6 @@ impl FlokinApp {
             markdown_editors: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
             markdown_previews: HashMap::new(),
-            sql_completion: SqlCompletionPopup::closed(),
             graph: GraphViewState::default(),
             workspace_update_running: false,
             pending_workspace_events: Vec::new(),
@@ -126,6 +124,22 @@ impl FlokinApp {
             left_visible: true,
             right_visible: true,
             mode: AppMode::Files,
+            workspace_restore_notice: None,
+        }
+    }
+
+    fn boot() -> (Self, Task<Message>) {
+        let mut app = Self::new();
+        match restored_workspace_from_settings_path(&settings_storage_path()) {
+            Ok(Some(path)) => {
+                let task = app.switch_workspace(path);
+                (app, task)
+            }
+            Ok(None) => (app, Task::none()),
+            Err(()) => {
+                app.workspace_restore_notice = Some(app.i18n.tr("workspace-previous-unavailable"));
+                (app, Task::none())
+            }
         }
     }
 
@@ -175,6 +189,7 @@ impl FlokinApp {
                     return self.switch_workspace(path);
                 }
             }
+            Message::LastWorkspacePersisted(_result) => {}
             Message::ScanCompleted(generation, path, result) => {
                 if generation == self.workspace_generation
                     && self.model.current_workspace.as_ref() == Some(&path)
@@ -445,16 +460,20 @@ impl FlokinApp {
                 self.focus_selected_graph_node();
             }
             Message::GraphZoomIn => {
-                self.zoom_graph_by(0.18);
+                self.zoom_graph_by(0.12);
             }
             Message::GraphZoomOut => {
-                self.zoom_graph_by(-0.18);
+                self.zoom_graph_by(-0.12);
             }
             Message::GraphZoomReset => {
                 self.reset_graph_zoom();
             }
             Message::GraphViewportChanged(width, height) => {
+                let was_unmeasured = self.graph.viewport == Size::ZERO;
                 self.graph.viewport = Size::new(width, height);
+                if was_unmeasured {
+                    self.fit_graph();
+                }
             }
             Message::GraphNodeSelected(node) => {
                 if let GraphNodeId::Document(path) = node {
@@ -1061,6 +1080,7 @@ impl FlokinApp {
             self.mode,
             &self.i18n,
             self.language,
+            self.workspace_restore_notice.as_deref(),
         )
     }
 
@@ -1188,6 +1208,11 @@ impl FlokinApp {
     }
 
     fn switch_workspace(&mut self, path: std::path::PathBuf) -> Task<Message> {
+        let Ok(path) = validate_workspace_path(&path) else {
+            self.workspace_restore_notice = Some(self.i18n.tr("workspace-previous-unavailable"));
+            return Task::none();
+        };
+        self.workspace_restore_notice = None;
         self.workspace_generation = self.workspace_generation.wrapping_add(1);
         let generation = self.workspace_generation;
         self.model.workspace_selected(Some(path.clone()));
@@ -1206,6 +1231,7 @@ impl FlokinApp {
         self.schema_create_dialog_open = false;
         self.schema_create_error = None;
         Task::batch([
+            persist_last_workspace_task(path.clone()),
             scan_workspace_task(generation, path.clone()),
             self.load_history_task(path),
         ])
@@ -1294,7 +1320,7 @@ impl FlokinApp {
             crate::theme::sizes::GRAPH_NODE_WIDTH,
             crate::theme::sizes::GRAPH_NODE_HEIGHT,
         );
-        let viewport = fit_graph_viewport(bounds, viewport_width, viewport_height, 72.0);
+        let viewport = fit_graph_viewport(bounds, viewport_width, viewport_height, 56.0);
         self.graph.pan = iced::Vector::new(viewport.pan_x, viewport.pan_y);
         self.graph.zoom = viewport.zoom;
     }
@@ -1552,7 +1578,7 @@ fn should_auto_trigger_completion(query: &str, cursor: usize) -> bool {
 }
 
 pub fn run() -> iced::Result {
-    application(FlokinApp::new, FlokinApp::update, FlokinApp::view)
+    application(FlokinApp::boot, FlokinApp::update, FlokinApp::view)
         .subscription(FlokinApp::subscription)
         .title(title)
         .theme(app_theme)
@@ -1837,6 +1863,21 @@ fn settings_storage_path() -> std::path::PathBuf {
     settings::settings_path(&app_data_dir())
 }
 
+fn validate_workspace_path(path: &Path) -> Result<PathBuf, ()> {
+    let canonical = path.canonicalize().map_err(|_| ())?;
+    if !canonical.is_dir() {
+        return Err(());
+    }
+    std::fs::read_dir(&canonical).map_err(|_| ())?;
+    Ok(canonical)
+}
+
+fn restored_workspace_from_settings_path(settings_path: &Path) -> Result<Option<PathBuf>, ()> {
+    settings::load_last_workspace_path(settings_path)
+        .map(|path| validate_workspace_path(&path))
+        .transpose()
+}
+
 #[cfg(not(test))]
 fn initial_theme() -> AppTheme {
     theme_from_settings_path(&settings_storage_path())
@@ -1872,6 +1913,13 @@ fn persist_language_task(language: AppLanguage) -> Task<Message> {
     Task::perform(
         async move { settings::save_language(&settings_storage_path(), language) },
         Message::LanguagePersisted,
+    )
+}
+
+fn persist_last_workspace_task(path: PathBuf) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_last_workspace_path(&settings_storage_path(), path) },
+        Message::LastWorkspacePersisted,
     )
 }
 
@@ -2004,12 +2052,14 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
         time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
         create_schema_file_if_absent, hover_menu, keyboard_message, language_from_settings_path,
-        theme_from_settings_path, toggle_menu, FlokinApp,
+        restored_workspace_from_settings_path, theme_from_settings_path, toggle_menu,
+        validate_workspace_path, FlokinApp,
     };
     use crate::{
         i18n::AppLanguage,
@@ -2447,31 +2497,251 @@ mod tests {
     }
 
     #[test]
+    fn welcome_state_keeps_global_theme_and_language_controls_without_workspace() {
+        let mut app = FlokinApp::new();
+
+        assert_eq!(app.model.current_workspace, None);
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+        let _ = app.update(Message::ThemeSelected(true));
+        let _ = app.update(Message::FolderSelected(None));
+
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(app.theme, AppTheme::Light);
+        assert_eq!(app.mode, AppMode::Files);
+    }
+
+    #[test]
+    fn no_last_workspace_keeps_welcome_state() {
+        let app = FlokinApp::new();
+
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn valid_workspace_path_is_canonicalized_for_restore_identity() {
+        let workspace = TempWorkspace::new();
+
+        let validated = validate_workspace_path(workspace.path()).unwrap();
+
+        assert_eq!(validated, workspace.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn valid_last_workspace_is_loaded_for_startup_restore() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let last_workspace = workspace.path().join("last");
+        fs::create_dir_all(&last_workspace).unwrap();
+        settings::save_last_workspace_path(&settings_path, last_workspace.clone()).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path).unwrap(),
+            Some(last_workspace.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn boot_restores_valid_last_workspace_from_app_settings() {
+        let _guard = env_guard();
+        let app_data = TempWorkspace::new();
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(app_data.path());
+        settings::save_last_workspace_path(&settings_path, workspace.path().to_path_buf()).unwrap();
+        let previous = std::env::var_os("FLOKINMD_APP_DATA");
+        std::env::set_var("FLOKINMD_APP_DATA", app_data.path());
+
+        let (app, task) = FlokinApp::boot();
+
+        drop(task);
+        restore_app_data_env(previous);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().canonicalize().unwrap())
+        );
+        assert!(matches!(app.model.scan_state, ScanState::Scanning));
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn boot_keeps_welcome_and_saved_path_when_last_workspace_is_unavailable() {
+        let _guard = env_guard();
+        let app_data = TempWorkspace::new();
+        let missing = app_data.path().join("missing");
+        let settings_path = settings::settings_path(app_data.path());
+        settings::save_last_workspace_path(&settings_path, missing.clone()).unwrap();
+        let previous = std::env::var_os("FLOKINMD_APP_DATA");
+        std::env::set_var("FLOKINMD_APP_DATA", app_data.path());
+
+        let (app, task) = FlokinApp::boot();
+
+        drop(task);
+        restore_app_data_env(previous);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(
+            app.workspace_restore_notice.as_deref(),
+            Some("A pasta usada anteriormente não está disponível.")
+        );
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(missing)
+        );
+    }
+
+    #[test]
+    fn file_path_last_workspace_is_handled_safely() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let file_path = workspace.path().join("not-a-directory");
+        fs::write(&file_path, "").unwrap();
+        settings::save_last_workspace_path(&settings_path, file_path).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn missing_last_workspace_setting_does_not_block_welcome() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn unavailable_last_workspace_is_reported_but_not_erased() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let missing = workspace.path().join("missing");
+        settings::save_last_workspace_path(&settings_path, missing.clone()).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path),
+            Err(())
+        );
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(missing)
+        );
+    }
+
+    #[test]
+    fn invalid_last_workspace_path_stays_in_welcome_with_notice() {
+        let mut app = FlokinApp::new();
+        let missing = std::env::temp_dir().join("flokinmd-missing-last-workspace");
+
+        let task = app.switch_workspace(missing);
+
+        drop(task);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(
+            app.workspace_restore_notice.as_deref(),
+            Some("A pasta usada anteriormente não está disponível.")
+        );
+    }
+
+    #[test]
+    fn successful_open_folder_enters_workspace_with_canonical_path() {
+        let workspace = TempWorkspace::new();
+        let mut app = FlokinApp::new();
+
+        let task = app.switch_workspace(workspace.path().to_path_buf());
+
+        drop(task);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().canonicalize().unwrap())
+        );
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn opening_second_workspace_replaces_first_in_memory() {
+        let first = TempWorkspace::new();
+        let second = TempWorkspace::new();
+        let mut app = FlokinApp::new();
+
+        drop(app.switch_workspace(first.path().to_path_buf()));
+        drop(app.switch_workspace(second.path().to_path_buf()));
+
+        assert_eq!(
+            app.model.current_workspace,
+            Some(second.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn canceled_open_folder_keeps_saved_last_workspace_preference() {
+        let temp = TempWorkspace::new();
+        let settings_path = settings::settings_path(temp.path());
+        let saved = temp.path().join("saved");
+        fs::create_dir_all(&saved).unwrap();
+        settings::save_last_workspace_path(&settings_path, saved.clone()).unwrap();
+
+        let mut app = FlokinApp::new();
+        let _ = app.update(Message::FolderSelected(None));
+
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(saved)
+        );
+        assert_eq!(app.model.current_workspace, None);
+    }
+
+    #[test]
+    fn saved_last_workspace_can_be_replaced() {
+        let temp = TempWorkspace::new();
+        let settings_path = settings::settings_path(temp.path());
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+
+        settings::save_last_workspace_path(&settings_path, first).unwrap();
+        settings::save_last_workspace_path(&settings_path, second.clone()).unwrap();
+
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(second)
+        );
+    }
+
+    #[test]
     fn folder_selected_updates_workspace_state() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
 
-        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+        let task = app.update(Message::FolderSelected(Some(path)));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        drop(task);
+        assert_eq!(app.model.current_workspace, Some(canonical));
         assert!(matches!(app.model.scan_state, ScanState::Scanning));
     }
 
     #[test]
     fn projection_failure_does_not_clear_selected_workspace() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/flokinmd-sql-test");
-        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
+        let task = app.update(Message::FolderSelected(Some(path)));
+        drop(task);
 
         let _ = app.update(Message::SqlProjectionCompleted(
             1,
-            path.clone(),
+            canonical.clone(),
             Err(SqlError {
                 message: String::from("projection failed"),
             }),
         ));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        assert_eq!(app.model.current_workspace, Some(canonical));
         assert_eq!(
             app.model.sql_explorer.error.as_deref(),
             Some("projection failed")
@@ -2481,8 +2751,10 @@ mod tests {
     #[test]
     fn stale_scan_result_cannot_replace_new_workspace() {
         let mut app = FlokinApp::new();
-        let first = std::path::PathBuf::from("/tmp/workspace-a");
-        let second = std::path::PathBuf::from("/tmp/workspace-b");
+        let first_workspace = TempWorkspace::new();
+        let second_workspace = TempWorkspace::new();
+        let first = first_workspace.path().canonicalize().unwrap();
+        let second = second_workspace.path().canonicalize().unwrap();
 
         let _ = app.update(Message::FolderSelected(Some(first.clone())));
         let _ = app.update(Message::FolderSelected(Some(second.clone())));
@@ -2504,19 +2776,23 @@ mod tests {
     #[test]
     fn canceling_folder_dialog_preserves_workspace_state() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
 
         let _ = app.update(Message::FolderSelected(Some(path.clone())));
         let _ = app.update(Message::FolderSelected(None));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        assert_eq!(app.model.current_workspace, Some(canonical));
     }
 
     #[test]
     fn watcher_event_from_old_workspace_is_ignored() {
         let mut app = FlokinApp::new();
-        let current = std::path::PathBuf::from("/tmp/current");
-        let old = std::path::PathBuf::from("/tmp/old");
+        let current_workspace = TempWorkspace::new();
+        let old_workspace = TempWorkspace::new();
+        let current = current_workspace.path().canonicalize().unwrap();
+        let old = old_workspace.path().canonicalize().unwrap();
         let _ = app.update(Message::FolderSelected(Some(current.clone())));
 
         let _ = app.update(Message::WorkspaceWatcher(WatcherMessage::Events {
@@ -2830,6 +3106,61 @@ mod tests {
     }
 
     #[test]
+    fn graph_first_viewport_measurement_fits_small_graph_readably() {
+        let workspace = TempWorkspace::new();
+        for index in 0..6 {
+            workspace.write(
+                &format!("{index}.md"),
+                &format!("---\ntitle: Doc {index}\n---\n"),
+            );
+        }
+        let mut app = app_from_workspace(&workspace);
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        app.graph.pan = iced::Vector::new(0.0, 0.0);
+        app.graph.zoom = 0.4;
+
+        let _ = app.update(Message::GraphViewportChanged(900.0, 600.0));
+
+        assert!(app.graph.zoom >= 1.0);
+        assert!(app.graph.pan.x.is_finite());
+        assert!(app.graph.pan.y.is_finite());
+    }
+
+    #[test]
+    fn graph_fit_action_recenters_and_recalculates_zoom() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\nrelated: \"[[B]]\"\n---\n");
+        workspace.write("b.md", "---\ntitle: B\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        app.graph.viewport = iced::Size::new(900.0, 600.0);
+        app.graph.pan = iced::Vector::new(-2_000.0, 1_300.0);
+        app.graph.zoom = 0.35;
+
+        let _ = app.update(Message::GraphFitRequested);
+
+        assert!(app.graph.zoom >= 1.0);
+        assert_ne!(app.graph.pan, iced::Vector::new(-2_000.0, 1_300.0));
+        assert!(app.graph.pan.x.is_finite());
+        assert!(app.graph.pan.y.is_finite());
+    }
+
+    #[test]
+    fn graph_resize_after_initial_measurement_preserves_user_view() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        app.graph.viewport = iced::Size::new(900.0, 600.0);
+        app.graph.pan = iced::Vector::new(125.0, 140.0);
+        app.graph.zoom = 1.4;
+
+        let _ = app.update(Message::GraphViewportChanged(1200.0, 800.0));
+
+        assert_eq!(app.graph.viewport, iced::Size::new(1200.0, 800.0));
+        assert_eq!(app.graph.pan, iced::Vector::new(125.0, 140.0));
+        assert_eq!(app.graph.zoom, 1.4);
+    }
+
+    #[test]
     fn graph_zoom_controls_update_and_reset_zoom() {
         let workspace = TempWorkspace::new();
         workspace.write("a.md", "---\ntitle: A\n---\n");
@@ -2907,6 +3238,19 @@ mod tests {
     impl Drop for TempWorkspace {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn restore_app_data_env(previous: Option<std::ffi::OsString>) {
+        if let Some(previous) = previous {
+            std::env::set_var("FLOKINMD_APP_DATA", previous);
+        } else {
+            std::env::remove_var("FLOKINMD_APP_DATA");
         }
     }
 }

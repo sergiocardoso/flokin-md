@@ -4,6 +4,7 @@ use iced::{Alignment, Element, Length};
 use crate::{message::Message, theme::AppTheme};
 
 const LOGO_ICON: &[u8] = include_bytes!("../../../assets/logo-icon.svg");
+const LOGO_ICON_BLACK: &[u8] = include_bytes!("../../../assets/logo-icon-black.svg");
 const LOGO_TEXT: &[u8] = include_bytes!("../../../assets/logo-text.svg");
 const LOGO_TEXT_DARK: &[u8] = include_bytes!("../../../assets/logo-text-dark.svg");
 
@@ -30,6 +31,20 @@ pub fn placeholder() -> Element<'static, Message> {
         .width(Length::Fixed(LOCKUP_WIDTH))
         .height(Length::Fixed(ICON_SIZE))
         .into()
+}
+
+pub fn watermark() -> Element<'static, Message> {
+    container(
+        svg(svg::Handle::from_memory(LOGO_ICON_BLACK.to_vec()))
+            .width(360.0)
+            .height(360.0)
+            .opacity(0.07_f32),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(iced::alignment::Horizontal::Right)
+    .align_y(iced::alignment::Vertical::Bottom)
+    .into()
 }
 
 fn wordmark(app_theme: AppTheme) -> Element<'static, Message> {

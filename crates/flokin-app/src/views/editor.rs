@@ -328,16 +328,22 @@ fn sql_mode_button(
     mode: SqlExplorerMode,
     current: SqlExplorerMode,
 ) -> Element<'static, Message> {
-    button(text(label).size(theme::typography::LABEL))
-        .height(28)
-        .padding([0.0, theme::spacing::MD])
-        .style(if current == mode {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        })
-        .on_press(Message::SqlModeSelected(mode))
-        .into()
+    button(
+        container(text(label).size(theme::typography::LABEL))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(28)
+    .padding([0.0, theme::spacing::MD])
+    .style(if current == mode {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    })
+    .on_press(Message::SqlModeSelected(mode))
+    .into()
 }
 
 fn sql_editor_key_binding(
@@ -2100,16 +2106,16 @@ fn editor_view_mode_button<'a>(
             .align_x(alignment::Horizontal::Center)
             .align_y(alignment::Vertical::Center),
     )
-        .width(86)
-        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT - 4.0)
-        .padding([0.0, theme::spacing::MD])
-        .style(if mode == active {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        })
-        .on_press(Message::EditorViewModeSelected(mode))
-        .into()
+    .width(86)
+    .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT - 4.0)
+    .padding([0.0, theme::spacing::MD])
+    .style(if mode == active {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    })
+    .on_press(Message::EditorViewModeSelected(mode))
+    .into()
 }
 
 fn save_button<'a>(tab: &'a EditorTab, i18n: &'a I18nCatalog) -> Element<'a, Message> {

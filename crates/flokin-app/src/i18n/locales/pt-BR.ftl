@@ -262,4 +262,10 @@ graph-zoom-out = Diminuir zoom
 graph-zoom-in = Aumentar zoom
 graph-zoom-reset = Resetar zoom
 graph-focus-selected = Centralizar selecionado
-graph-fit = Enquadrar grafo
+graph-fit = Ajustar à tela
+
+# Welcome
+welcome-title = Abra uma pasta Markdown para começar
+welcome-open-folder = Abrir pasta
+workspace-restoring = Abrindo workspace...
+workspace-previous-unavailable = A pasta usada anteriormente não está disponível.

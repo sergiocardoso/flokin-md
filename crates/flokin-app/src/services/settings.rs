@@ -7,10 +7,11 @@ use crate::{i18n::AppLanguage, theme::AppTheme};
 
 const SETTINGS_VERSION: &str = "1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AppSettings {
     pub theme: Option<AppTheme>,
     pub language: Option<AppLanguage>,
+    pub last_workspace_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,16 @@ pub fn save_language(path: &Path, language: AppLanguage) -> Result<(), String> {
     save_settings(path, settings)
 }
 
+pub fn load_last_workspace_path(path: &Path) -> Option<PathBuf> {
+    load_settings(path).and_then(|settings| settings.last_workspace_path)
+}
+
+pub fn save_last_workspace_path(path: &Path, workspace: PathBuf) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.last_workspace_path = Some(workspace);
+    save_settings(path, settings)
+}
+
 pub fn save_settings(path: &Path, settings: AppSettings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -87,6 +98,7 @@ fn parse_settings(content: &str) -> Option<AppSettings> {
     let mut version_ok = false;
     let mut theme = None;
     let mut language = None;
+    let mut last_workspace_path = None;
 
     for line in content.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -102,11 +114,21 @@ fn parse_settings(content: &str) -> Option<AppSettings> {
                 }
             }
             "language" => language = AppLanguage::from_setting(value.trim()),
+            "last_workspace_path" => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    last_workspace_path = Some(PathBuf::from(value));
+                }
+            }
             _ => {}
         }
     }
 
-    version_ok.then_some(AppSettings { theme, language })
+    version_ok.then_some(AppSettings {
+        theme,
+        language,
+        last_workspace_path,
+    })
 }
 
 fn serialize_settings(settings: AppSettings) -> String {
@@ -123,6 +145,11 @@ fn serialize_settings(settings: AppSettings) -> String {
     if let Some(language) = settings.language {
         content.push_str("language=");
         content.push_str(language.locale());
+        content.push('\n');
+    }
+    if let Some(path) = settings.last_workspace_path {
+        content.push_str("last_workspace_path=");
+        content.push_str(&path.display().to_string());
         content.push('\n');
     }
     content
@@ -155,6 +182,22 @@ mod tests {
             load_language(&path),
             LanguageLoad::Language(AppLanguage::English)
         );
+    }
+
+    #[test]
+    fn saves_and_loads_last_workspace_without_dropping_theme_or_language() {
+        let temp = temp_dir();
+        let path = settings_path(&temp);
+        let workspace = temp.join("My Workspace");
+
+        save_theme(&path, AppTheme::Light).unwrap();
+        save_language(&path, AppLanguage::English).unwrap();
+        save_last_workspace_path(&path, workspace.clone()).unwrap();
+
+        let settings = load_settings(&path).unwrap();
+        assert_eq!(settings.theme, Some(AppTheme::Light));
+        assert_eq!(settings.language, Some(AppLanguage::English));
+        assert_eq!(settings.last_workspace_path, Some(workspace));
     }
 
     #[test]

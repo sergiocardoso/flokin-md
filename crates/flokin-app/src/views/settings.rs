@@ -2,6 +2,7 @@ use iced::widget::{button, column, container, pick_list, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::{
+    brand,
     i18n::{AppLanguage, I18nCatalog},
     message::Message,
     theme, widgets,
@@ -13,6 +14,7 @@ pub fn view<'a>(
     i18n: &'a I18nCatalog,
     left_visible: bool,
     right_visible: bool,
+    workspace_open: bool,
 ) -> Element<'a, Message> {
     let language_row = row![
         text(i18n.tr("settings-language")).width(Length::Fill),
@@ -56,49 +58,68 @@ pub fn view<'a>(
     } else {
         i18n.tr("settings-show-right-sidebar")
     };
-    let content = column![
+    let mut content = column![
         widgets::section_title(i18n.tr("settings-section-interface")),
         language_row,
         widgets::section_title(i18n.tr("settings-section-appearance")),
         theme_row,
-        widgets::section_title(i18n.tr("settings-section-layout")),
-        button(row![
-            text(left_label).width(Length::Fill),
-            text(if left_visible {
-                i18n.tr("state-on")
-            } else {
-                i18n.tr("state-off")
-            })
-            .font(theme::mono())
-            .style(theme::text_muted)
-        ])
-        .width(Length::Fill)
-        .style(theme::button_toolbar)
-        .on_press(Message::ToggleLeftSidebar),
-        button(row![
-            text(right_label).width(Length::Fill),
-            text(if right_visible {
-                i18n.tr("state-on")
-            } else {
-                i18n.tr("state-off")
-            })
-            .font(theme::mono())
-            .style(theme::text_muted)
-        ])
-        .width(Length::Fill)
-        .style(theme::button_toolbar)
-        .on_press(Message::ToggleRightSidebar),
-        button(text(i18n.tr("settings-reset-layout")))
-            .style(theme::button_toolbar)
-            .on_press(Message::ResetLayout),
     ]
     .spacing(theme::spacing::MD)
     .max_width(560);
 
-    container(content)
+    if workspace_open {
+        content = content
+            .push(widgets::section_title(i18n.tr("settings-section-layout")))
+            .push(
+                button(row![
+                    text(left_label).width(Length::Fill),
+                    text(if left_visible {
+                        i18n.tr("state-on")
+                    } else {
+                        i18n.tr("state-off")
+                    })
+                    .font(theme::mono())
+                    .style(theme::text_muted)
+                ])
+                .width(Length::Fill)
+                .style(theme::button_toolbar)
+                .on_press(Message::ToggleLeftSidebar),
+            )
+            .push(
+                button(row![
+                    text(right_label).width(Length::Fill),
+                    text(if right_visible {
+                        i18n.tr("state-on")
+                    } else {
+                        i18n.tr("state-off")
+                    })
+                    .font(theme::mono())
+                    .style(theme::text_muted)
+                ])
+                .width(Length::Fill)
+                .style(theme::button_toolbar)
+                .on_press(Message::ToggleRightSidebar),
+            )
+            .push(
+                button(text(i18n.tr("settings-reset-layout")))
+                    .style(theme::button_toolbar)
+                    .on_press(Message::ResetLayout),
+            );
+    }
+
+    container(
+        iced::widget::stack![
+            brand::watermark(),
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(theme::spacing::XXL)
+        ]
         .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(theme::spacing::XXL)
-        .style(theme::editor)
-        .into()
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(theme::editor)
+    .into()
 }

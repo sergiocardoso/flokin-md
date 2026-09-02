@@ -1,6 +1,6 @@
 use flokin_core::{EditorDialog, ExplicitSchemaState, SchemaType, ShellModel, SqlCompletionItem};
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable, stack, text, text_input,
+    button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_input,
 };
 use iced::widget::{markdown, text_editor};
 use iced::{alignment, mouse, Alignment, Element, Length};
@@ -44,12 +44,25 @@ pub fn view<'a>(
     mode: AppMode,
     i18n: &'a I18nCatalog,
     language: AppLanguage,
+    workspace_restore_notice: Option<&'a str>,
 ) -> Element<'a, Message> {
+    if model.current_workspace.is_none() {
+        return no_workspace_shell(
+            app_theme,
+            open_menu,
+            about_open,
+            mode,
+            i18n,
+            language,
+            workspace_restore_notice,
+        );
+    }
+
     let content = if mode == AppMode::Settings {
         row![
             activity_bar(mode, i18n),
             panel_gutter(),
-            views::settings::view(app_theme, language, i18n, left_visible, right_visible)
+            views::settings::view(app_theme, language, i18n, left_visible, right_visible, true)
         ]
         .height(Length::Fill)
     } else if mode == AppMode::Sql {
@@ -191,6 +204,156 @@ pub fn view<'a>(
     } else {
         shell
     }
+}
+
+fn no_workspace_shell<'a>(
+    app_theme: AppTheme,
+    open_menu: Option<MenuId>,
+    about_open: bool,
+    mode: AppMode,
+    i18n: &'a I18nCatalog,
+    language: AppLanguage,
+    workspace_restore_notice: Option<&'a str>,
+) -> Element<'a, Message> {
+    let content = if mode == AppMode::Settings {
+        views::settings::view(app_theme, language, i18n, true, true, false)
+    } else {
+        views::welcome::view(app_theme, i18n, workspace_restore_notice)
+    };
+
+    let shell = column![
+        welcome_top_shell(app_theme, open_menu, i18n, language, mode),
+        content
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    let shell = if open_menu == Some(MenuId::File) {
+        stack![shell, welcome_menu_overlay(i18n)].into()
+    } else {
+        shell.into()
+    };
+
+    if about_open {
+        stack![shell, about_overlay(i18n)].into()
+    } else {
+        shell
+    }
+}
+
+fn welcome_top_shell<'a>(
+    app_theme: AppTheme,
+    open_menu: Option<MenuId>,
+    i18n: &'a I18nCatalog,
+    language: AppLanguage,
+    mode: AppMode,
+) -> Element<'a, Message> {
+    let left = row![
+        container(brand::lockup(app_theme)).padding(iced::Padding {
+            top: LOGO_TOP_OFFSET,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        }),
+        menu_trigger(i18n.tr("menu-file"), MenuId::File, open_menu),
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    let language_picker = pick_list(
+        AppLanguage::all(),
+        Some(language),
+        Message::LanguageSelected,
+    )
+    .width(Length::Fixed(190.0));
+
+    let settings_message = if mode == AppMode::Settings {
+        Message::AppModeSelected(AppMode::Files)
+    } else {
+        Message::AppModeSelected(AppMode::Settings)
+    };
+    let settings_button = top_icon_button(
+        theme::Icon::Settings,
+        mode == AppMode::Settings,
+        settings_message,
+        i18n.tr("activity-settings"),
+    );
+
+    let theme_button = iced::widget::tooltip(
+        button(
+            container(widgets::icon_text(
+                theme::Icon::Settings,
+                app_theme.label(),
+                theme::icons::TOOLBAR,
+                false,
+            ))
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
+        )
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .padding([0.0, 14.0])
+        .style(theme::button_toolbar)
+        .on_press(Message::ThemeToggled),
+        widgets::tooltip_text(i18n.tr("tooltip-toggle-theme")),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .style(theme::tooltip);
+
+    let right = row![
+        iced::widget::Space::new().width(Length::Fill),
+        language_picker,
+        settings_button,
+        theme_button,
+    ]
+    .spacing(theme::spacing::MD)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    container(row![left.width(Length::Fill), right].align_y(Alignment::Center))
+        .height(theme::sizes::MENU_BAR_HEIGHT)
+        .padding([0.0, theme::spacing::XL])
+        .style(theme::top_bar)
+        .into()
+}
+
+fn welcome_menu_overlay<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    stack![
+        column![
+            iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
+            mouse_area(container("").height(Length::Fill).width(Length::Fill))
+                .on_press(Message::MenuClosed),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+        column![
+            iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
+            row![brand::placeholder(), welcome_menu_items(i18n)].spacing(theme::spacing::SM),
+        ]
+        .padding([0.0, theme::spacing::XL])
+        .width(Length::Fill)
+        .height(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn welcome_menu_items<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    container(column![button(
+        row![text(i18n.tr("menu-open-folder"))
+            .size(theme::typography::BODY)
+            .wrapping(iced::widget::text::Wrapping::None)
+            .width(Length::Fill)]
+        .align_y(Alignment::Center)
+    )
+    .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
+    .height(theme::sizes::MENU_ITEM_HEIGHT)
+    .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
+    .style(theme::button_menu)
+    .on_press(Message::MenuAction(MenuAction::OpenFolder))])
+    .padding(theme::sizes::MENU_POPUP_PADDING)
+    .style(theme::overlay_panel)
+    .into()
 }
 
 fn top_shell<'a>(

@@ -103,11 +103,11 @@ fn document_inspector(
     container(scrollable(content).direction(Direction::Vertical(
         Scrollbar::default().width(4).scroller_width(4).spacing(8),
     )))
-        .width(width)
-        .height(Length::Fill)
-        .padding(theme::spacing::XL)
-        .style(theme::inspector_panel)
-        .into()
+    .width(width)
+    .height(Length::Fill)
+    .padding(theme::spacing::XL)
+    .style(theme::inspector_panel)
+    .into()
 }
 
 fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Message> {
@@ -189,11 +189,11 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
     container(scrollable(content).direction(Direction::Vertical(
         Scrollbar::default().width(4).scroller_width(4).spacing(8),
     )))
-        .width(width)
-        .height(Length::Fill)
-        .padding(theme::spacing::XL)
-        .style(theme::inspector_panel)
-        .into()
+    .width(width)
+    .height(Length::Fill)
+    .padding(theme::spacing::XL)
+    .style(theme::inspector_panel)
+    .into()
 }
 
 fn health_field(

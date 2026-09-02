@@ -262,4 +262,10 @@ graph-zoom-out = Zoom out
 graph-zoom-in = Zoom in
 graph-zoom-reset = Reset zoom
 graph-focus-selected = Center selected
-graph-fit = Fit graph
+graph-fit = Fit to screen
+
+# Welcome
+welcome-title = Open a Markdown folder to get started
+welcome-open-folder = Open folder
+workspace-restoring = Opening workspace...
+workspace-previous-unavailable = The previously used folder is not available.

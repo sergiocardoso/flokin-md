@@ -138,7 +138,6 @@ pub mod sizes {
     pub const GRAPH_NODE_HEIGHT: f32 = tokens::SIZES.graph_node_height;
     pub const GRAPH_TOOLBAR_BUTTON_SIZE: f32 = tokens::SIZES.graph_toolbar_button_size;
     pub const GRAPH_ZOOM_BADGE_WIDTH: f32 = tokens::SIZES.graph_zoom_badge_width;
-    pub const GRAPH_GRID_STEP: f32 = tokens::SIZES.graph_grid_step;
     pub const GRAPH_NODE_FONT_SIZE: u32 = tokens::SIZES.graph_node_font_size;
     pub const GRAPH_EDGE_LABEL_FONT_SIZE: u32 = tokens::SIZES.graph_edge_label_font_size;
 }
