@@ -25,27 +25,46 @@ pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Mes
                         "health-total-documents",
                         &[("count", summary.total_documents.into())],
                     ))
-                        .size(theme::typography::BODY)
-                        .style(theme::text_muted),
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
                 ]
                 .spacing(theme::spacing::XS)
                 .width(Length::Fill),
-                summary_counter(i18n.tr("health-errors"), summary.errors, HealthSeverity::Error),
-                summary_counter(i18n.tr("health-warnings"), summary.warnings, HealthSeverity::Warning),
-                summary_counter(i18n.tr("health-healthy"), summary.healthy_documents, HealthSeverity::Info),
+                summary_counter(
+                    i18n.tr("health-errors"),
+                    summary.errors,
+                    HealthSeverity::Error
+                ),
+                summary_counter(
+                    i18n.tr("health-warnings"),
+                    summary.warnings,
+                    HealthSeverity::Warning
+                ),
+                summary_counter(
+                    i18n.tr("health-healthy"),
+                    summary.healthy_documents,
+                    HealthSeverity::Info
+                ),
             ]
             .spacing(theme::spacing::MD)
             .align_y(Alignment::Center),
             row![
                 filter_button(i18n.tr("health-filter-all"), HealthFilter::All, model),
                 filter_button(i18n.tr("health-filter-errors"), HealthFilter::Errors, model),
-                filter_button(i18n.tr("health-filter-warnings"), HealthFilter::Warnings, model),
-                text_input(i18n.tr_static("health-filter-placeholder"), model.health_query.as_str())
-                    .on_input(Message::HealthQueryChanged)
-                    .size(theme::typography::BODY)
-                    .padding([5.0, theme::spacing::SM])
-                    .width(220)
-                    .style(theme::input),
+                filter_button(
+                    i18n.tr("health-filter-warnings"),
+                    HealthFilter::Warnings,
+                    model
+                ),
+                text_input(
+                    i18n.tr_static("health-filter-placeholder"),
+                    model.health_query.as_str()
+                )
+                .on_input(Message::HealthQueryChanged)
+                .size(theme::typography::BODY)
+                .padding([5.0, theme::spacing::SM])
+                .width(220)
+                .style(theme::input),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
@@ -139,11 +158,7 @@ fn summary_counter<'a>(
     .into()
 }
 
-fn filter_button(
-    label: String,
-    filter: HealthFilter,
-    model: &ShellModel,
-) -> Element<'_, Message> {
+fn filter_button(label: String, filter: HealthFilter, model: &ShellModel) -> Element<'_, Message> {
     button(text(label).size(theme::typography::LABEL))
         .height(theme::sizes::TAB_BUTTON_HEIGHT)
         .padding([0.0, theme::spacing::MD])

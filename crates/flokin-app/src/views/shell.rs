@@ -69,6 +69,7 @@ pub fn view<'a>(
             sql_completion_selected,
             sql_completion_open,
             sql_editor_height,
+            i18n,
         ));
         if right_visible {
             content = content
@@ -80,12 +81,13 @@ pub fn view<'a>(
         let mut content = row![activity_bar(mode, i18n), panel_gutter()].height(Length::Fill);
         if left_visible {
             content = content
-                .push(views::graph::sidebar(graph_state, left_width))
+                .push(views::graph::sidebar(graph_state, left_width, i18n))
                 .push(splitter(SplitterKind::LeftSidebar, false));
         }
         content = content.push(views::graph::view(
             graph_state,
             model.selected_document_path.as_ref(),
+            i18n,
         ));
         if right_visible {
             content = content
@@ -95,7 +97,7 @@ pub fn view<'a>(
         content
     } else if mode == AppMode::Health {
         let mut content = row![activity_bar(mode, i18n), panel_gutter()].height(Length::Fill);
-            content = content.push(views::health::view(model, i18n));
+        content = content.push(views::health::view(model, i18n));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
@@ -132,6 +134,7 @@ pub fn view<'a>(
             sql_completion_selected,
             sql_completion_open,
             sql_editor_height,
+            i18n,
         ));
         if right_visible {
             content = content
@@ -142,7 +145,14 @@ pub fn view<'a>(
     };
 
     let shell = column![
-        top_shell(model, app_theme, left_visible, right_visible, open_menu, i18n),
+        top_shell(
+            model,
+            app_theme,
+            left_visible,
+            right_visible,
+            open_menu,
+            i18n
+        ),
         content_frame(content),
         views::status_bar::view(model, i18n),
     ]
@@ -212,11 +222,14 @@ fn top_shell<'a>(
         left = left.push(menu_trigger(item, id, open_menu));
     }
 
-    let input = text_input(i18n.tr_static("search-placeholder"), model.search.query.as_str())
-        .padding([0, 4])
-        .size(theme::typography::BODY)
-        .width(theme::sizes::TOOLBAR_SEARCH_WIDTH)
-        .style(theme::input_embedded);
+    let input = text_input(
+        i18n.tr_static("search-placeholder"),
+        model.search.query.as_str(),
+    )
+    .padding([0, 4])
+    .size(theme::typography::BODY)
+    .width(theme::sizes::TOOLBAR_SEARCH_WIDTH)
+    .style(theme::input_embedded);
 
     let search_message = if open_menu.is_some() {
         Message::MenuAction(MenuAction::Search)
@@ -489,7 +502,11 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
             (i18n.tr("menu-health"), None, MenuAction::Health),
             (i18n.tr("menu-sql-explorer"), None, MenuAction::SqlExplorer),
             (i18n.tr("menu-history"), None, MenuAction::History),
-            (i18n.tr("menu-run-query"), Some("Ctrl+Enter"), MenuAction::ExecuteSql),
+            (
+                i18n.tr("menu-run-query"),
+                Some("Ctrl+Enter"),
+                MenuAction::ExecuteSql,
+            ),
         ],
         MenuId::Help => vec![(i18n.tr("menu-about"), None, MenuAction::About)],
     };
@@ -695,12 +712,10 @@ fn schema_create_dialog_overlay<'a>(
         }
         if !mixed_fields.is_empty() {
             content = content.push(
-                text(
-                    i18n.tr_with(
-                        "schema-mixed-fields-omitted",
-                        &[("fields", mixed_fields.join(", ").into())],
-                    )
-                )
+                text(i18n.tr_with(
+                    "schema-mixed-fields-omitted",
+                    &[("fields", mixed_fields.join(", ").into())],
+                ))
                 .size(theme::typography::BODY)
                 .wrapping(iced::widget::text::Wrapping::Word)
                 .style(theme::text_warning),
@@ -717,10 +732,12 @@ fn schema_create_dialog_overlay<'a>(
         );
     }
 
-    let mut actions = row![button(text(i18n.tr("action-cancel")).size(theme::typography::BODY))
-        .padding([6.0, 12.0])
-        .style(theme::button_toolbar)
-        .on_press(Message::SchemaCreateCanceled)]
+    let mut actions = row![
+        button(text(i18n.tr("action-cancel")).size(theme::typography::BODY))
+            .padding([6.0, 12.0])
+            .style(theme::button_toolbar)
+            .on_press(Message::SchemaCreateCanceled)
+    ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
 
@@ -854,14 +871,17 @@ fn search_overlay<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'
         )
     };
 
-    let overlay_input = text_input(i18n.tr_static("search-placeholder"), model.search.query.as_str())
-        .id("search-overlay-input")
-        .on_input(Message::SearchQueryChanged)
-        .on_submit(Message::SearchActivated)
-        .padding([8, 10])
-        .size(theme::typography::BODY)
-        .width(Length::Fill)
-        .style(theme::input);
+    let overlay_input = text_input(
+        i18n.tr_static("search-placeholder"),
+        model.search.query.as_str(),
+    )
+    .id("search-overlay-input")
+    .on_input(Message::SearchQueryChanged)
+    .on_submit(Message::SearchActivated)
+    .padding([8, 10])
+    .size(theme::typography::BODY)
+    .width(Length::Fill)
+    .style(theme::input);
 
     let palette = mouse_area(
         container(
@@ -952,15 +972,36 @@ fn search_result_row<'a>(
 
 fn activity_bar<'a>(mode: AppMode, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let entries = [
-        (AppMode::Files, theme::Icon::Folder, i18n.tr("activity-files")),
-        (AppMode::Data, theme::Icon::Database, i18n.tr("activity-data")),
-        (AppMode::Graph, theme::Icon::Graph, i18n.tr("activity-graph")),
-        (AppMode::Health, theme::Icon::Health, i18n.tr("activity-health")),
+        (
+            AppMode::Files,
+            theme::Icon::Folder,
+            i18n.tr("activity-files"),
+        ),
+        (
+            AppMode::Data,
+            theme::Icon::Database,
+            i18n.tr("activity-data"),
+        ),
+        (
+            AppMode::Graph,
+            theme::Icon::Graph,
+            i18n.tr("activity-graph"),
+        ),
+        (
+            AppMode::Health,
+            theme::Icon::Health,
+            i18n.tr("activity-health"),
+        ),
         (AppMode::Sql, theme::Icon::Terminal, i18n.tr("activity-sql")),
-        (AppMode::History, theme::Icon::Clock, i18n.tr("activity-history")),
+        (
+            AppMode::History,
+            theme::Icon::Clock,
+            i18n.tr("activity-history"),
+        ),
     ];
     let mut top = column![]
         .spacing(theme::spacing::SM)
+        .width(Length::Fill)
         .align_x(Alignment::Center);
     for (entry, icon, label) in entries {
         top = top.push(activity_button(entry, icon, label, mode == entry));
@@ -973,9 +1014,11 @@ fn activity_bar<'a>(mode: AppMode, i18n: &'a I18nCatalog) -> Element<'a, Message
     );
 
     container(column![
-        top,
+        container(top).width(Length::Fill),
         iced::widget::Space::new().height(Length::Fill),
-        bottom
+        container(bottom)
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Center),
     ])
     .width(theme::sizes::ACTIVITY_BAR_WIDTH)
     .height(Length::Fill)
@@ -1024,6 +1067,7 @@ fn workspace<'a>(
     sql_completion_selected: usize,
     sql_completion_open: bool,
     sql_editor_height: f32,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     container(
         column![
@@ -1038,6 +1082,7 @@ fn workspace<'a>(
                 sql_completion_selected,
                 sql_completion_open,
                 sql_editor_height,
+                i18n,
             )
         ]
         .spacing(0)

@@ -12,7 +12,7 @@ use iced::{
     Theme, Vector,
 };
 
-use crate::{message::Message, theme, widgets};
+use crate::{i18n::I18nCatalog, message::Message, theme, widgets};
 
 const NODE_WIDTH: f32 = theme::sizes::GRAPH_NODE_WIDTH;
 const NODE_HEIGHT: f32 = theme::sizes::GRAPH_NODE_HEIGHT;
@@ -43,17 +43,27 @@ impl Default for GraphViewState {
     }
 }
 
-pub fn sidebar(state: &GraphViewState, width: f32) -> Element<'_, Message> {
+pub fn sidebar<'a>(
+    state: &'a GraphViewState,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let problems = state.projection.problem_count();
     let mut content = column![
-        widgets::section_title("GRAPH"),
-        graph_metric("Documents", state.projection.document_count()),
-        graph_metric("Relations", state.projection.relation_count()),
+        widgets::section_title(i18n.tr("graph-section")),
+        graph_metric(
+            i18n.tr("graph-documents"),
+            state.projection.document_count()
+        ),
+        graph_metric(
+            i18n.tr("graph-relations"),
+            state.projection.relation_count()
+        ),
     ]
     .spacing(theme::spacing::SM);
 
     if problems > 0 {
-        content = content.push(graph_metric("Problems", problems));
+        content = content.push(graph_metric(i18n.tr("graph-problems"), problems));
     }
 
     let mut collections = state
@@ -92,7 +102,7 @@ pub fn sidebar(state: &GraphViewState, width: f32) -> Element<'_, Message> {
         .into()
 }
 
-fn graph_metric(label: &'static str, value: usize) -> Element<'static, Message> {
+fn graph_metric<'a>(label: String, value: usize) -> Element<'a, Message> {
     row![
         text(label)
             .size(theme::typography::BODY)
@@ -109,23 +119,26 @@ fn graph_metric(label: &'static str, value: usize) -> Element<'static, Message> 
 pub fn view<'a>(
     state: &'a GraphViewState,
     selected_document: Option<&'a std::path::PathBuf>,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let summary = format!(
-        "{} documentos • {} relações",
-        state.projection.document_count(),
-        state.projection.relation_count()
+    let summary = i18n.tr_with(
+        "graph-summary",
+        &[
+            ("documents", state.projection.document_count().into()),
+            ("relations", state.projection.relation_count().into()),
+        ],
     );
     let zoom_label = zoom_label(state.zoom);
 
     let zoom_controls = toolbar_group(row![
         graph_icon_button(
             theme::Icon::Minus,
-            "Diminuir zoom",
+            i18n.tr("graph-zoom-out"),
             Some(Message::GraphZoomOut),
         ),
         graph_icon_button(
             theme::Icon::Plus,
-            "Aumentar zoom",
+            i18n.tr("graph-zoom-in"),
             Some(Message::GraphZoomIn),
         ),
         container(
@@ -141,7 +154,7 @@ pub fn view<'a>(
         .style(theme::graph_zoom_badge),
         graph_icon_button(
             theme::Icon::Reset,
-            "Resetar zoom",
+            i18n.tr("graph-zoom-reset"),
             Some(Message::GraphZoomReset),
         ),
     ]);
@@ -149,18 +162,18 @@ pub fn view<'a>(
     let navigation_controls = toolbar_group(row![
         graph_icon_button(
             theme::Icon::Focus,
-            "Centralizar selecionado",
+            i18n.tr("graph-focus-selected"),
             selected_document.map(|_| Message::GraphFocusSelected),
         ),
         graph_icon_button(
             theme::Icon::Frame,
-            "Enquadrar grafo",
+            i18n.tr("graph-fit"),
             Some(Message::GraphFitRequested),
         ),
     ]);
 
     let toolbar = row![
-        text("Grafo")
+        text(i18n.tr("graph-title"))
             .size(theme::typography::TITLE)
             .style(theme::text_normal),
         text(summary)
@@ -211,7 +224,7 @@ fn toolbar_group<'a>(content: iced::widget::Row<'a, Message>) -> Element<'a, Mes
 
 fn graph_icon_button<'a>(
     icon: theme::Icon,
-    tooltip: &'static str,
+    tooltip: String,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let mut control = button(widgets::icon(icon, theme::icons::TOOLBAR, false))

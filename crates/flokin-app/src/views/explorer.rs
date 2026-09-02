@@ -146,8 +146,8 @@ pub fn data_view<'a>(
     width: f32,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let mut collections =
-        column![widgets::section_title(i18n.tr("explorer-collections"))].spacing(theme::spacing::XS);
+    let mut collections = column![widgets::section_title(i18n.tr("explorer-collections"))]
+        .spacing(theme::spacing::XS);
     for collection in &model.collections {
         collections = collections.push(collection_row(
             collection,

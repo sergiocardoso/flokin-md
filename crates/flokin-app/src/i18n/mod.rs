@@ -30,6 +30,8 @@ impl I18nCatalog {
             (AppLanguage::English, "search-placeholder") => "Search documents...",
             (AppLanguage::PortugueseBrazil, "health-filter-placeholder") => "Filtrar issues...",
             (AppLanguage::English, "health-filter-placeholder") => "Filter issues...",
+            (AppLanguage::PortugueseBrazil, "editor-empty-file") => "Arquivo vazio.",
+            (AppLanguage::English, "editor-empty-file") => "Empty file.",
             _ => {
                 #[cfg(debug_assertions)]
                 eprintln!("Missing static translation key: {key}");
@@ -39,14 +41,20 @@ impl I18nCatalog {
     }
 
     pub fn tr_with(&self, key: &str, args: &[(&str, FluentArgValue<'_>)]) -> String {
-        let fluent_args = args.iter().fold(FluentArgs::new(), |mut fluent_args, (name, value)| {
-            match value {
-                FluentArgValue::Str(value) => fluent_args.set(*name, FluentValue::from(*value)),
-                FluentArgValue::Owned(value) => fluent_args.set(*name, FluentValue::from(value.as_str())),
-                FluentArgValue::Number(value) => fluent_args.set(*name, FluentValue::from(*value)),
-            }
-            fluent_args
-        });
+        let fluent_args = args
+            .iter()
+            .fold(FluentArgs::new(), |mut fluent_args, (name, value)| {
+                match value {
+                    FluentArgValue::Str(value) => fluent_args.set(*name, FluentValue::from(*value)),
+                    FluentArgValue::Owned(value) => {
+                        fluent_args.set(*name, FluentValue::from(value.as_str()))
+                    }
+                    FluentArgValue::Number(value) => {
+                        fluent_args.set(*name, FluentValue::from(*value))
+                    }
+                }
+                fluent_args
+            });
         self.format_from(&self.active, key, Some(&fluent_args))
             .or_else(|| self.format_from(&self.fallback, key, Some(&fluent_args)))
             .unwrap_or_else(|| {
@@ -73,7 +81,11 @@ impl I18nCatalog {
         let message = bundle.get_message(key)?;
         let pattern = message.value()?;
         let mut errors = Vec::new();
-        Some(bundle.format_pattern(pattern, args, &mut errors).into_owned())
+        Some(
+            bundle
+                .format_pattern(pattern, args, &mut errors)
+                .into_owned(),
+        )
     }
 }
 
@@ -125,6 +137,7 @@ fn bundle(language: AppLanguage) -> FluentBundle<FluentResource> {
     let resource = FluentResource::try_new(language.resource().to_owned())
         .expect("embedded Fluent resource must parse");
     let mut bundle = FluentBundle::new(vec![langid]);
+    bundle.set_use_isolating(false);
     bundle
         .add_resource(resource)
         .expect("embedded Fluent resource has duplicate keys");

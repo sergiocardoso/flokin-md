@@ -867,8 +867,9 @@ impl FlokinApp {
             }
             Message::HistoryClearConfirmed => {
                 let Some(workspace) = self.model.current_workspace.clone() else {
-                    self.model
-                        .clear_history_completed(Err(self.i18n.tr("error-history-clear-no-workspace")));
+                    self.model.clear_history_completed(Err(self
+                        .i18n
+                        .tr("error-history-clear-no-workspace")));
                     return Task::none();
                 };
                 return clear_history_task(workspace);
@@ -2007,10 +2008,11 @@ mod tests {
     };
 
     use super::{
-        create_schema_file_if_absent, hover_menu, keyboard_message, theme_from_settings_path,
-        toggle_menu, FlokinApp,
+        create_schema_file_if_absent, hover_menu, keyboard_message, language_from_settings_path,
+        theme_from_settings_path, toggle_menu, FlokinApp,
     };
     use crate::{
+        i18n::AppLanguage,
         message::{AppMode, MenuId, Message, SplitterKind},
         services::{file_watcher::WatcherMessage, settings},
         theme::AppTheme,
@@ -2398,6 +2400,50 @@ mod tests {
         settings::save_theme(&path, AppTheme::Light).unwrap();
 
         assert_eq!(theme_from_settings_path(&path), AppTheme::Light);
+    }
+
+    #[test]
+    fn saved_language_is_used_for_startup_language() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        settings::save_language(&path, AppLanguage::English).unwrap();
+
+        assert_eq!(language_from_settings_path(&path), AppLanguage::English);
+    }
+
+    #[test]
+    fn existing_settings_without_language_migrate_to_portuguese() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        fs::write(&path, "version=1\ntheme=dark\n").unwrap();
+
+        assert_eq!(
+            language_from_settings_path(&path),
+            AppLanguage::PortugueseBrazil
+        );
+    }
+
+    #[test]
+    fn runtime_language_switch_preserves_workspace_dirty_tab_and_sql_text() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        app.sql_editor = text_editor::Content::with_text("SELECT * FROM projects;");
+        app.model
+            .update_sql_query(String::from("SELECT * FROM projects;"));
+        let workspace_before = app.model.current_workspace.clone();
+
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(app.model.current_workspace, workspace_before);
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+        assert_eq!(app.sql_editor.text(), "SELECT * FROM projects;");
     }
 
     #[test]

@@ -118,6 +118,30 @@ status-warnings =
        *[other] { $count } warnings
     }
 
+# Editor
+editor-empty-workspace-hint = Open a folder containing .md or .markdown files.
+editor-mode-edit = Edit
+editor-mode-split = Split
+editor-mode-preview = Preview
+editor-save-tooltip = Save (Ctrl+S)
+editor-conflict-modified = The file was changed externally.
+editor-conflict-deleted = The file was removed externally.
+editor-reload-disk = Reload from disk
+editor-keep-local = Keep my changes
+editor-empty-preview = Empty preview.
+editor-empty-file = Empty file.
+editor-select-document = Select a Markdown document to view its contents.
+
+# SQL
+sql-reviewing = Reviewing...
+sql-running = Running...
+sql-review-update = Review update
+sql-run = Run
+sql-mode-query = Query
+sql-mode-update = Update
+sql-update-context = SQL Updates are converted into Markdown changes and always require preview.
+sql-query-context = Query mode is read-only.
+
 # Settings
 settings-section-interface = INTERFACE
 settings-language = Language
@@ -226,3 +250,16 @@ health-category = CATEGORY
 health-document = DOCUMENT
 health-property = PROPERTY
 health-problem = PROBLEM
+
+# Graph
+graph-title = Graph
+graph-section = GRAPH
+graph-documents = Documents
+graph-relations = Relations
+graph-problems = Problems
+graph-summary = { $documents } documents • { $relations } relations
+graph-zoom-out = Zoom out
+graph-zoom-in = Zoom in
+graph-zoom-reset = Reset zoom
+graph-focus-selected = Center selected
+graph-fit = Fit graph

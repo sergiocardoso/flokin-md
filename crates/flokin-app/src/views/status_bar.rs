@@ -23,9 +23,11 @@ pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Mes
         } => {
             status_items.push(i18n.tr("status-updating"));
             status_items.push(i18n.tr_with("status-documents", &[("count", (*documents).into())]));
-            status_items.push(i18n.tr_with("status-collections", &[("count", (*collections).into())]));
+            status_items
+                .push(i18n.tr_with("status-collections", &[("count", (*collections).into())]));
             if *warnings > 0 {
-                status_items.push(i18n.tr_with("status-warnings", &[("count", (*warnings).into())]));
+                status_items
+                    .push(i18n.tr_with("status-warnings", &[("count", (*warnings).into())]));
             }
         }
         ScanState::Completed {
@@ -35,9 +37,11 @@ pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Mes
             ..
         } => {
             status_items.push(i18n.tr_with("status-documents", &[("count", (*documents).into())]));
-            status_items.push(i18n.tr_with("status-collections", &[("count", (*collections).into())]));
+            status_items
+                .push(i18n.tr_with("status-collections", &[("count", (*collections).into())]));
             if *warnings > 0 {
-                status_items.push(i18n.tr_with("status-warnings", &[("count", (*warnings).into())]));
+                status_items
+                    .push(i18n.tr_with("status-warnings", &[("count", (*warnings).into())]));
             }
         }
         ScanState::Failed(_) => status_items.push(i18n.tr("status-scan-failed")),

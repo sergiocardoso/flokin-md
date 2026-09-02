@@ -16,8 +16,12 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let language_row = row![
         text(i18n.tr("settings-language")).width(Length::Fill),
-        pick_list(AppLanguage::all(), Some(language), Message::LanguageSelected)
-            .width(Length::Fixed(220.0))
+        pick_list(
+            AppLanguage::all(),
+            Some(language),
+            Message::LanguageSelected
+        )
+        .width(Length::Fixed(220.0))
     ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
@@ -65,8 +69,8 @@ pub fn view<'a>(
             } else {
                 i18n.tr("state-off")
             })
-                .font(theme::mono())
-                .style(theme::text_muted)
+            .font(theme::mono())
+            .style(theme::text_muted)
         ])
         .width(Length::Fill)
         .style(theme::button_toolbar)
@@ -78,8 +82,8 @@ pub fn view<'a>(
             } else {
                 i18n.tr("state-off")
             })
-                .font(theme::mono())
-                .style(theme::text_muted)
+            .font(theme::mono())
+            .style(theme::text_muted)
         ])
         .width(Length::Fill)
         .style(theme::button_toolbar)

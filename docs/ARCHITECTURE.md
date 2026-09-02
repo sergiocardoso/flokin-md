@@ -393,6 +393,41 @@ Explorer filetype metadata is resolved through the app-local file icon helper, w
 
 `devicons` glyphs require Nerd Fonts. FlokinMD does not bundle a compatible font yet and must not require manual user font setup, so the current renderer uses a stable colored text fallback derived from the resolved file type while preserving the devicons glyph and color in `FileIconInfo`. A future focused change can bundle a compatible icon font and switch the helper to render the glyphs directly.
 
+## Runtime Localization
+
+I18N-001 adds app-level runtime localization in `flokin-app` without coupling the Rust core to Iced or translation resources.
+
+```text
+AppSettings
+AppLanguage
+I18nCatalog
+Views
+```
+
+The language preference is global application configuration, not workspace data. It is stored outside Markdown workspaces in the existing platform app-data settings file (`settings.conf`) next to other app metadata. The settings file is versioned and written via a temporary file followed by rename so theme and language changes survive restart without depending on the current working directory.
+
+Locale resources live under `crates/flokin-app/src/i18n/locales/` and are embedded in the binary with `include_str!`, so Linux, Windows, macOS, and future packaged builds do not need to find locale files from the runtime working directory.
+
+```text
+Settings
+LanguageSelected
+state.language update
+settings persistence
+Iced rerender
+```
+
+Changing language is intentionally cheap. It updates only the app language and active `I18nCatalog`; workspace, tabs, dirty buffers, SQL text, previews, history, graph state, theme, and sidebar sizes are not reset. User-owned data is never translated automatically: Markdown/YAML contents, file names, paths, Collection names, field names, field values, SQL text, SQL identifiers, relation targets, document titles, and the FlokinMD brand remain as authored.
+
+`AppLanguage` currently supports `pt-BR` and `en-US`. On first run without settings, the app maps OS locales beginning with `pt` to Portuguese (Brazil) and all other or unavailable locales to English. Existing settings files without a `language` key migrate to Portuguese (Brazil), preserving the language users saw before localization was introduced.
+
+To add a language:
+
+1. Add a new `AppLanguage` variant with locale id, native display name, and embedded resource.
+2. Add a matching `.ftl` file under `i18n/locales`.
+3. Provide every existing translation key.
+4. Register the language in `AppLanguage::all`.
+5. Run the locale key parity test and app quality checks.
+
 ## Future Direction
 
 As the product grows, the intended structure remains:

@@ -15,6 +15,7 @@ use iced::widget::{
 use iced::{keyboard, keyboard::Key, Alignment, Element, Length, Padding};
 
 use crate::{
+    i18n::I18nCatalog,
     message::{Message, SplitterKind},
     theme::{self, AppTheme},
     views::data_grid,
@@ -138,6 +139,7 @@ pub fn view<'a>(
     sql_completion_selected: usize,
     sql_completion_open: bool,
     sql_editor_height: f32,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     if model.sql_explorer.open {
         return sql_explorer_view(
@@ -147,36 +149,44 @@ pub fn view<'a>(
             sql_completion_selected,
             sql_completion_open,
             sql_editor_height,
+            i18n,
         );
     }
 
     if let Some(collection) = model.selected_collection() {
-        return collection_view(model, collection.id.as_str());
+        return collection_view(model, collection.id.as_str(), i18n);
     }
 
     if let Some(tab) = model.active_editor_tab() {
-        return markdown_editor_view(tab, markdown_editor, markdown_preview, app_theme, model);
+        return markdown_editor_view(
+            tab,
+            markdown_editor,
+            markdown_preview,
+            app_theme,
+            model,
+            i18n,
+        );
     }
 
     if model.current_workspace.is_some() && model.documents.is_empty() {
-        return empty_workspace_view(model);
+        return empty_workspace_view(model, i18n);
     }
 
-    empty_document_area()
+    empty_document_area(i18n)
 }
 
-fn empty_workspace_view(model: &ShellModel) -> Element<'_, Message> {
+fn empty_workspace_view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let workspace = model.workspace_display();
     container(
         column![
-            text("Nenhum arquivo Markdown encontrado.")
+            text(i18n.tr("explorer-no-markdown"))
                 .size(theme::typography::TITLE)
                 .style(theme::text_normal),
             text(format!("Pasta escaneada: {}", workspace.path))
                 .font(theme::mono())
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
-            text("Abra uma pasta que contenha arquivos .md ou .markdown.")
+            text(i18n.tr("editor-empty-workspace-hint"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         ]
@@ -196,26 +206,31 @@ fn sql_explorer_view<'a>(
     sql_completion_selected: usize,
     sql_completion_open: bool,
     sql_editor_height: f32,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let update_mode = model.sql_explorer.mode == SqlExplorerMode::Update;
     let action_label = if model.sql_explorer.running {
         if update_mode {
-            "Revisando..."
+            i18n.tr("sql-reviewing")
         } else {
-            "Executando..."
+            i18n.tr("sql-running")
         }
     } else if update_mode {
-        "Revisar atualização"
+        i18n.tr("sql-review-update")
     } else {
-        "Executar"
+        i18n.tr("sql-run")
     };
     let header = row![
         text("Query 1")
             .size(theme::typography::TITLE)
             .style(theme::text_normal),
-        sql_mode_button("Consulta", SqlExplorerMode::Query, model.sql_explorer.mode),
         sql_mode_button(
-            "Atualização",
+            i18n.tr("sql-mode-query"),
+            SqlExplorerMode::Query,
+            model.sql_explorer.mode
+        ),
+        sql_mode_button(
+            i18n.tr("sql-mode-update"),
             SqlExplorerMode::Update,
             model.sql_explorer.mode
         ),
@@ -238,9 +253,9 @@ fn sql_explorer_view<'a>(
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
     let context_text = if update_mode {
-        "SQL Updates são convertidos em alterações Markdown e sempre exigem preview."
+        i18n.tr("sql-update-context")
     } else {
-        "Modo Consulta é read-only."
+        i18n.tr("sql-query-context")
     };
     let placeholder = if update_mode {
         "UPDATE projects\nSET status = 'archived'\nWHERE status = 'active';"
@@ -305,7 +320,7 @@ fn sql_explorer_view<'a>(
 }
 
 fn sql_mode_button(
-    label: &'static str,
+    label: String,
     mode: SqlExplorerMode,
     current: SqlExplorerMode,
 ) -> Element<'static, Message> {
@@ -788,7 +803,11 @@ fn result_column_width(name: &str) -> f32 {
     }
 }
 
-fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element<'a, Message> {
+fn collection_view<'a>(
+    model: &'a ShellModel,
+    collection_id: &'a str,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let Some(collection) = model.selected_collection() else {
         return container("").into();
     };
@@ -827,7 +846,7 @@ fn collection_view<'a>(model: &'a ShellModel, collection_id: &'a str) -> Element
     .style(theme::editor);
 
     if model.bulk_edit.editor_open {
-        stack![page, bulk_edit_overlay(model)].into()
+        stack![page, bulk_edit_overlay(model, i18n)].into()
     } else {
         page.into()
     }
@@ -1478,7 +1497,7 @@ fn checkbox_label(selected: bool) -> &'static str {
     }
 }
 
-fn bulk_edit_overlay(model: &ShellModel) -> Element<'_, Message> {
+fn bulk_edit_overlay<'a>(model: &'a ShellModel, _i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let review = model.bulk_edit.step == BulkEditStep::Review;
     let header = row![
         column![
@@ -1967,6 +1986,7 @@ fn markdown_editor_view<'a>(
     markdown_preview: &'a [markdown::Item],
     app_theme: AppTheme,
     _model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let header = container(
         row![
@@ -1987,11 +2007,11 @@ fn markdown_editor_view<'a>(
             .align_y(Alignment::Center)
             .width(Length::Fill),
             if tab.kind == EditorTabKind::Markdown {
-                editor_view_mode_controls(tab.view_mode)
+                editor_view_mode_controls(tab.view_mode, i18n)
             } else {
                 row![].into()
             },
-            save_button(tab),
+            save_button(tab, i18n),
         ]
         .spacing(theme::spacing::MD)
         .align_y(Alignment::Center),
@@ -2018,7 +2038,7 @@ fn markdown_editor_view<'a>(
     }
 
     if let Some(conflict) = tab.external_conflict.as_ref() {
-        content = content.push(external_conflict_banner(conflict));
+        content = content.push(external_conflict_banner(conflict, i18n));
     }
 
     content = content.push(markdown_document_body(
@@ -2026,6 +2046,7 @@ fn markdown_editor_view<'a>(
         markdown_editor,
         markdown_preview,
         app_theme,
+        i18n,
     ));
 
     container(content)
@@ -2040,12 +2061,19 @@ fn markdown_editor_view<'a>(
         .into()
 }
 
-fn editor_view_mode_controls<'a>(active: EditorViewMode) -> Element<'a, Message> {
+fn editor_view_mode_controls<'a>(
+    active: EditorViewMode,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     container(
         row![
-            editor_view_mode_button("Editar", EditorViewMode::Edit, active),
-            editor_view_mode_button("Dividido", EditorViewMode::Split, active),
-            editor_view_mode_button("Prévia", EditorViewMode::Preview, active),
+            editor_view_mode_button(i18n.tr("editor-mode-edit"), EditorViewMode::Edit, active),
+            editor_view_mode_button(i18n.tr("editor-mode-split"), EditorViewMode::Split, active),
+            editor_view_mode_button(
+                i18n.tr("editor-mode-preview"),
+                EditorViewMode::Preview,
+                active
+            ),
         ]
         .spacing(0)
         .align_y(Alignment::Center),
@@ -2057,7 +2085,7 @@ fn editor_view_mode_controls<'a>(active: EditorViewMode) -> Element<'a, Message>
 }
 
 fn editor_view_mode_button<'a>(
-    label: &'static str,
+    label: String,
     mode: EditorViewMode,
     active: EditorViewMode,
 ) -> Element<'a, Message> {
@@ -2074,10 +2102,10 @@ fn editor_view_mode_button<'a>(
         .into()
 }
 
-fn save_button<'a>(tab: &'a EditorTab) -> Element<'a, Message> {
+fn save_button<'a>(tab: &'a EditorTab, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let control = button(widgets::icon_text(
         theme::Icon::Save,
-        "Salvar",
+        i18n.tr("action-save"),
         theme::icons::TOOLBAR,
         !tab.dirty,
     ))
@@ -2097,17 +2125,20 @@ fn save_button<'a>(tab: &'a EditorTab) -> Element<'a, Message> {
 
     iced::widget::tooltip(
         control,
-        widgets::tooltip_text("Salvar (Ctrl+S)"),
+        widgets::tooltip_text(i18n.tr("editor-save-tooltip")),
         iced::widget::tooltip::Position::Bottom,
     )
     .style(theme::tooltip)
     .into()
 }
 
-fn external_conflict_banner<'a>(conflict: &'a EditorExternalConflict) -> Element<'a, Message> {
+fn external_conflict_banner<'a>(
+    conflict: &'a EditorExternalConflict,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let message = match conflict {
-        EditorExternalConflict::Modified(_) => "O arquivo foi alterado externamente.",
-        EditorExternalConflict::Deleted => "O arquivo foi removido externamente.",
+        EditorExternalConflict::Modified(_) => i18n.tr("editor-conflict-modified"),
+        EditorExternalConflict::Deleted => i18n.tr("editor-conflict-deleted"),
     };
 
     container(
@@ -2116,11 +2147,11 @@ fn external_conflict_banner<'a>(conflict: &'a EditorExternalConflict) -> Element
                 .size(theme::typography::BODY)
                 .style(theme::text_warning)
                 .width(Length::Fill),
-            button(text("Recarregar do disco"))
+            button(text(i18n.tr("editor-reload-disk")))
                 .padding([5.0, 10.0])
                 .style(theme::button_toolbar)
                 .on_press(Message::EditorExternalReload),
-            button(text("Manter minhas alterações"))
+            button(text(i18n.tr("editor-keep-local")))
                 .padding([5.0, 10.0])
                 .style(theme::button_toolbar)
                 .on_press(Message::EditorExternalKeep),
@@ -2139,13 +2170,14 @@ fn markdown_document_body<'a>(
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
     app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     match tab.view_mode {
-        _ if tab.kind == EditorTabKind::Schema => markdown_editor_body(tab, markdown_editor),
-        EditorViewMode::Edit => markdown_editor_body(tab, markdown_editor),
-        EditorViewMode::Preview => markdown_preview_body(markdown_preview, app_theme),
+        _ if tab.kind == EditorTabKind::Schema => markdown_editor_body(tab, markdown_editor, i18n),
+        EditorViewMode::Edit => markdown_editor_body(tab, markdown_editor, i18n),
+        EditorViewMode::Preview => markdown_preview_body(markdown_preview, app_theme, i18n),
         EditorViewMode::Split => {
-            markdown_split_body(tab, markdown_editor, markdown_preview, app_theme)
+            markdown_split_body(tab, markdown_editor, markdown_preview, app_theme, i18n)
         }
     }
 }
@@ -2155,6 +2187,7 @@ fn markdown_split_body<'a>(
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
     app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     iced::widget::responsive(move |size| {
         let total_width = size.width.max(1.0);
@@ -2169,11 +2202,11 @@ fn markdown_split_body<'a>(
         let right_width = (available - left_width).max(1.0);
 
         row![
-            container(markdown_editor_body(tab, markdown_editor))
+            container(markdown_editor_body(tab, markdown_editor, i18n))
                 .width(left_width)
                 .height(Length::Fill),
             markdown_splitter(),
-            container(markdown_preview_body(markdown_preview, app_theme))
+            container(markdown_preview_body(markdown_preview, app_theme, i18n))
                 .width(right_width)
                 .height(Length::Fill),
         ]
@@ -2202,10 +2235,11 @@ fn markdown_splitter<'a>() -> Element<'a, Message> {
 fn markdown_preview_body<'a>(
     markdown_preview: &'a [markdown::Item],
     app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let body: Element<'a, Message> = if markdown_preview.is_empty() {
         container(
-            text("Prévia vazia.")
+            text(i18n.tr("editor-empty-preview"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         )
@@ -2238,11 +2272,12 @@ fn markdown_preview_body<'a>(
 fn markdown_editor_body<'a>(
     _tab: &'a EditorTab,
     markdown_editor: &'a text_editor::Content,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let editor = stack![
         editor_zebra_background(),
         text_editor(markdown_editor)
-            .placeholder("Arquivo vazio.")
+            .placeholder(i18n.tr_static("editor-empty-file"))
             .on_action(Message::MarkdownEditorAction)
             .key_binding(markdown_editor_key_binding)
             .font(theme::mono())
@@ -2344,9 +2379,9 @@ fn markdown_editor_key_binding(
     }
 }
 
-fn empty_document_area<'a>() -> Element<'a, Message> {
+fn empty_document_area<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     container(
-        text("Selecione um documento Markdown para ver o conteúdo.")
+        text(i18n.tr("editor-select-document"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),
     )

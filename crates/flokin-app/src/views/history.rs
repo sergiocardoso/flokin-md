@@ -223,10 +223,13 @@ fn history_detail<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'
     }
     if let Some(original_id) = entry.original_entry_id.as_ref() {
         metadata = metadata.push(
-            text(i18n.tr_with("history-original-operation", &[("id", original_id.as_str().into())]))
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted),
+            text(i18n.tr_with(
+                "history-original-operation",
+                &[("id", original_id.as_str().into())],
+            ))
+            .font(theme::mono())
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
         );
     }
 
@@ -503,8 +506,7 @@ fn time_label(timestamp: i64) -> String {
 }
 
 fn timestamp_label(timestamp: i64, i18n: &I18nCatalog) -> String {
-    let utc = DateTime::from_timestamp(timestamp, 0)
-        .unwrap_or_else(|| chrono::Utc::now());
+    let utc = DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now());
     i18n.format_datetime(utc)
 }
 
