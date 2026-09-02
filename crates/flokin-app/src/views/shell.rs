@@ -27,7 +27,6 @@ pub fn view<'a>(
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
-    about_markdown: &'a [markdown::Item],
     graph_state: &'a GraphViewState,
     left_width: f32,
     inspector_width: f32,
@@ -51,13 +50,12 @@ pub fn view<'a>(
             mode,
             i18n,
             language,
-            about_markdown,
             workspace_restore_notice,
         );
     }
 
     let content = if mode == AppMode::About {
-        row![views::about::view(app_theme, i18n, about_markdown)].height(Length::Fill)
+        row![views::about::view(app_theme, i18n)].height(Length::Fill)
     } else if mode == AppMode::Settings {
         row![
             activity_bar(mode, i18n),
@@ -200,11 +198,10 @@ fn no_workspace_shell<'a>(
     mode: AppMode,
     i18n: &'a I18nCatalog,
     language: AppLanguage,
-    about_markdown: &'a [markdown::Item],
     workspace_restore_notice: Option<&'a str>,
 ) -> Element<'a, Message> {
     let content = if mode == AppMode::About {
-        views::about::view(app_theme, i18n, about_markdown)
+        views::about::view(app_theme, i18n)
     } else if mode == AppMode::Settings {
         views::settings::view(app_theme, language, i18n, true, true, false)
     } else {
