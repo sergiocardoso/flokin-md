@@ -1184,11 +1184,7 @@ fn schema_cell<'a>(
 }
 
 fn schema_field_label(field: &SchemaField) -> String {
-    if field.structural {
-        field.name.clone()
-    } else {
-        field.name.clone()
-    }
+    field.name.clone()
 }
 
 fn schema_field_type_label(field: &SchemaField, i18n: &I18nCatalog) -> String {

@@ -178,6 +178,7 @@ status-warnings =
 
 # Editor
 editor-empty-workspace-hint = Open a folder containing .md or .markdown files.
+editor-scanned-folder = Scanned folder: { $path }
 editor-mode-edit = Edit
 editor-mode-split = Split
 editor-mode-preview = Preview
