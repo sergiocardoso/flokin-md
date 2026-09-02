@@ -18,6 +18,30 @@ use crate::{
 pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, Message> {
     let workspace = model.workspace_display();
     let header = column![
+        row![
+            button(widgets::icon_text(
+                theme::Icon::Folder,
+                "Abrir",
+                theme::icons::TOOLBAR,
+                false
+            ))
+            .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+            .padding([0.0, 12.0])
+            .style(theme::button_accent_outline)
+            .on_press(Message::OpenFolder),
+            button(widgets::icon_text(
+                theme::Icon::Refresh,
+                "Reindexar",
+                theme::icons::TOOLBAR,
+                false
+            ))
+            .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+            .padding([0.0, 12.0])
+            .style(theme::button_toolbar)
+            .on_press(Message::ReindexWorkspace),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
         widgets::section_title("EXPLORER"),
         row![
             widgets::icon(theme::Icon::Database, theme::icons::META, true),
@@ -30,14 +54,23 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
             .font(theme::mono())
             .style(theme::text_muted),
     ]
-    .spacing(theme::spacing::SM);
+    .spacing(theme::spacing::MD);
 
     let tree = tree(model, app_theme);
 
     let filters = filters();
 
     container(
-        column![header, scrollable(tree).height(Length::Fill), filters].spacing(theme::spacing::XL),
+        column![
+            header,
+            scrollable(tree)
+                .direction(Direction::Vertical(
+                    Scrollbar::default().width(4).scroller_width(4).spacing(8)
+                ))
+                .height(Length::Fill),
+            filters
+        ]
+        .spacing(theme::spacing::XL),
     )
     .width(width)
     .height(Length::Fill)
@@ -221,7 +254,7 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
                 scan_summary(*documents, *errors, *warnings),
                 widgets::section_title("FILES")
             ]
-            .spacing(theme::spacing::XXS);
+            .spacing(theme::spacing::SM);
             for node in &model.explorer {
                 tree = tree.push(tree_node(
                     node,
@@ -263,7 +296,8 @@ fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([4.0, 4.0])
+    .height(30)
+    .padding([0.0, theme::spacing::SM])
     .style(if selected {
         theme::button_tree_selected
     } else {
@@ -302,7 +336,7 @@ fn scan_summary(documents: usize, errors: usize, warnings: usize) -> Element<'st
             .size(theme::typography::LABEL)
             .style(theme::text_muted),
     )
-    .padding([0.0, 8.0])
+    .padding([0.0, theme::spacing::SM])
     .into()
 }
 
@@ -353,7 +387,8 @@ fn tree_node<'a>(
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([4.0, 4.0])
+    .height(34)
+    .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::ExplorerNodeToggled(node.id));
 
@@ -429,7 +464,8 @@ fn collection_row<'a>(
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([4.0, 4.0])
+    .height(34)
+    .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::CollectionSelected(collection.id.clone()))
     .into()
@@ -440,16 +476,15 @@ fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
         text("Nenhuma pasta aberta")
             .size(theme::typography::BODY)
             .style(theme::text_muted),
-        button(
-            row![
-                widgets::icon(theme::Icon::Folder, theme::icons::TOOLBAR, false),
-                text("Abrir pasta").size(theme::typography::BODY)
-            ]
-            .spacing(theme::spacing::SM)
-            .align_y(Alignment::Center)
-        )
-        .padding([6.0, 9.0])
-        .style(theme::button_toolbar)
+        button(widgets::icon_text(
+            theme::Icon::Folder,
+            "Abrir pasta",
+            theme::icons::TOOLBAR,
+            false
+        ))
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .padding([0.0, 12.0])
+        .style(theme::button_primary)
         .on_press(Message::OpenFolder)
     ]
     .spacing(theme::spacing::MD)

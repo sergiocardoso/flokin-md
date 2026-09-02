@@ -28,12 +28,12 @@ fn empty_state(title: String, description: String, width: f32) -> Element<'stati
             ]
             .spacing(theme::spacing::SM),
         ]
-        .spacing(theme::spacing::MD),
+        .spacing(theme::spacing::LG),
     ))
     .width(width)
     .height(Length::Fill)
-    .padding(theme::spacing::LG)
-    .style(theme::panel)
+    .padding(theme::spacing::XL)
+    .style(theme::inspector_panel)
     .into()
 }
 
@@ -42,7 +42,7 @@ fn document_inspector(
     width: f32,
 ) -> Element<'static, Message> {
     let mut content =
-        column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::MD);
+        column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::XL);
 
     for field in inspector.properties {
         content = content.push(field_row(field));
@@ -101,14 +101,14 @@ fn document_inspector(
     container(scrollable(content))
         .width(width)
         .height(Length::Fill)
-        .padding(theme::spacing::LG)
-        .style(theme::panel)
+        .padding(theme::spacing::XL)
+        .style(theme::inspector_panel)
         .into()
 }
 
 fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Message> {
     let mut content =
-        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::MD);
+        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::LG);
 
     content = content
         .push(health_field(
@@ -185,8 +185,8 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
     container(scrollable(content))
         .width(width)
         .height(Length::Fill)
-        .padding(theme::spacing::LG)
-        .style(theme::panel)
+        .padding(theme::spacing::XL)
+        .style(theme::inspector_panel)
         .into()
 }
 
@@ -248,15 +248,14 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
             .align_y(Alignment::Center),
         )
         .width(Length::Fill)
-        .padding([3.0, 0.0])
+        .height(32)
+        .padding([0.0, theme::spacing::SM])
         .style(theme::button_ghost)
         .on_press(Message::MarkdownSelected(path))
         .into()
     } else {
         row![
-            text("⚠")
-                .size(theme::typography::BODY)
-                .style(theme::text_warning),
+            widgets::icon(theme::Icon::Health, theme::icons::META, true),
             text(label)
                 .size(theme::typography::BODY)
                 .style(theme::text_normal)
@@ -273,7 +272,7 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
             .style(theme::text_muted),
         target,
     ]
-    .spacing(theme::spacing::XXS);
+    .spacing(theme::spacing::XS);
 
     if let Some(status_text) = status_text {
         details = details.push(
@@ -304,7 +303,7 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
 
     container(details)
         .width(Length::Fill)
-        .padding([4.0, 0.0])
+        .padding([8.0, 0.0])
         .into()
 }
 
@@ -350,16 +349,14 @@ fn field_row(field: InspectorField) -> Element<'static, Message> {
         .spacing(theme::spacing::XXS),
     )
     .width(Length::Fill)
-    .padding([3.0, 0.0])
+    .padding([8.0, 0.0])
     .into()
 }
 
 fn warning_row(warning: String) -> Element<'static, Message> {
     container(
         row![
-            text("⚠")
-                .size(theme::typography::BODY)
-                .style(theme::text_warning),
+            widgets::icon(theme::Icon::Health, theme::icons::META, true),
             text(warning)
                 .size(theme::typography::BODY)
                 .style(theme::text_warning)

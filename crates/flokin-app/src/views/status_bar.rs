@@ -53,8 +53,8 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     }
     status_items.push(String::from("Markdown"));
 
-    let mut row = row![]
-        .spacing(theme::spacing::LG)
+    let mut row = row![container("").width(6).height(6).style(theme::status_dot)]
+        .spacing(theme::spacing::MD)
         .align_y(Alignment::Center);
     let mut is_first = true;
 
@@ -73,7 +73,7 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
             is_first = false;
         } else {
             row = row.push(
-                text("│")
+                text("·")
                     .size(theme::typography::LABEL)
                     .style(theme::text_muted),
             );
@@ -91,6 +91,6 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
         .height(26)
         .width(Length::Fill)
         .padding([0.0, theme::spacing::MD])
-        .style(theme::elevated)
+        .style(theme::status_bar)
         .into()
 }

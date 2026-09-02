@@ -78,26 +78,34 @@ pub mod typography {
 pub mod icons {
     use super::tokens;
 
-    pub const TREE: f32 = 15.0;
+    pub const BRAND: f32 = 28.0;
+    pub const TREE: f32 = 16.0;
     pub const TOOLBAR: f32 = tokens::SIZES.toolbar_icon_size;
     pub const ACTIVITY: f32 = tokens::SIZES.activity_icon_size;
-    pub const META: f32 = 15.0;
+    pub const META: f32 = 16.0;
 }
 
 pub mod sizes {
     use super::tokens;
 
+    pub const CONTROL_HEIGHT_SMALL: f32 = tokens::SIZES.control_height_small;
+    pub const CONTROL_HEIGHT_MEDIUM: f32 = tokens::SIZES.control_height_medium;
+    pub const CONTROL_HEIGHT_LARGE: f32 = tokens::SIZES.control_height_large;
+    pub const ICON_SLOT_SMALL: f32 = tokens::SIZES.icon_slot_small;
+    pub const ICON_SLOT_MEDIUM: f32 = tokens::SIZES.icon_slot_medium;
+    pub const ICON_SLOT_LARGE: f32 = tokens::SIZES.icon_slot_large;
     pub const ACTIVITY_BAR_WIDTH: f32 = tokens::SIZES.activity_bar_width;
-    pub const ACTIVITY_BUTTON_SIZE: f32 = tokens::SIZES.activity_button_size;
+    pub const ACTIVITY_BUTTON_SIZE: f32 = CONTROL_HEIGHT_LARGE - 2.0;
     pub const TOOLBAR_HEIGHT: f32 = tokens::SIZES.toolbar_height;
+    #[allow(dead_code)]
     pub const TOOLBAR_BUTTON_WIDTH: f32 = tokens::SIZES.toolbar_button_width;
-    pub const TOOLBAR_BUTTON_HEIGHT: f32 = tokens::SIZES.toolbar_button_height;
+    pub const TOOLBAR_BUTTON_HEIGHT: f32 = CONTROL_HEIGHT_MEDIUM;
     pub const TOOLBAR_SEARCH_WIDTH: f32 = tokens::SIZES.toolbar_search_width;
     pub const TAB_HEIGHT: f32 = tokens::SIZES.tab_height;
     pub const TAB_BUTTON_HEIGHT: f32 = tokens::SIZES.tab_button_height;
-    pub const TAB_CLOSE_WIDTH: f32 = tokens::SIZES.tab_close_width;
+    pub const TAB_CLOSE_WIDTH: f32 = CONTROL_HEIGHT_SMALL - 6.0;
     pub const TAB_ICON_SIZE: f32 = tokens::SIZES.tab_icon_size;
-    pub const TAB_UNDERLINE_HEIGHT: f32 = tokens::SIZES.tab_underline_height;
+    pub const DOCUMENT_HEADER_HEIGHT: f32 = tokens::SIZES.document_header_height;
     pub const EDITOR_LINE_HEIGHT_RATIO: f32 = tokens::SIZES.editor_line_height_ratio;
     pub const EDITOR_GUTTER_WIDTH: f32 = tokens::SIZES.editor_gutter_width;
     pub const DATA_GRID_ROW_HEIGHT: f32 = tokens::SIZES.data_grid_row_height;
@@ -123,8 +131,6 @@ pub mod sizes {
     pub const SEARCH_OVERLAY_HEIGHT: f32 = tokens::SIZES.search_overlay_height;
     pub const SEARCH_RESULTS_HEIGHT: f32 = tokens::SIZES.search_results_height;
     pub const DIALOG_WIDTH: f32 = tokens::SIZES.dialog_width;
-    pub const DIVIDER_WIDTH: f32 = tokens::SIZES.divider_width;
-    pub const DIVIDER_HEIGHT: f32 = tokens::SIZES.divider_height;
     pub const GRAPH_NODE_WIDTH: f32 = tokens::SIZES.graph_node_width;
     pub const GRAPH_NODE_HEIGHT: f32 = tokens::SIZES.graph_node_height;
     pub const GRAPH_TOOLBAR_BUTTON_SIZE: f32 = tokens::SIZES.graph_toolbar_button_size;
@@ -148,6 +154,7 @@ pub enum Icon {
     Frame,
     Graph,
     Health,
+    Mark,
     Minus,
     PanelLeft,
     Plus,
@@ -178,7 +185,7 @@ pub fn application_style(theme: &Theme) -> iced_theme::Style {
     let palette = palette(theme);
 
     iced_theme::Style {
-        background_color: palette.background,
+        background_color: palette.app_background,
         text_color: palette.text,
     }
 }
@@ -197,7 +204,7 @@ pub fn text_muted(theme: &Theme) -> text::Style {
 
 pub fn text_accent(theme: &Theme) -> text::Style {
     text::Style {
-        color: Some(palette(theme).accent),
+        color: Some(palette(theme).accent_text),
     }
 }
 
@@ -236,10 +243,10 @@ pub fn markdown_preview_settings(app_theme: AppTheme) -> markdown::Settings {
         code_block_font: typography::MONO,
         link_color: palette.preview_link,
     };
-    let mut settings = markdown::Settings::with_text_size(typography::BODY, style);
-    settings.h1_size = 26.0.into();
-    settings.h2_size = 21.0.into();
-    settings.h3_size = 17.0.into();
+    let mut settings = markdown::Settings::with_text_size(typography::BODY + 1, style);
+    settings.h1_size = 31.0.into();
+    settings.h2_size = 24.0.into();
+    settings.h3_size = 19.0.into();
     settings.h4_size = typography::TITLE.into();
     settings.h5_size = typography::BODY.into();
     settings.h6_size = typography::BODY.into();
@@ -305,12 +312,72 @@ fn text_editor_with_background(
 
 pub fn panel(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.panel, None, radius::XS)
+    container_style(
+        palette.sidebar_background,
+        Some(palette.border_subtle),
+        radius::LG,
+    )
 }
 
 pub fn elevated(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.surface_elevated, None, radius::SM)
+    container_style(
+        palette.surface_elevated,
+        Some(palette.border_subtle),
+        radius::MD,
+    )
+}
+
+pub fn top_bar(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.top_bar_background, Some(palette.border_subtle), 0.0)
+}
+
+pub fn activity_bar(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.activity_bar_background, None, radius::LG)
+}
+
+pub fn inspector_panel(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.inspector_background,
+        Some(palette.border_subtle),
+        radius::LG,
+    )
+}
+
+pub fn document_surface(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.content_background,
+        Some(palette.border_subtle),
+        radius::LG,
+    )
+}
+
+pub fn document_header(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.content_background, None, radius::MD)
+}
+
+pub fn segmented_control(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.surface, Some(palette.border_subtle), radius::MD)
+}
+
+pub fn status_bar(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.status_bar_background,
+        Some(palette.border_subtle),
+        0.0,
+    )
+}
+
+pub fn status_dot(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.success, None, radius::LG)
 }
 
 pub fn overlay_panel(theme: &Theme) -> container::Style {
@@ -359,7 +426,7 @@ pub fn overlay_backdrop(theme: &Theme) -> container::Style {
 
 pub fn surface(theme: &Theme) -> container::Style {
     let palette = palette(theme);
-    container_style(palette.surface, None, radius::SM)
+    container_style(palette.surface, Some(palette.border_subtle), radius::SM)
 }
 
 pub fn editor(theme: &Theme) -> container::Style {
@@ -374,15 +441,6 @@ pub fn editor(theme: &Theme) -> container::Style {
 pub fn graph_panel(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.graph_background, None, 0.0)
-}
-
-pub fn graph_toolbar(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container_style(
-        palette.graph_toolbar_background,
-        Some(palette.graph_toolbar_border),
-        0.0,
-    )
 }
 
 pub fn graph_toolbar_group(theme: &Theme) -> container::Style {
@@ -407,7 +465,7 @@ pub fn gutter(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
         text_color: Some(palette.text_muted),
-        background: Some(Background::Color(palette.editor_gutter)),
+        background: Some(Background::Color(palette.editor_gutter_background)),
         border: Border::default(),
         shadow: Shadow::default(),
         ..container::Style::default()
@@ -433,11 +491,6 @@ pub fn chip(theme: &Theme) -> container::Style {
 pub fn divider(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.border_subtle, Some(palette.border_subtle), 0.0)
-}
-
-pub fn tab_underline(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container_style(palette.accent, None, 0.0)
 }
 
 pub fn table_row(theme: &Theme) -> container::Style {
@@ -518,7 +571,7 @@ pub fn table_row_selected(theme: &Theme) -> container::Style {
 pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let palette = palette(theme);
     let border_color = match status {
-        text_input::Status::Focused { .. } => palette.accent,
+        text_input::Status::Focused { .. } => palette.focus_ring,
         text_input::Status::Hovered => palette.border,
         _ => palette.border_subtle,
     };
@@ -533,12 +586,37 @@ pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
     }
 }
 
+pub fn input_embedded(theme: &Theme, _status: text_input::Status) -> text_input::Style {
+    let palette = palette(theme);
+    text_input::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border::default(),
+        icon: palette.text_muted,
+        placeholder: palette.text_muted,
+        value: palette.text,
+        selection: palette.accent_soft,
+    }
+}
+
 pub fn button_toolbar(theme: &Theme, status: button::Status) -> button::Style {
     button_chrome(theme, status, false)
 }
 
 pub fn button_activity(theme: &Theme, status: button::Status) -> button::Style {
-    button_chrome(theme, status, false)
+    let palette = palette(theme);
+    let background = match status {
+        button::Status::Hovered => Some(Background::Color(palette.surface_hover)),
+        button::Status::Pressed => Some(Background::Color(palette.surface_pressed)),
+        _ => None,
+    };
+
+    button::Style {
+        background,
+        text_color: palette.text_muted,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
 }
 
 pub fn button_graph_toolbar(theme: &Theme, status: button::Status) -> button::Style {
@@ -567,13 +645,58 @@ pub fn button_graph_toolbar(theme: &Theme, status: button::Status) -> button::St
 pub fn button_selected(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
-        button::Status::Hovered => palette.surface_active,
+        button::Status::Hovered => palette.surface_selected,
+        button::Status::Pressed => palette.surface_pressed,
         _ => palette.accent_soft,
     };
 
     button::Style {
         background: Some(Background::Color(background)),
-        text_color: palette.accent,
+        text_color: palette.accent_text,
+        border: Border::default(),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
+pub fn button_accent_outline(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = palette(theme);
+    let background = match status {
+        button::Status::Hovered => palette.accent_soft,
+        button::Status::Pressed => palette.surface_pressed,
+        _ => Color::TRANSPARENT,
+    };
+
+    button::Style {
+        background: if background == Color::TRANSPARENT {
+            None
+        } else {
+            Some(Background::Color(background))
+        },
+        text_color: palette.accent_text,
+        border: border(palette.accent_border, 1.0, radius::SM),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
+pub fn button_primary(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = palette(theme);
+    let background = match status {
+        button::Status::Hovered => palette.accent_hover,
+        button::Status::Pressed => palette.accent_pressed,
+        button::Status::Disabled => palette.surface_active,
+        button::Status::Active => palette.accent,
+    };
+    let text_color = if matches!(status, button::Status::Disabled) {
+        palette.text_disabled
+    } else {
+        palette.text_inverse
+    };
+
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color,
         border: Border::default(),
         shadow: Shadow::default(),
         ..button::Style::default()
@@ -603,7 +726,7 @@ pub fn button_menu(theme: &Theme, status: button::Status) -> button::Style {
 pub fn splitter(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
-        background: Some(Background::Color(palette.border_subtle)),
+        background: Some(Background::Color(palette.app_background)),
         ..container::Style::default()
     }
 }
@@ -613,6 +736,7 @@ pub fn button_tree(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
         button::Status::Hovered => Some(Background::Color(palette.surface_hover)),
+        button::Status::Pressed => Some(Background::Color(palette.surface_pressed)),
         _ => None,
     };
 
@@ -629,7 +753,8 @@ pub fn button_tree(theme: &Theme, status: button::Status) -> button::Style {
 pub fn button_tree_selected(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
-        button::Status::Hovered => palette.surface_active,
+        button::Status::Hovered => palette.surface_selected,
+        button::Status::Pressed => palette.surface_pressed,
         _ => palette.surface_selected,
     };
 
@@ -685,6 +810,7 @@ pub fn button_tab(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
         button::Status::Hovered => palette.surface_hover,
+        button::Status::Pressed => palette.surface_pressed,
         _ => Color::TRANSPARENT,
     };
 
@@ -701,11 +827,16 @@ pub fn button_tab(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-pub fn button_tab_selected(theme: &Theme, _status: button::Status) -> button::Style {
+pub fn button_tab_selected(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
+    let background = match status {
+        button::Status::Hovered => palette.surface_selected,
+        button::Status::Pressed => palette.surface_pressed,
+        _ => palette.accent_soft,
+    };
     button::Style {
-        background: None,
-        text_color: palette.text,
+        background: Some(Background::Color(background)),
+        text_color: palette.accent_text,
         border: Border::default(),
         shadow: Shadow::default(),
         ..button::Style::default()
@@ -722,11 +853,11 @@ fn button_chrome(theme: &Theme, status: button::Status, selected: bool) -> butto
         (true, button::Status::Hovered) => palette.accent_hover,
         (true, _) => palette.accent,
         (false, button::Status::Hovered) => palette.surface_hover,
-        (false, button::Status::Pressed) => palette.surface_active,
+        (false, button::Status::Pressed) => palette.surface_pressed,
         (false, _) => Color::TRANSPARENT,
     };
     let text_color = if selected {
-        palette.accent
+        palette.accent_text
     } else {
         palette.text
     };
@@ -785,6 +916,9 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Health => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/><path d="M7 12h3l1.5-4 2 7 1.5-3h2"/></svg>"#
+        }
+        Icon::Mark => {
+            r#"<svg viewBox="0 0 24 24"><path d="M6 19V5h10"/><path d="M6 12h8"/><path d="M14 5v14"/><path d="M14 12l4.5 4.5"/><path d="M19 8v8"/></svg>"#
         }
         Icon::Minus => r#"<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>"#,
         Icon::PanelLeft => {

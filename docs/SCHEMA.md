@@ -1,9 +1,15 @@
 # Schema
 
-Schema in FlokinMD is read-only in MDB-014.
-
 Markdown files remain the source of truth. A workspace does not need setup,
 migrations, a database file, configuration, or a schema file.
+
+Schema has two layers:
+
+- inferred schema, always available from the loaded Markdown documents;
+- explicit schema, optional, stored as `flokin.schema.yaml` at the workspace root.
+
+FlokinMD never creates `flokin.schema.yaml` automatically when opening a
+workspace. Creating it requires an explicit user action.
 
 ## Inferred Schema
 
@@ -83,6 +89,49 @@ Supported explicit field types:
 `version` may be omitted and is treated as `1`. Incompatible versions are not
 interpreted silently.
 
-FlokinMD never creates, formats, saves, or migrates `flokin.schema.yaml` in
-MDB-014. Invalid schema files do not block the workspace; inferred schema
-remains available and the UI shows a warning.
+Invalid schema files do not block the workspace; inferred schema remains
+available, Schema View shows a warning, and Database Health reports the schema
+issue.
+
+## Creating A Schema
+
+When no explicit schema exists, Schema View shows `Schema inferido` and offers
+`Criar schema explícito`. Database Health can show the same creation action as a
+compact hint.
+
+The creation dialog explains that FlokinMD will create:
+
+```text
+<workspace>/flokin.schema.yaml
+```
+
+The generated file is a snapshot of the currently inferred schema:
+
+- all non-empty Collections are included;
+- fields use the current inferred type;
+- `required` uses the current coverage observation;
+- output order is deterministic.
+
+Mixed, Null, and Unknown fields are not declared automatically because FlokinMD
+does not guess a definitive type. Mixed fields are listed in the dialog and can
+be added manually after the data or schema is clarified.
+
+If `flokin.schema.yaml` already exists, FlokinMD does not overwrite it. The UI
+offers `Abrir schema` instead.
+
+## Editing A Schema
+
+When an explicit schema exists, Schema View shows `Schema explícito` and an
+`Abrir schema` action. The same action appears in Database Health when the file
+is invalid.
+
+`flokin.schema.yaml` opens in the real editor as a special configuration tab:
+
+- it is not scanned as a Markdown Document;
+- it supports editing, dirty state, close protection, and Ctrl+S;
+- saving writes only the schema file;
+- the watcher reloads SchemaCatalog and Database Health after save.
+
+If the edit makes the YAML invalid, the editor remains usable, inferred schema
+continues to work, and Health reports the error. Correcting and saving the file
+removes the Health issue through the same reload pipeline.

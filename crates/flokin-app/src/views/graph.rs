@@ -87,7 +87,7 @@ pub fn sidebar(state: &GraphViewState, width: f32) -> Element<'_, Message> {
     container(scrollable(content))
         .width(width)
         .height(Length::Fill)
-        .padding(theme::spacing::LG)
+        .padding(theme::spacing::MD)
         .style(theme::panel)
         .into()
 }
@@ -187,7 +187,7 @@ pub fn view<'a>(
         container(toolbar)
             .height(theme::sizes::TOOLBAR_HEIGHT)
             .padding([0.0, theme::spacing::LG])
-            .style(theme::graph_toolbar),
+            .style(theme::top_bar),
         container(canvas)
             .width(Length::Fill)
             .height(Length::Fill)

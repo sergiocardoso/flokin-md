@@ -23,6 +23,7 @@ pub fn mock_shell() -> ShellModel {
         workspace_errors: Vec::new(),
         selected_schema_field: None,
         collection_panel: CollectionPanel::Data,
+        bulk_edit: crate::model::BulkEditState::default(),
         editor: crate::model::EditorState::default(),
         sql_explorer: SqlExplorerState::closed(),
         collapsed_sql_tables: BTreeSet::new(),
