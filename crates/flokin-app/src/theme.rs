@@ -22,13 +22,6 @@ impl AppTheme {
         }
     }
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Dark => "Light",
-            Self::Light => "Dark",
-        }
-    }
-
     pub const fn iced(self) -> Theme {
         match self {
             Self::Dark => Theme::TokyoNight,
@@ -149,9 +142,12 @@ pub enum Icon {
     ChevronRight,
     #[allow(dead_code)]
     ChevronDown,
+    ChevronsDown,
+    ChevronsUp,
     Clock,
     Database,
     ExternalLink,
+    FilePlus,
     FileText,
     Folder,
     Focus,
@@ -775,6 +771,34 @@ pub fn button_menu(theme: &Theme, status: button::Status) -> button::Style {
     button_chrome(theme, status, false)
 }
 
+pub fn context_metric(theme: &Theme, metric: usize, status: button::Status) -> button::Style {
+    let palette = palette(theme);
+    let background = match metric % 9 {
+        0 => palette.accent_soft,
+        1 => palette.info_soft,
+        2 => palette.surface_active,
+        3 => palette.success_soft,
+        4 => palette.accent_soft,
+        5 => palette.warning_soft,
+        6 => palette.error_soft,
+        7 => palette.info_soft,
+        _ => palette.surface_hover,
+    };
+    let background = match status {
+        button::Status::Hovered => palette.surface_pressed,
+        button::Status::Pressed => palette.surface_active,
+        _ => background,
+    };
+
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: palette.text,
+        border: border(palette.border_subtle, 1.0, radius::MD),
+        shadow: Shadow::default(),
+        ..button::Style::default()
+    }
+}
+
 pub fn splitter(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
@@ -925,6 +949,12 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::ChevronRight => r#"<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>"#,
         Icon::ChevronDown => r#"<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>"#,
+        Icon::ChevronsDown => {
+            r#"<svg viewBox="0 0 24 24"><path d="m7 6 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>"#
+        }
+        Icon::ChevronsUp => {
+            r#"<svg viewBox="0 0 24 24"><path d="m7 11 5-5 5 5"/><path d="m7 18 5-5 5 5"/></svg>"#
+        }
         Icon::Clock => {
             r#"<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>"#
         }
@@ -933,6 +963,9 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::ExternalLink => {
             r#"<svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="m10 14 10-10"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/></svg>"#
+        }
+        Icon::FilePlus => {
+            r#"<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>"#
         }
         Icon::FileText => {
             r#"<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>"#

@@ -421,6 +421,7 @@ pub struct ShellModel {
     pub collections: Vec<Collection>,
     pub scan_state: ScanState,
     pub selected_document_path: Option<PathBuf>,
+    pub selected_explorer_folder_path: Option<PathBuf>,
     pub selected_collection: Option<String>,
     pub collection_table_sort: Option<TableSort>,
     pub search: SearchState,
@@ -562,6 +563,7 @@ impl ShellModel {
         self.documents.clear();
         self.collections.clear();
         self.selected_document_path = None;
+        self.selected_explorer_folder_path = None;
         self.selected_collection = None;
         self.collection_table_sort = None;
         self.search = SearchState::closed();
@@ -716,7 +718,16 @@ impl ShellModel {
     }
 
     pub fn toggle_explorer_node(&mut self, id: ExplorerNodeId) -> bool {
-        self.explorer.iter_mut().any(|node| node.toggle(id))
+        let toggled_folder = self
+            .explorer
+            .iter_mut()
+            .find_map(|node| node.toggle_folder(id));
+        if let Some(path) = toggled_folder {
+            self.selected_explorer_folder_path = Some(path);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn select_explorer_node(&mut self, id: ExplorerNodeId) -> bool {
@@ -735,9 +746,37 @@ impl ShellModel {
         }
     }
 
+    pub fn explorer_tree_has_expanded_dirs(&self) -> bool {
+        self.explorer
+            .iter()
+            .any(|node| node.has_expanded_descendant(true))
+    }
+
+    pub fn toggle_explorer_tree_expansion(&mut self) {
+        let expand = !self.explorer_tree_has_expanded_dirs();
+        for node in &mut self.explorer {
+            node.set_expanded_recursive(expand, true);
+        }
+    }
+
+    pub fn new_markdown_file_parent(&self) -> Option<PathBuf> {
+        if let Some(folder) = self.selected_explorer_folder_path.as_ref() {
+            return Some(folder.clone());
+        }
+        if let Some(parent) = self
+            .selected_document_path
+            .as_ref()
+            .and_then(|path| path.parent())
+        {
+            return Some(parent.to_path_buf());
+        }
+        self.current_workspace.clone()
+    }
+
     pub fn select_markdown_path(&mut self, path: PathBuf) -> bool {
         if self.open_editor_tab(path.clone()) {
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -752,6 +791,7 @@ impl ShellModel {
             let path = document.path.clone();
             self.open_editor_tab(path.clone());
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -766,6 +806,7 @@ impl ShellModel {
     pub fn select_document_without_opening(&mut self, path: PathBuf) -> bool {
         if self.documents.iter().any(|document| document.path == path) {
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -784,6 +825,18 @@ impl ShellModel {
         }
     }
 
+    fn sync_selected_explorer_folder_with_tree(&mut self) {
+        if let Some(path) = self.selected_explorer_folder_path.as_ref() {
+            if !self
+                .explorer
+                .iter()
+                .any(|node| node.contains_folder_path(path))
+            {
+                self.selected_explorer_folder_path = None;
+            }
+        }
+    }
+
     pub fn select_collection(&mut self, collection_id: String) {
         if self
             .collections
@@ -795,6 +848,7 @@ impl ShellModel {
             }
             self.selected_collection = Some(collection_id);
             self.selected_document_path = None;
+            self.selected_explorer_folder_path = None;
             self.editor.active_path = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -1331,6 +1385,7 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_selected_explorer_folder_with_tree();
         self.sync_context_selection_with_documents();
         if let Some(selected_collection) = self.selected_collection.as_ref() {
             if !self
@@ -1454,6 +1509,7 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_selected_explorer_folder_with_tree();
         self.sync_context_selection_with_documents();
         self.retain_bulk_selection_in_current_collection();
 
@@ -2275,6 +2331,42 @@ impl ExplorerNode {
 
         self.children.iter().find_map(|child| child.file_path(id))
     }
+
+    fn toggle_folder(&mut self, id: ExplorerNodeId) -> Option<PathBuf> {
+        if self.id == id && self.is_folder() {
+            self.expanded = !self.expanded;
+            return Some(self.path.clone());
+        }
+
+        self.children
+            .iter_mut()
+            .find_map(|child| child.toggle_folder(id))
+    }
+
+    fn contains_folder_path(&self, path: &Path) -> bool {
+        (self.is_folder() && self.path == path)
+            || self
+                .children
+                .iter()
+                .any(|child| child.contains_folder_path(path))
+    }
+
+    fn has_expanded_descendant(&self, is_root: bool) -> bool {
+        (self.is_folder() && !is_root && self.expanded)
+            || self
+                .children
+                .iter()
+                .any(|child| child.has_expanded_descendant(false))
+    }
+
+    fn set_expanded_recursive(&mut self, expanded: bool, is_root: bool) {
+        if self.is_folder() {
+            self.expanded = is_root || expanded;
+        }
+        for child in &mut self.children {
+            child.set_expanded_recursive(expanded, false);
+        }
+    }
 }
 
 fn explorer_from_scan_result(result: &ScanResult) -> Vec<ExplorerNode> {
@@ -2889,6 +2981,101 @@ mod tests {
         assert!(!shell.explorer[0].children[0].expanded);
         assert!(shell.toggle_explorer_node(ExplorerNodeId(2)));
         assert!(shell.explorer[0].children[0].expanded);
+    }
+
+    #[test]
+    fn folder_toggle_tracks_new_markdown_file_parent() {
+        let mut shell = mock_shell();
+        let folder = PathBuf::from("/tmp/Knowledge/Projects");
+        shell.current_workspace = Some(PathBuf::from("/tmp/Knowledge"));
+        shell.explorer = vec![ExplorerNode::folder(
+            1,
+            "Knowledge",
+            PathBuf::from("/tmp/Knowledge"),
+            vec![ExplorerNode::folder(
+                2,
+                "Projects",
+                folder.clone(),
+                Vec::new(),
+            )],
+        )];
+
+        assert!(shell.toggle_explorer_node(ExplorerNodeId(2)));
+
+        assert_eq!(shell.selected_explorer_folder_path, Some(folder.clone()));
+        assert_eq!(shell.new_markdown_file_parent(), Some(folder));
+    }
+
+    #[test]
+    fn file_selection_uses_parent_for_new_markdown_file() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "# CARF");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("projects/carf.md");
+
+        assert!(shell.select_markdown_path(path));
+
+        assert_eq!(
+            shell.new_markdown_file_parent(),
+            Some(workspace.path().join("projects"))
+        );
+    }
+
+    #[test]
+    fn no_selection_uses_workspace_root_for_new_markdown_file() {
+        let workspace = TempWorkspace::new();
+        let mut shell = mock_shell();
+        shell.workspace_selected(Some(workspace.path().to_path_buf()));
+
+        assert_eq!(
+            shell.new_markdown_file_parent(),
+            Some(workspace.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn collapse_all_preserves_selected_document() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a/b/c.md", "# C");
+        let mut shell = shell_from_workspace(&workspace);
+        let selected = workspace.path().join("a/b/c.md");
+        assert!(shell.select_markdown_path(selected.clone()));
+        assert!(shell.explorer_tree_has_expanded_dirs());
+
+        shell.toggle_explorer_tree_expansion();
+
+        assert_eq!(shell.selected_document_path, Some(selected));
+        assert!(!shell.explorer_tree_has_expanded_dirs());
+        assert!(shell.explorer[0].expanded);
+        assert!(!shell.explorer[0].children[0].expanded);
+    }
+
+    #[test]
+    fn expand_all_includes_nested_directories() {
+        let mut shell = mock_shell();
+        shell.explorer = vec![ExplorerNode::folder(
+            1,
+            "Knowledge",
+            PathBuf::from("/tmp/Knowledge"),
+            vec![ExplorerNode::collapsed_folder(
+                2,
+                "a",
+                PathBuf::from("/tmp/Knowledge/a"),
+                vec![ExplorerNode::collapsed_folder(
+                    3,
+                    "b",
+                    PathBuf::from("/tmp/Knowledge/a/b"),
+                    Vec::new(),
+                )],
+            )],
+        )];
+
+        shell.toggle_explorer_tree_expansion();
+
+        assert!(shell.explorer_tree_has_expanded_dirs());
+        assert!(shell.explorer[0].expanded);
+        assert!(shell.explorer[0].children[0].expanded);
+        assert!(shell.explorer[0].children[0].children[0].expanded);
     }
 
     #[test]

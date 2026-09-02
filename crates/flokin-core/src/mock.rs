@@ -14,6 +14,7 @@ pub fn mock_shell() -> ShellModel {
         collections: Vec::new(),
         scan_state: ScanState::Idle,
         selected_document_path: None,
+        selected_explorer_folder_path: None,
         selected_collection: None,
         collection_table_sort: None,
         search: SearchState::closed(),

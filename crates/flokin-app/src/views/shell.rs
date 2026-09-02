@@ -8,7 +8,7 @@ use iced::{alignment, mouse, Alignment, Element, Length};
 use crate::{
     brand,
     i18n::{AppLanguage, I18nCatalog},
-    message::{AppMode, MenuAction, MenuId, Message, SplitterKind},
+    message::{AppMode, MenuAction, MenuId, Message, NewMarkdownFileError, SplitterKind},
     theme::{self, AppTheme},
     views,
     views::graph::GraphViewState,
@@ -26,16 +26,21 @@ pub fn view<'a>(
     app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
+    markdown_editor_scroll_y: f32,
     markdown_preview: &'a [markdown::Item],
     graph_state: &'a GraphViewState,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
     sql_editor_height: f32,
+    collection_page: usize,
     open_menu: Option<MenuId>,
     about_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<&'a str>,
+    new_file_dialog_open: bool,
+    new_file_name: &'a str,
+    new_file_error: Option<&'a NewMarkdownFileError>,
     left_visible: bool,
     right_visible: bool,
     mode: AppMode,
@@ -74,14 +79,16 @@ pub fn view<'a>(
             app_theme,
             sql_editor,
             markdown_editor,
+            markdown_editor_scroll_y,
             markdown_preview,
             sql_editor_height,
+            collection_page,
             i18n,
         ));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
-                .push(views::inspector::view(model, inspector_width));
+                .push(views::inspector::view(model, inspector_width, i18n));
         }
         content
     } else if mode == AppMode::Context {
@@ -113,7 +120,7 @@ pub fn view<'a>(
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
-                .push(views::inspector::view(model, inspector_width));
+                .push(views::inspector::view(model, inspector_width, i18n));
         }
         content
     } else if mode == AppMode::Health {
@@ -122,7 +129,7 @@ pub fn view<'a>(
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
-                .push(views::inspector::view(model, inspector_width));
+                .push(views::inspector::view(model, inspector_width, i18n));
         }
         content
     } else if mode == AppMode::History {
@@ -150,14 +157,16 @@ pub fn view<'a>(
             app_theme,
             sql_editor,
             markdown_editor,
+            markdown_editor_scroll_y,
             markdown_preview,
             sql_editor_height,
+            collection_page,
             i18n,
         ));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
-                .push(views::inspector::view(model, inspector_width));
+                .push(views::inspector::view(model, inspector_width, i18n));
         }
         content
     };
@@ -198,6 +207,12 @@ pub fn view<'a>(
         stack![
             shell,
             schema_create_dialog_overlay(model, schema_create_error, i18n)
+        ]
+        .into()
+    } else if new_file_dialog_open {
+        stack![
+            shell,
+            new_file_dialog_overlay(new_file_name, new_file_error, i18n)
         ]
         .into()
     } else {
@@ -285,11 +300,15 @@ fn welcome_top_shell<'a>(
         i18n.tr("activity-settings"),
     );
 
+    let theme_label = match app_theme {
+        theme::AppTheme::Dark => i18n.tr("theme-light"),
+        theme::AppTheme::Light => i18n.tr("theme-dark"),
+    };
     let theme_button = iced::widget::tooltip(
         button(
             container(widgets::icon_text(
                 theme::Icon::Settings,
-                app_theme.label(),
+                &theme_label,
                 theme::icons::TOOLBAR,
                 false,
             ))
@@ -364,14 +383,28 @@ fn welcome_menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Me
         _ => Vec::new(),
     };
     let mut items = column![];
-    for (label, action) in entries {
+    for (index, (label, action)) in entries.into_iter().enumerate() {
+        if index > 0 {
+            items = items.push(
+                container("")
+                    .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
+                    .height(1)
+                    .style(theme::divider),
+            );
+        }
         items = items.push(
             button(
-                row![text(label)
-                    .size(theme::typography::BODY)
-                    .wrapping(iced::widget::text::Wrapping::None)
-                    .width(Length::Fill)]
-                .align_y(Alignment::Center),
+                container(
+                    row![text(label)
+                        .size(theme::typography::BODY)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                        .width(Length::Fill)]
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(alignment::Horizontal::Left)
+                .align_y(alignment::Vertical::Center),
             )
             .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
             .height(theme::sizes::MENU_ITEM_HEIGHT)
@@ -490,11 +523,15 @@ fn top_shell<'a>(
     let layout_group =
         container(row![left_toggle, right_toggle].spacing(theme::spacing::XS)).padding(2.0);
 
+    let theme_label = match app_theme {
+        theme::AppTheme::Dark => i18n.tr("theme-light"),
+        theme::AppTheme::Light => i18n.tr("theme-dark"),
+    };
     let theme_button = iced::widget::tooltip(
         button(
             container(widgets::icon_text(
                 theme::Icon::Settings,
-                app_theme.label(),
+                &theme_label,
                 theme::icons::TOOLBAR,
                 false,
             ))
@@ -663,6 +700,7 @@ fn menu_overlay<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message>
 fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let entries: Vec<(String, Option<&str>, MenuAction)> = match menu {
         MenuId::File => vec![
+            (i18n.tr("menu-new-file"), None, MenuAction::NewFile),
             (i18n.tr("menu-open-folder"), None, MenuAction::OpenFolder),
             (i18n.tr("menu-close-folder"), None, MenuAction::CloseFolder),
             (i18n.tr("menu-reindex"), None, MenuAction::Reindex),
@@ -702,7 +740,7 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
         MenuId::Help => vec![(i18n.tr("menu-about"), None, MenuAction::About)],
     };
     let mut items = column![];
-    for (label, shortcut, action) in entries {
+    for (index, (label, shortcut, action)) in entries.into_iter().enumerate() {
         let mut content = row![text(label)
             .size(theme::typography::BODY)
             .wrapping(iced::widget::text::Wrapping::None)
@@ -716,13 +754,27 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
                     .style(theme::text_muted),
             );
         }
+        if index > 0 {
+            items = items.push(
+                container("")
+                    .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
+                    .height(1)
+                    .style(theme::divider),
+            );
+        }
         items = items.push(
-            button(content.align_y(Alignment::Center))
-                .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
-                .height(theme::sizes::MENU_ITEM_HEIGHT)
-                .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
-                .style(theme::button_menu)
-                .on_press(Message::MenuAction(action)),
+            button(
+                container(content.align_y(Alignment::Center))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(alignment::Horizontal::Left)
+                    .align_y(alignment::Vertical::Center),
+            )
+            .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
+            .height(theme::sizes::MENU_ITEM_HEIGHT)
+            .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
+            .style(theme::button_menu)
+            .on_press(Message::MenuAction(action)),
         );
     }
     container(items)
@@ -955,6 +1007,87 @@ fn schema_create_dialog_overlay<'a>(
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+fn new_file_dialog_overlay<'a>(
+    file_name: &'a str,
+    error: Option<&'a NewMarkdownFileError>,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut content = column![
+        text(i18n.tr("explorer-new-file"))
+            .size(theme::typography::TITLE)
+            .style(theme::text_accent),
+        text(i18n.tr("explorer-file-name"))
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        text_input("", file_name)
+            .on_input(Message::NewMarkdownFileNameChanged)
+            .on_submit(Message::NewMarkdownFileConfirmed)
+            .padding([8, 10])
+            .size(theme::typography::BODY)
+            .width(Length::Fill)
+            .style(theme::input),
+    ]
+    .spacing(theme::spacing::SM);
+
+    if let Some(error) = error {
+        let error = new_file_error_message(error, i18n);
+        content = content.push(
+            text(error)
+                .size(theme::typography::BODY)
+                .wrapping(iced::widget::text::Wrapping::Word)
+                .style(theme::text_warning),
+        );
+    }
+
+    let actions = row![
+        button(text(i18n.tr("action-cancel")).size(theme::typography::BODY))
+            .padding([6.0, 12.0])
+            .style(theme::button_toolbar)
+            .on_press(Message::NewMarkdownFileCanceled),
+        button(text(i18n.tr("explorer-create-file")).size(theme::typography::BODY))
+            .padding([6.0, 12.0])
+            .style(theme::button_selected)
+            .on_press(Message::NewMarkdownFileConfirmed),
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    let dialog = container(content.push(actions))
+        .width(theme::sizes::DIALOG_WIDTH)
+        .padding(theme::spacing::LG)
+        .style(theme::overlay_panel);
+
+    stack![
+        mouse_area(
+            container("")
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::overlay_backdrop)
+        )
+        .on_press(Message::NewMarkdownFileCanceled),
+        container(dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn new_file_error_message(error: &NewMarkdownFileError, i18n: &I18nCatalog) -> String {
+    match error {
+        NewMarkdownFileError::AlreadyExists => i18n.tr("explorer-file-exists"),
+        NewMarkdownFileError::InvalidName => i18n.tr("explorer-invalid-file-name"),
+        NewMarkdownFileError::NoWorkspace => i18n.tr("explorer-no-workspace"),
+        NewMarkdownFileError::Io(message) => i18n.tr_with(
+            "explorer-file-create-failed",
+            &[("message", message.as_str().into())],
+        ),
+    }
 }
 
 fn splitter(kind: SplitterKind, vertical: bool) -> Element<'static, Message> {
@@ -1249,8 +1382,10 @@ fn workspace<'a>(
     app_theme: AppTheme,
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
+    markdown_editor_scroll_y: f32,
     markdown_preview: &'a [markdown::Item],
     sql_editor_height: f32,
+    collection_page: usize,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     container(
@@ -1261,8 +1396,10 @@ fn workspace<'a>(
                 app_theme,
                 sql_editor,
                 markdown_editor,
+                markdown_editor_scroll_y,
                 markdown_preview,
                 sql_editor_height,
+                collection_page,
                 i18n,
             )
         ]

@@ -1,11 +1,11 @@
 use flokin_core::{
     Collection, ExplorerNode, ExplorerNodeKind, ScanState, SemanticKind, ShellModel, SqlCatalog,
-    SqlTable,
+    SqlColumnType, SqlTable,
 };
 use iced::widget::{
     button, column, container, row, scrollable,
     scrollable::{Direction, Scrollbar},
-    text,
+    text, tooltip,
 };
 use iced::{alignment, Alignment, Element, Length};
 
@@ -24,6 +24,16 @@ pub fn view<'a>(
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let workspace = model.workspace_display();
+    let tree_toggle_label = if model.explorer_tree_has_expanded_dirs() {
+        i18n.tr("explorer-collapse-all")
+    } else {
+        i18n.tr("explorer-expand-all")
+    };
+    let tree_toggle_icon = if model.explorer_tree_has_expanded_dirs() {
+        theme::Icon::ChevronsUp
+    } else {
+        theme::Icon::ChevronsDown
+    };
     let header = column![
         row![
             button(
@@ -54,6 +64,20 @@ pub fn view<'a>(
             .padding([0.0, 12.0])
             .style(theme::button_toolbar)
             .on_press(Message::ReindexWorkspace),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+        row![
+            explorer_header_icon_button(
+                theme::Icon::FilePlus,
+                i18n.tr("explorer-new-file"),
+                Message::NewMarkdownFileRequested,
+            ),
+            explorer_header_icon_button(
+                tree_toggle_icon,
+                tree_toggle_label,
+                Message::ExplorerTreeExpandCollapseToggled,
+            ),
         ]
         .spacing(theme::spacing::SM)
         .align_y(Alignment::Center),
@@ -100,7 +124,7 @@ pub fn sql_schema_view<'a>(
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     let body: Element<'_, Message> = match model.sql_explorer.catalog.as_ref() {
-        Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model),
+        Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model, i18n),
         Some(_) => column![text(i18n.tr("sql-schema-empty"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),]
@@ -119,13 +143,13 @@ pub fn sql_schema_view<'a>(
         column![
             row![
                 widgets::icon(theme::Icon::Database, theme::icons::META, true),
-                text("DATABASE")
+                text(i18n.tr("explorer-database"))
                     .size(theme::typography::TITLE)
                     .style(theme::text_normal),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
-            text("SQLite :memory:")
+            text(i18n.tr("status-sqlite-memory"))
                 .font(theme::mono())
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
@@ -175,18 +199,27 @@ pub fn data_view<'a>(
     .into()
 }
 
-fn sql_schema<'a>(catalog: &'a SqlCatalog, model: &'a ShellModel) -> Element<'a, Message> {
+fn sql_schema<'a>(
+    catalog: &'a SqlCatalog,
+    model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let mut tables = column![].spacing(theme::spacing::SM);
     for table in &catalog.tables {
         tables = tables.push(sql_schema_table(
             table,
             !model.collapsed_sql_tables.contains(&table.name),
+            i18n,
         ));
     }
     tables.into()
 }
 
-fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
+fn sql_schema_table<'a>(
+    table: &'a SqlTable,
+    expanded: bool,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let chevron = if expanded {
         theme::Icon::ChevronDown
     } else {
@@ -205,7 +238,10 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             row![
                 container("").width(theme::icons::TREE),
-                text(format!("SQL: {}", table.name))
+                text(i18n.tr_with(
+                    "sql-schema-table-name",
+                    &[("table", table.name.as_str().into())]
+                ))
                     .font(theme::mono())
                     .size(theme::typography::LABEL)
                     .style(theme::text_muted),
@@ -232,7 +268,7 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
                         .width(Length::Fill)
                         .style(theme::text_normal),
                     container(
-                        text(column.value_type.label())
+                        text(sql_column_type_label(column.value_type, i18n))
                             .font(theme::mono())
                             .size(theme::typography::LABEL)
                             .style(theme::text_muted),
@@ -246,6 +282,17 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
         }
     }
     content.into()
+}
+
+fn sql_column_type_label(value_type: SqlColumnType, i18n: &I18nCatalog) -> String {
+    match value_type {
+        SqlColumnType::Text => i18n.tr("sql-column-type-text"),
+        SqlColumnType::Integer => i18n.tr("sql-column-type-integer"),
+        SqlColumnType::Real => i18n.tr("sql-column-type-real"),
+        SqlColumnType::Boolean => i18n.tr("sql-column-type-boolean"),
+        SqlColumnType::Json => i18n.tr("sql-column-type-json"),
+        SqlColumnType::Null => i18n.tr("sql-column-type-null"),
+    }
 }
 
 fn tree<'a>(
@@ -292,7 +339,7 @@ fn tree<'a>(
             }
             tree = tree.push(container("").height(theme::spacing::SM));
             tree = tree.push(widgets::section_title(i18n.tr("explorer-data")));
-            tree = tree.push(sql_explorer_row(model.sql_explorer.open));
+            tree = tree.push(sql_explorer_row(model.sql_explorer.open, i18n));
             tree = tree.push(container("").height(theme::spacing::SM));
             tree = tree.push(widgets::section_title(i18n.tr("explorer-collections")));
             for collection in &model.collections {
@@ -306,12 +353,12 @@ fn tree<'a>(
     }
 }
 
-fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
+fn sql_explorer_row<'a>(selected: bool, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     button(
         container(
             row![
                 widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
-                text("SQL Explorer")
+                text(i18n.tr("menu-sql-explorer"))
                     .size(theme::typography::BODY)
                     .width(Length::Fill)
                     .style(if selected {
@@ -452,6 +499,31 @@ fn tree_node<'a>(
     }
 
     children.into()
+}
+
+fn explorer_header_icon_button<'a>(
+    icon: theme::Icon,
+    label: String,
+    on_press: Message,
+) -> Element<'a, Message> {
+    tooltip(
+        button(
+            container(widgets::icon(icon, theme::icons::TOOLBAR, false))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(alignment::Horizontal::Center)
+                .align_y(alignment::Vertical::Center),
+        )
+        .width(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .padding(0)
+        .style(theme::button_toolbar)
+        .on_press(on_press),
+        widgets::tooltip_text(label),
+        tooltip::Position::Bottom,
+    )
+    .style(theme::tooltip)
+    .into()
 }
 
 fn semantic_icon(kind: SemanticKind) -> Element<'static, Message> {

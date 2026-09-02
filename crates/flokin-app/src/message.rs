@@ -26,6 +26,7 @@ pub enum MenuId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
+    NewFile,
     OpenFolder,
     CloseFolder,
     Reindex,
@@ -57,6 +58,14 @@ pub enum AppMode {
     History,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewMarkdownFileError {
+    AlreadyExists,
+    InvalidName,
+    NoWorkspace,
+    Io(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitterKind {
     LeftSidebar,
@@ -71,6 +80,12 @@ pub enum Message {
     AppModeSelected(AppMode),
     #[allow(dead_code)]
     ExplorerNodeToggled(ExplorerNodeId),
+    ExplorerTreeExpandCollapseToggled,
+    NewMarkdownFileRequested,
+    NewMarkdownFileNameChanged(String),
+    NewMarkdownFileCanceled,
+    NewMarkdownFileConfirmed,
+    NewMarkdownFileCreated(Result<PathBuf, NewMarkdownFileError>),
     OpenFolder,
     CloseFolderRequested,
     FolderSelected(Option<PathBuf>),
@@ -96,6 +111,8 @@ pub enum Message {
     SchemaCreateCompleted(Result<PathBuf, String>),
     SchemaOpenRequested,
     TableHeaderSelected(String),
+    CollectionPagePrevious,
+    CollectionPageNext,
     BulkSelectionToggled(PathBuf),
     BulkSelectAllVisible(bool),
     BulkSelectionCleared,

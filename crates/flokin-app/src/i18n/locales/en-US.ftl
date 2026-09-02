@@ -9,6 +9,11 @@ action-save = Save
 action-save-all = Save all
 action-do-not-save = Don't save
 action-reset = Reset
+action-back = Back
+action-previous = Previous
+action-next = Next
+action-yes = Yes
+action-no = No
 state-on = ON
 state-off = OFF
 
@@ -18,6 +23,7 @@ menu-view = View
 menu-navigate = Navigate
 menu-data = Data
 menu-help = Help
+menu-new-file = New file
 menu-open-folder = Open folder
 menu-close-folder = Close folder
 menu-reindex = Reindex
@@ -96,6 +102,14 @@ search-results-limited = { $count }+ results
 
 # Explorer
 explorer-title = EXPLORER
+explorer-new-file = New file
+explorer-file-name = File name
+explorer-create-file = Create file
+explorer-file-exists = A file with this name already exists.
+explorer-file-create-failed = Could not create the file: { $message }
+explorer-invalid-file-name = Enter a valid Markdown file name.
+explorer-expand-all = Expand all
+explorer-collapse-all = Collapse all
 explorer-open = Open
 explorer-reindex = Reindex
 explorer-no-workspace = No folder open
@@ -107,6 +121,7 @@ explorer-data = DATA
 explorer-collections = COLLECTIONS
 explorer-filters = FILTERS
 explorer-filters-empty = Available after indexing
+explorer-database = DATABASE
 semantic-agent = Agent
 semantic-agent-instructions = Agent instructions
 semantic-skill = Skill
@@ -143,6 +158,8 @@ status-updating = Updating...
 status-scan-failed = Failed to scan workspace
 status-workspace-watched = Workspace monitored
 status-read-only = Read only
+status-sqlite-memory = SQLite :memory:
+status-markdown = Markdown
 status-documents =
     { $count ->
         [one] 1 document
@@ -182,12 +199,136 @@ sql-mode-query = Query
 sql-mode-update = Update
 sql-update-context = SQL Updates are converted into Markdown changes and always require preview.
 sql-query-context = Query mode is read-only.
+sql-results = RESULTS
+sql-error = Error:
+sql-no-results = No results
+sql-preview-status = { $matched } documents match • { $changed } will change
+sql-result-status = { $rows } rows • { $ms } ms
+sql-results-limited = Results limited to 1,000 rows.
+sql-empty-update-preview = Review an UPDATE statement to see the preview.
+sql-empty-query-results = Run a SELECT query to see the grid.
+sql-update-no-matches = No documents match this update.
+sql-update-no-changes =
+    { $count ->
+        [one] 1 document matches, but no change is needed.
+       *[other] { $count } documents match, but no change is needed.
+    }
+sql-documents-match =
+    { $count ->
+        [one] 1 document matches
+       *[other] { $count } documents match
+    }
+sql-no-result-columns = Query executed with no result columns.
+sql-schema-table-name = SQL: { $table }
+sql-column-type-text = TEXT
+sql-column-type-integer = INTEGER
+sql-column-type-real = REAL
+sql-column-type-boolean = BOOLEAN
+sql-column-type-json = JSON
+sql-column-type-null = NULL
+
+# Data / Schema / Bulk
+data-properties =
+    { $count ->
+        [one] 1 property
+       *[other] { $count } properties
+    }
+data-panel-data = Data
+data-panel-schema = Schema
+data-empty-collection = No documents in this Collection.
+data-empty-schema = No schema available for this Collection.
+schema-source-inferred = Inferred schema
+schema-source-explicit = Explicit schema + inferred observations
+schema-inferred-title = Inferred schema
+schema-inferred-description = FlokinMD detected this structure automatically from your documents. Create an explicit schema to define types and required fields.
+schema-explicit-title = Explicit schema
+schema-explicit-invalid = Invalid explicit schema
+schema-field = FIELD
+schema-type = TYPE
+schema-required = REQUIRED
+schema-present = PRESENT
+schema-present-in = Present in
+schema-present-ratio = { $observed } / { $total } documents
+schema-null-values = Null values
+schema-declared = Declared
+schema-not-declared = Not declared
+schema-observed-types = Observed types: { $types }
+schema-unknown = Unknown
+schema-structural-suffix =  · structural/derived field
+bulk-edit-title = Bulk edit
+bulk-clear-selection = Clear selection
+bulk-selected-count =
+    { $count ->
+        [one] 1 selected
+       *[other] { $count } selected
+    }
+bulk-selected-documents =
+    { $count ->
+        [one] 1 document selected
+       *[other] { $count } documents selected
+    }
+bulk-step-configure = 1. Configure
+bulk-step-review = 2. Review
+bulk-preview-unavailable = Preview unavailable. Go back and review the configuration.
+bulk-review-changes = Review changes
+bulk-operation = Operation
+bulk-operation-set = Set property
+bulk-operation-remove = Remove property
+bulk-new-property-option = + New property...
+bulk-property-placeholder = Choose a property
+bulk-property = Property
+bulk-property-name = Property name
+bulk-property-name-placeholder = e.g. reviewed
+bulk-type = Type
+bulk-value = Value
+bulk-target = Target
+bulk-target-placeholder = Target
+bulk-value-placeholder = Value
+bulk-null-value = Value: null
+value-true = True
+value-false = False
+value-type-string = Text
+value-type-integer = Integer
+value-type-float = Float
+value-type-boolean = Boolean
+value-type-array = Array
+value-type-object = Object
+value-type-mixed = Mixed
+value-type-null = Null
+value-type-relation = Relation
+change-status-changed = Changed
+change-status-no-change = No change
+change-status-blocked = Blocked
+change-status-unsupported = Unsupported
+apply-changes =
+    { $count ->
+        [one] Apply 1 change
+       *[other] Apply { $count } changes
+    }
+changes-will-change =
+    { $count ->
+        [one] 1 will change
+       *[other] { $count } will change
+    }
+changes-no-change =
+    { $count ->
+        [one] 1 no change
+       *[other] { $count } no change
+    }
+changes-blocked =
+    { $count ->
+        [one] 1 blocked
+       *[other] { $count } blocked
+    }
+pagination-status = { $start }-{ $end } of { $total }  ·  Page { $page } of { $pages }
 
 # Settings
 settings-section-interface = INTERFACE
 settings-language = Language
 settings-section-appearance = APPEARANCE
 settings-theme = Theme
+theme-light = Light
+theme-dark = Dark
 settings-section-layout = LAYOUT
 settings-hide-left-sidebar = Hide left sidebar
 settings-show-left-sidebar = Show left sidebar
@@ -291,6 +432,48 @@ health-category = CATEGORY
 health-document = DOCUMENT
 health-property = PROPERTY
 health-problem = PROBLEM
+health-expected = EXPECTED
+health-found = FOUND
+health-workspace = workspace
+health-severity-error = Error
+health-severity-warning = Warning
+health-severity-info = Info
+health-category-parsing = Parsing
+health-category-schema = Schema
+health-category-relations = Relations
+health-category-workspace = Workspace
+health-issue-invalid-frontmatter = Invalid YAML frontmatter.
+health-issue-file-read-error = Could not read the file.
+health-issue-workspace-scan-error = Error while processing the workspace.
+health-issue-explicit-schema-invalid = Explicit schema is invalid.
+health-issue-required-field-missing = Required field is missing.
+health-issue-type-mismatch = Expected { $expected }, found { $found }.
+health-issue-undeclared-field = Field is not declared in the explicit schema.
+health-issue-mixed-observed-types = Inconsistent types detected.
+health-issue-relation-unresolved = Unresolved relation.
+health-issue-relation-ambiguous =
+    { $count ->
+        [one] Ambiguous relation: 1 document matches.
+       *[other] Ambiguous relation: { $count } documents match.
+    }
+
+# Inspector
+inspector-properties = PROPERTIES
+inspector-relations = RELATIONS
+inspector-referenced-by = REFERENCED BY
+inspector-tags = TAGS
+inspector-warnings = WARNINGS
+inspector-metadata = METADATA
+inspector-issue = ISSUE
+inspector-details = DETAILS
+inspector-open-document = Open document
+relation-unresolved = Unresolved
+relation-ambiguous-count =
+    { $count ->
+        [one] Ambiguous — 1 document matches
+       *[other] Ambiguous — { $count } documents match
+    }
+relation-structured-reference = structured reference
 
 # Graph
 graph-title = Graph

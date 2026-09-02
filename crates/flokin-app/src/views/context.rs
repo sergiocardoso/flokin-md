@@ -220,16 +220,24 @@ fn overview<'a>(
     projection: ContextProjection,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let counters = ContextSection::ALL
+    let counter_items = ContextSection::ALL
         .into_iter()
         .filter(|section| *section != ContextSection::Overview)
-        .fold(row![].spacing(theme::spacing::SM), |row, section| {
-            row.push(summary_button(
-                section,
-                section_label(section, i18n),
-                projection.count_for_section(section),
-            ))
-        });
+        .map(|section| (section, section_label(section, i18n)))
+        .collect::<Vec<_>>();
+    let mut counter_rows = column![].spacing(theme::spacing::SM);
+    for (row_index, chunk) in counter_items.chunks(3).enumerate() {
+        let mut counter_row = row![].spacing(theme::spacing::SM).width(Length::Fill);
+        for (column_index, (section, label)) in chunk.iter().enumerate() {
+            counter_row = counter_row.push(summary_button(
+                *section,
+                label.clone(),
+                projection.count_for_section(*section),
+                row_index * 3 + column_index,
+            ));
+        }
+        counter_rows = counter_rows.push(counter_row);
+    }
 
     let unconnected = i18n.tr_with(
         "context-unconnected-count",
@@ -241,9 +249,9 @@ fn overview<'a>(
     );
 
     column![
-        container(counters)
+        container(counter_rows)
             .width(Length::Fill)
-            .padding([theme::spacing::XS, 0.0])
+            .padding(theme::spacing::XS)
             .style(theme::surface),
         container(
             row![
@@ -364,12 +372,14 @@ fn artifact_row<'a>(
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
 
-    button(container(row).width(Length::Fill).padding([8.0, theme::spacing::SM]))
+    button(
+        container(row)
+            .width(Length::Fill)
+            .padding([8.0, theme::spacing::SM]),
+    )
     .width(Length::Fill)
     .padding(0)
-    .style(move |theme, status| {
-        theme::data_row_button(theme, row_index, selected, status)
-    })
+    .style(move |theme, status| theme::data_row_button(theme, row_index, selected, status))
     .on_press(Message::ContextArtifactSelected(
         artifact.document_path.clone(),
     ))
@@ -411,22 +421,23 @@ fn section_row<'a>(
             .height(Length::Fill)
             .align_y(alignment::Vertical::Center),
     )
-        .width(Length::Fill)
-        .height(theme::sizes::CONTROL_HEIGHT_MEDIUM)
-        .padding([0.0, theme::spacing::XS])
-        .style(if selected {
-            theme::button_tree_selected
-        } else {
-            theme::button_tree
-        })
-        .on_press(Message::ContextSectionSelected(section))
-        .into()
+    .width(Length::Fill)
+    .height(theme::sizes::CONTROL_HEIGHT_MEDIUM)
+    .padding([0.0, theme::spacing::XS])
+    .style(if selected {
+        theme::button_tree_selected
+    } else {
+        theme::button_tree
+    })
+    .on_press(Message::ContextSectionSelected(section))
+    .into()
 }
 
 fn summary_button<'a>(
     section: ContextSection,
     label: String,
     count: usize,
+    metric: usize,
 ) -> Element<'a, Message> {
     button(
         container(
@@ -439,14 +450,19 @@ fn summary_button<'a>(
                     .size(theme::typography::TITLE)
                     .style(theme::text_normal),
             ]
-            .spacing(theme::spacing::XXS),
+            .spacing(theme::spacing::XXS)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
         )
         .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center)
         .padding(theme::spacing::SM),
     )
     .width(Length::FillPortion(1))
+    .height(80.0)
     .padding(0)
-    .style(theme::button_toolbar)
+    .style(move |theme, status| theme::context_metric(theme, metric, status))
     .on_press(Message::ContextSectionSelected(section))
     .into()
 }

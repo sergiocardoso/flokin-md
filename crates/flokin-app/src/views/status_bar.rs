@@ -52,10 +52,10 @@ pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Mes
         status_items.push(i18n.tr("status-workspace-watched"));
     }
     if model.sql_explorer.open {
-        status_items.push(String::from("SQLite :memory:"));
+        status_items.push(i18n.tr("status-sqlite-memory"));
         status_items.push(i18n.tr("status-read-only"));
     }
-    status_items.push(String::from("Markdown"));
+    status_items.push(i18n.tr("status-markdown"));
 
     let mut row = row![container("").width(6).height(6).style(theme::status_dot)]
         .spacing(theme::spacing::MD)

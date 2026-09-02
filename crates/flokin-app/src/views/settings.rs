@@ -30,14 +30,14 @@ pub fn view<'a>(
 
     let theme_row = row![
         text(i18n.tr("settings-theme")).width(Length::Fill),
-        button(text("Light"))
+        button(text(i18n.tr("theme-light")))
             .style(if app_theme == theme::AppTheme::Light {
                 theme::button_selected
             } else {
                 theme::button_toolbar
             })
             .on_press(Message::ThemeSelected(true)),
-        button(text("Dark"))
+        button(text(i18n.tr("theme-dark")))
             .style(if app_theme == theme::AppTheme::Dark {
                 theme::button_selected
             } else {

@@ -1,5 +1,5 @@
 use flokin_core::{
-    HealthIssue, HealthSeverity, InspectorField, InspectorModel, InspectorRelation,
+    HealthCategory, HealthIssue, HealthSeverity, InspectorField, InspectorModel, InspectorRelation,
     InspectorRelationStatus, InspectorValue, ShellModel,
 };
 use iced::widget::{
@@ -10,20 +10,35 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
-use crate::{message::Message, theme, widgets};
+use crate::{
+    i18n::I18nCatalog,
+    message::Message,
+    theme,
+    views::health::{localized_health_issue_message, schema_type_label},
+    widgets,
+};
 
-pub fn view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+pub fn view<'a>(model: &'a ShellModel, width: f32, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     match model.document_inspector() {
-        InspectorModel::Empty { title, description } => empty_state(title, description, width),
-        InspectorModel::Document(inspector) => document_inspector(inspector, width),
-        InspectorModel::HealthIssue(inspector) => health_issue_inspector(inspector.issue, width),
+        InspectorModel::Empty { title, description } => {
+            empty_state(title, description, width, i18n)
+        }
+        InspectorModel::Document(inspector) => document_inspector(inspector, width, i18n),
+        InspectorModel::HealthIssue(inspector) => {
+            health_issue_inspector(inspector.issue, width, i18n)
+        }
     }
 }
 
-fn empty_state(title: String, description: String, width: f32) -> Element<'static, Message> {
+fn empty_state<'a>(
+    title: String,
+    description: String,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     container(scrollable(
         column![
-            section_header("PROPRIEDADES", theme::Icon::Settings),
+            section_header(i18n.tr("inspector-properties"), theme::Icon::Settings),
             column![
                 wrapped_text(title, theme::typography::BODY, false),
                 wrapped_text(description, theme::typography::BODY, true),
@@ -39,12 +54,16 @@ fn empty_state(title: String, description: String, width: f32) -> Element<'stati
     .into()
 }
 
-fn document_inspector(
+fn document_inspector<'a>(
     inspector: flokin_core::DocumentInspector,
     width: f32,
-) -> Element<'static, Message> {
-    let mut content =
-        column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::MD);
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut content = column![section_header(
+        i18n.tr("inspector-properties"),
+        theme::Icon::Settings
+    )]
+    .spacing(theme::spacing::MD);
 
     for field in inspector.properties {
         content = content.push(field_row(field));
@@ -53,27 +72,30 @@ fn document_inspector(
     if !inspector.outgoing_relations.is_empty() {
         content = content
             .push(subtle_divider())
-            .push(section_header("RELAÇÕES", theme::Icon::FileText));
+            .push(section_header(i18n.tr("inspector-relations"), theme::Icon::FileText));
 
         for relation in inspector.outgoing_relations {
-            content = content.push(relation_row(relation, true));
+            content = content.push(relation_row(relation, true, i18n));
         }
     }
 
     if !inspector.incoming_relations.is_empty() {
         content = content
             .push(subtle_divider())
-            .push(section_header("REFERENCIADO POR", theme::Icon::Tag));
+            .push(section_header(
+                i18n.tr("inspector-referenced-by"),
+                theme::Icon::Tag,
+            ));
 
         for relation in inspector.incoming_relations {
-            content = content.push(relation_row(relation, false));
+            content = content.push(relation_row(relation, false, i18n));
         }
     }
 
     if !inspector.tags.is_empty() {
         content = content
             .push(subtle_divider())
-            .push(section_header("TAGS", theme::Icon::Tag));
+            .push(section_header(i18n.tr("inspector-tags"), theme::Icon::Tag));
 
         let mut tags = column![].spacing(theme::spacing::XS);
         for tag in inspector.tags {
@@ -85,7 +107,7 @@ fn document_inspector(
     if !inspector.warnings.is_empty() {
         content = content
             .push(subtle_divider())
-            .push(section_header("WARNINGS", theme::Icon::Clock));
+            .push(section_header(i18n.tr("inspector-warnings"), theme::Icon::Clock));
 
         for warning in inspector.warnings {
             content = content.push(warning_row(warning));
@@ -94,7 +116,7 @@ fn document_inspector(
 
     content = content
         .push(subtle_divider())
-        .push(section_header("METADADOS", theme::Icon::FileText));
+        .push(section_header(i18n.tr("inspector-metadata"), theme::Icon::FileText));
 
     for field in inspector.metadata {
         content = content.push(field_row(field));
@@ -110,48 +132,59 @@ fn document_inspector(
     .into()
 }
 
-fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Message> {
-    let mut content =
-        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::MD);
+fn health_issue_inspector<'a>(
+    issue: HealthIssue,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut content = column![section_header(
+        i18n.tr("inspector-issue"),
+        theme::Icon::Health
+    )]
+    .spacing(theme::spacing::MD);
 
     content = content
         .push(health_field(
-            "Severity",
-            issue.severity.label().to_owned(),
+            i18n.tr("health-severity"),
+            severity_label(issue.severity, i18n),
             issue.severity,
         ))
         .push(health_field(
-            "Category",
-            issue.category.label().to_owned(),
+            i18n.tr("health-category"),
+            health_category_label(issue.category, i18n),
             issue.severity,
         ))
         .push(health_field(
-            "Problem",
-            issue.message.clone(),
+            i18n.tr("health-problem"),
+            localized_health_issue_message(&issue, i18n),
             issue.severity,
         ));
 
     if let Some(path) = issue.relative_path.as_ref() {
         content = content.push(health_field(
-            "Document",
+            i18n.tr("health-document"),
             path.display().to_string(),
             issue.severity,
         ));
     }
     if let Some(property) = issue.property.as_ref() {
-        content = content.push(health_field("Property", property.clone(), issue.severity));
+        content = content.push(health_field(
+            i18n.tr("health-property"),
+            property.clone(),
+            issue.severity,
+        ));
     }
     if let Some(expected) = issue.expected {
         content = content.push(health_field(
-            "Expected",
-            expected.label().to_owned(),
+            i18n.tr("health-expected"),
+            schema_type_label(expected, i18n),
             issue.severity,
         ));
     }
     if let Some(found) = issue.found {
         content = content.push(health_field(
-            "Found",
-            found.label().to_owned(),
+            i18n.tr("health-found"),
+            schema_type_label(found, i18n),
             issue.severity,
         ));
     }
@@ -159,7 +192,7 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
     if !issue.details.is_empty() {
         content = content
             .push(subtle_divider())
-            .push(section_header("DETALHES", theme::Icon::FileText));
+            .push(section_header(i18n.tr("inspector-details"), theme::Icon::FileText));
         for detail in issue.details {
             content = content.push(
                 text(detail)
@@ -175,7 +208,7 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
             button(
                 row![
                     widgets::icon(theme::Icon::FileText, theme::icons::META, true),
-                    text("Abrir documento").size(theme::typography::BODY),
+                    text(i18n.tr("inspector-open-document")).size(theme::typography::BODY),
                 ]
                 .spacing(theme::spacing::SM)
                 .align_y(Alignment::Center),
@@ -197,7 +230,7 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
 }
 
 fn health_field(
-    label: &'static str,
+    label: String,
     value: String,
     severity: HealthSeverity,
 ) -> Element<'static, Message> {
@@ -224,7 +257,28 @@ fn health_field(
     .into()
 }
 
-fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static, Message> {
+fn severity_label(severity: HealthSeverity, i18n: &I18nCatalog) -> String {
+    match severity {
+        HealthSeverity::Error => i18n.tr("health-severity-error"),
+        HealthSeverity::Warning => i18n.tr("health-severity-warning"),
+        HealthSeverity::Info => i18n.tr("health-severity-info"),
+    }
+}
+
+fn health_category_label(category: HealthCategory, i18n: &I18nCatalog) -> String {
+    match category {
+        HealthCategory::Parsing => i18n.tr("health-category-parsing"),
+        HealthCategory::Schema => i18n.tr("health-category-schema"),
+        HealthCategory::Relations => i18n.tr("health-category-relations"),
+        HealthCategory::Workspace => i18n.tr("health-category-workspace"),
+    }
+}
+
+fn relation_row<'a>(
+    relation: InspectorRelation,
+    outgoing: bool,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let property = relation.property;
     let label = relation.label;
     let status = relation.status;
@@ -233,10 +287,11 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
 
     let status_text = match status {
         InspectorRelationStatus::Resolved => None,
-        InspectorRelationStatus::Unresolved => Some(String::from("Não resolvido")),
-        InspectorRelationStatus::Ambiguous(count) => {
-            Some(format!("Ambíguo — {count} documentos correspondem"))
-        }
+        InspectorRelationStatus::Unresolved => Some(i18n.tr("relation-unresolved")),
+        InspectorRelationStatus::Ambiguous(count) => Some(i18n.tr_with(
+            "relation-ambiguous-count",
+            &[("count", count.into())],
+        )),
     };
 
     let target: Element<'static, Message> = if let Some(path) = target_path {
@@ -291,7 +346,7 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
 
     if !outgoing && matches!(status, InspectorRelationStatus::Resolved) {
         details = details.push(
-            text("referência estruturada")
+            text(i18n.tr("relation-structured-reference"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
         );
@@ -313,7 +368,7 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
         .into()
 }
 
-fn section_header<'a>(title: &'a str, icon: theme::Icon) -> Element<'a, Message> {
+fn section_header<'a>(title: impl Into<String>, icon: theme::Icon) -> Element<'a, Message> {
     row![
         widgets::icon(icon, theme::icons::META, true),
         widgets::section_title(title)

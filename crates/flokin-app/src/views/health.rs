@@ -1,4 +1,7 @@
-use flokin_core::{ExplicitSchemaState, HealthFilter, HealthIssue, HealthSeverity, ShellModel};
+use flokin_core::{
+    ExplicitSchemaState, HealthCategory, HealthFilter, HealthIssue, HealthIssueKind,
+    HealthSeverity, SchemaType, ShellModel,
+};
 use iced::widget::{
     button, column, container, row, scrollable,
     scrollable::{Direction, Scrollbar},
@@ -210,13 +213,13 @@ fn issues_grid<'a>(
             .spacing(0)
             .align_y(Alignment::Center);
         cells = cells.push(cell(
-            severity_label(issue.severity),
+            severity_label(issue.severity, i18n),
             widths[0],
             selected,
             issue.severity,
         ));
         cells = cells.push(cell(
-            issue.category.label().to_owned(),
+            category_label(issue.category, i18n),
             widths[1],
             selected,
             issue.severity,
@@ -226,7 +229,7 @@ fn issues_grid<'a>(
                 .relative_path
                 .as_ref()
                 .map(|path| path.display().to_string())
-                .unwrap_or_else(|| String::from("workspace")),
+                .unwrap_or_else(|| i18n.tr("health-workspace")),
             widths[2],
             selected,
             issue.severity,
@@ -238,7 +241,7 @@ fn issues_grid<'a>(
             issue.severity,
         ));
         cells = cells.push(cell(
-            issue.message.clone(),
+            localized_health_issue_message(issue, i18n),
             widths[4],
             selected,
             issue.severity,
@@ -321,10 +324,72 @@ fn cell<'a>(
     )
 }
 
-fn severity_label(severity: HealthSeverity) -> String {
+fn severity_label(severity: HealthSeverity, i18n: &I18nCatalog) -> String {
     match severity {
-        HealthSeverity::Error => String::from("Error"),
-        HealthSeverity::Warning => String::from("Warning"),
-        HealthSeverity::Info => String::from("Info"),
+        HealthSeverity::Error => i18n.tr("health-severity-error"),
+        HealthSeverity::Warning => i18n.tr("health-severity-warning"),
+        HealthSeverity::Info => i18n.tr("health-severity-info"),
+    }
+}
+
+fn category_label(category: HealthCategory, i18n: &I18nCatalog) -> String {
+    match category {
+        HealthCategory::Parsing => i18n.tr("health-category-parsing"),
+        HealthCategory::Schema => i18n.tr("health-category-schema"),
+        HealthCategory::Relations => i18n.tr("health-category-relations"),
+        HealthCategory::Workspace => i18n.tr("health-category-workspace"),
+    }
+}
+
+pub(crate) fn localized_health_issue_message(issue: &HealthIssue, i18n: &I18nCatalog) -> String {
+    match issue.kind {
+        HealthIssueKind::InvalidFrontmatter => i18n.tr("health-issue-invalid-frontmatter"),
+        HealthIssueKind::FileReadError => i18n.tr("health-issue-file-read-error"),
+        HealthIssueKind::WorkspaceScanError => i18n.tr("health-issue-workspace-scan-error"),
+        HealthIssueKind::ExplicitSchemaInvalid => i18n.tr("health-issue-explicit-schema-invalid"),
+        HealthIssueKind::RequiredFieldMissing => i18n.tr("health-issue-required-field-missing"),
+        HealthIssueKind::TypeMismatch => i18n.tr_with(
+            "health-issue-type-mismatch",
+            &[
+                (
+                    "expected",
+                    issue
+                        .expected
+                        .map(|schema_type| schema_type_label(schema_type, i18n))
+                        .unwrap_or_else(|| i18n.tr("schema-unknown"))
+                        .into(),
+                ),
+                (
+                    "found",
+                    issue
+                        .found
+                        .map(|schema_type| schema_type_label(schema_type, i18n))
+                        .unwrap_or_else(|| i18n.tr("schema-unknown"))
+                        .into(),
+                ),
+            ],
+        ),
+        HealthIssueKind::UndeclaredField => i18n.tr("health-issue-undeclared-field"),
+        HealthIssueKind::MixedObservedTypes => i18n.tr("health-issue-mixed-observed-types"),
+        HealthIssueKind::RelationUnresolved => i18n.tr("health-issue-relation-unresolved"),
+        HealthIssueKind::RelationAmbiguous => i18n.tr_with(
+            "health-issue-relation-ambiguous",
+            &[("count", issue.details.len().into())],
+        ),
+    }
+}
+
+pub(crate) fn schema_type_label(schema_type: SchemaType, i18n: &I18nCatalog) -> String {
+    match schema_type {
+        SchemaType::String => i18n.tr("value-type-string"),
+        SchemaType::Integer => i18n.tr("value-type-integer"),
+        SchemaType::Float => i18n.tr("value-type-float"),
+        SchemaType::Boolean => i18n.tr("value-type-boolean"),
+        SchemaType::Array => i18n.tr("value-type-array"),
+        SchemaType::Object => i18n.tr("value-type-object"),
+        SchemaType::Relation => i18n.tr("value-type-relation"),
+        SchemaType::Mixed => i18n.tr("value-type-mixed"),
+        SchemaType::Null => i18n.tr("value-type-null"),
+        SchemaType::Unknown => i18n.tr("schema-unknown"),
     }
 }

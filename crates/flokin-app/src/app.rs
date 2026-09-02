@@ -1,6 +1,8 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Path, PathBuf},
+    fs::OpenOptions,
+    io,
+    path::{Path, PathBuf, MAIN_SEPARATOR},
     time::{Duration, Instant},
 };
 
@@ -22,7 +24,7 @@ use iced::{
 
 use crate::{
     i18n::{AppLanguage, I18nCatalog},
-    message::{AppMode, MenuAction, Message, SplitterKind},
+    message::{AppMode, MenuAction, Message, NewMarkdownFileError, SplitterKind},
     services::{external_links, file_dialog, file_watcher, settings},
     theme::{self, AppTheme},
     views,
@@ -39,6 +41,7 @@ pub struct FlokinApp {
     search_debounce_target: Option<Instant>,
     sql_editor: text_editor::Content,
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
+    markdown_editor_scroll_offsets: HashMap<PathBuf, f32>,
     empty_markdown_editor: text_editor::Content,
     markdown_previews: HashMap<PathBuf, MarkdownPreviewCache>,
     graph: GraphViewState,
@@ -50,11 +53,15 @@ pub struct FlokinApp {
     pending_workspace_save: Option<Vec<std::path::PathBuf>>,
     pending_workspace_close: bool,
     pending_reindex: bool,
+    pending_new_file_open: Option<PathBuf>,
     workspace_generation: u64,
     open_menu: Option<crate::message::MenuId>,
     about_dialog_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<String>,
+    new_file_dialog_open: bool,
+    new_file_name: String,
+    new_file_error: Option<NewMarkdownFileError>,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
@@ -65,6 +72,7 @@ pub struct FlokinApp {
     right_visible: bool,
     mode: AppMode,
     workspace_restore_notice: Option<String>,
+    collection_page: usize,
 }
 
 fn toggle_menu(
@@ -101,6 +109,7 @@ impl FlokinApp {
             search_debounce_target: None,
             sql_editor: text_editor::Content::new(),
             markdown_editors: HashMap::new(),
+            markdown_editor_scroll_offsets: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
             markdown_previews: HashMap::new(),
             graph: GraphViewState::default(),
@@ -112,11 +121,15 @@ impl FlokinApp {
             pending_workspace_save: None,
             pending_workspace_close: false,
             pending_reindex: false,
+            pending_new_file_open: None,
             workspace_generation: 0,
             open_menu: None,
             about_dialog_open: false,
             schema_create_dialog_open: false,
             schema_create_error: None,
+            new_file_dialog_open: false,
+            new_file_name: String::new(),
+            new_file_error: None,
             left_width: crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH,
             inspector_width: crate::theme::sizes::INSPECTOR_DEFAULT_WIDTH,
             schema_width: crate::theme::sizes::SCHEMA_DEFAULT_WIDTH,
@@ -127,6 +140,7 @@ impl FlokinApp {
             right_visible: true,
             mode: AppMode::Files,
             workspace_restore_notice: None,
+            collection_page: 0,
         }
     }
 
@@ -175,9 +189,70 @@ impl FlokinApp {
                     self.finish_document_open_or_activate();
                 }
             }
+            Message::ExplorerTreeExpandCollapseToggled => {
+                self.model.toggle_explorer_tree_expansion();
+            }
+            Message::NewMarkdownFileRequested => {
+                if self.model.current_workspace.is_some() {
+                    self.new_file_dialog_open = true;
+                    self.new_file_name.clear();
+                    self.new_file_error = None;
+                    self.open_menu = None;
+                }
+            }
+            Message::NewMarkdownFileNameChanged(name) => {
+                self.new_file_name = name;
+                self.new_file_error = None;
+            }
+            Message::NewMarkdownFileCanceled => {
+                self.new_file_dialog_open = false;
+                self.new_file_name.clear();
+                self.new_file_error = None;
+            }
+            Message::NewMarkdownFileConfirmed => {
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    self.new_file_error = Some(NewMarkdownFileError::NoWorkspace);
+                    return Task::none();
+                };
+                let Some(parent) = self.model.new_markdown_file_parent() else {
+                    self.new_file_error = Some(NewMarkdownFileError::NoWorkspace);
+                    return Task::none();
+                };
+                let file_name = match normalize_new_markdown_file_name(&self.new_file_name) {
+                    Ok(file_name) => file_name,
+                    Err(error) => {
+                        self.new_file_error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let candidate = parent.join(&file_name);
+                if candidate.exists() {
+                    self.new_file_error = Some(NewMarkdownFileError::AlreadyExists);
+                    return Task::none();
+                }
+                return create_markdown_file_task(workspace, parent, file_name);
+            }
+            Message::NewMarkdownFileCreated(result) => match result {
+                Ok(path) => {
+                    self.new_file_dialog_open = false;
+                    self.new_file_name.clear();
+                    self.new_file_error = None;
+                    self.pending_new_file_open = Some(path.clone());
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return self.enqueue_workspace_events(
+                            workspace,
+                            vec![WorkspaceEvent::Upsert(path)],
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.new_file_error = Some(error);
+                }
+            },
             Message::OpenFolder => {
+                let title = self.i18n.tr("menu-open-folder");
                 return Task::perform(
-                    async { file_dialog::pick_folder() },
+                    async move { file_dialog::pick_folder(title) },
                     Message::FolderSelected,
                 );
             }
@@ -204,12 +279,18 @@ impl FlokinApp {
                         Ok(result) => {
                             self.model.scan_completed(result);
                             self.sync_graph_projection(true);
-                            return rebuild_sql_projection_task(
+                            let focus_new_file = self.open_pending_new_file_if_available();
+                            let sql_task = rebuild_sql_projection_task(
                                 generation,
                                 path,
                                 self.model.documents.clone(),
                                 self.model.collections.clone(),
                             );
+                            return if focus_new_file {
+                                Task::batch([sql_task, focus_active_markdown_editor_task()])
+                            } else {
+                                sql_task
+                            };
                         }
                         Err(message) => self.model.scan_failed(message),
                     }
@@ -253,13 +334,14 @@ impl FlokinApp {
                             self.model.mark_bulk_preview_stale_for_paths(&changed_paths);
                             self.model.mark_sql_preview_stale_for_paths(&changed_paths);
                             self.model.workspace_update_completed(update);
+                            let focus_new_file = self.open_pending_new_file_if_available();
                             self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
                             self.sync_markdown_previews_for_paths(&changed_paths);
                             self.cleanup_markdown_editors();
                             self.workspace_update_running = false;
                             self.search_needs_refresh = false;
-                            return Task::batch([
+                            let mut tasks = vec![
                                 rebuild_sql_projection_task(
                                     self.workspace_generation,
                                     path.clone(),
@@ -267,7 +349,11 @@ impl FlokinApp {
                                     self.model.collections.clone(),
                                 ),
                                 self.start_next_workspace_update(path),
-                            ]);
+                            ];
+                            if focus_new_file {
+                                tasks.push(focus_active_markdown_editor_task());
+                            }
+                            return Task::batch(tasks);
                         }
                         Err(message) => {
                             self.workspace_update_running = false;
@@ -281,9 +367,11 @@ impl FlokinApp {
                 }
             }
             Message::CollectionSelected(collection_id) => {
+                self.collection_page = 0;
                 self.model.select_collection(collection_id);
             }
             Message::CollectionPanelSelected(panel) => {
+                self.collection_page = 0;
                 self.model.select_collection_panel(panel);
             }
             Message::SchemaFieldSelected {
@@ -373,7 +461,14 @@ impl FlokinApp {
                 }
             },
             Message::TableHeaderSelected(column_id) => {
+                self.collection_page = 0;
                 self.model.toggle_collection_sort(column_id);
+            }
+            Message::CollectionPagePrevious => {
+                self.collection_page = self.collection_page.saturating_sub(1);
+            }
+            Message::CollectionPageNext => {
+                self.collection_page = self.collection_page.saturating_add(1);
             }
             Message::BulkSelectionToggled(path) => {
                 self.model.toggle_bulk_selection(path);
@@ -535,6 +630,7 @@ impl FlokinApp {
                     return Task::none();
                 };
                 self.ensure_markdown_editor_for_path(&path);
+                self.track_markdown_editor_scroll(&path, &action);
                 if let Some(content) = self.markdown_editors.get_mut(&path) {
                     content.perform(action);
                     self.model.update_active_editor_buffer(content.text());
@@ -942,6 +1038,7 @@ impl FlokinApp {
             Message::MenuAction(action) => {
                 self.open_menu = None;
                 match action {
+                    MenuAction::NewFile => return self.update(Message::NewMarkdownFileRequested),
                     MenuAction::OpenFolder => return self.update(Message::OpenFolder),
                     MenuAction::CloseFolder => {
                         return self.update(Message::CloseFolderRequested);
@@ -1085,22 +1182,35 @@ impl FlokinApp {
             .as_ref()
             .and_then(|path| self.markdown_editors.get(path))
             .unwrap_or(&self.empty_markdown_editor);
+        let markdown_editor_scroll_y = self
+            .model
+            .editor
+            .active_path
+            .as_ref()
+            .and_then(|path| self.markdown_editor_scroll_offsets.get(path))
+            .copied()
+            .unwrap_or(0.0);
 
         views::shell::view(
             &self.model,
             self.theme,
             &self.sql_editor,
             markdown_editor,
+            markdown_editor_scroll_y,
             self.active_markdown_preview_items(),
             &self.graph,
             self.left_width,
             self.inspector_width,
             self.schema_width,
             self.sql_editor_height,
+            self.collection_page,
             self.open_menu,
             self.about_dialog_open,
             self.schema_create_dialog_open,
             self.schema_create_error.as_deref(),
+            self.new_file_dialog_open,
+            self.new_file_name.as_str(),
+            self.new_file_error.as_ref(),
             self.left_visible,
             self.right_visible,
             self.mode,
@@ -1201,6 +1311,7 @@ impl FlokinApp {
         self.model.workspace_selected(Some(path.clone()));
         self.sql_editor = text_editor::Content::new();
         self.markdown_editors.clear();
+        self.markdown_editor_scroll_offsets.clear();
         self.markdown_previews.clear();
         self.empty_markdown_editor = text_editor::Content::new();
         self.workspace_update_running = false;
@@ -1211,8 +1322,12 @@ impl FlokinApp {
         self.pending_workspace_save = None;
         self.pending_workspace_close = false;
         self.pending_reindex = false;
+        self.pending_new_file_open = None;
         self.schema_create_dialog_open = false;
         self.schema_create_error = None;
+        self.new_file_dialog_open = false;
+        self.new_file_name.clear();
+        self.new_file_error = None;
         Task::batch([
             persist_last_workspace_task(path.clone()),
             scan_workspace_task(generation, path.clone()),
@@ -1237,6 +1352,7 @@ impl FlokinApp {
         self.model.close_workspace();
         self.sql_editor = text_editor::Content::new();
         self.markdown_editors.clear();
+        self.markdown_editor_scroll_offsets.clear();
         self.markdown_previews.clear();
         self.empty_markdown_editor = text_editor::Content::new();
         self.graph = GraphViewState::default();
@@ -1248,8 +1364,12 @@ impl FlokinApp {
         self.pending_workspace_save = None;
         self.pending_workspace_close = false;
         self.pending_reindex = false;
+        self.pending_new_file_open = None;
         self.schema_create_dialog_open = false;
         self.schema_create_error = None;
+        self.new_file_dialog_open = false;
+        self.new_file_name.clear();
+        self.new_file_error = None;
         self.mode = AppMode::Files;
         self.workspace_restore_notice = None;
         clear_last_workspace_task()
@@ -1257,6 +1377,18 @@ impl FlokinApp {
 
     fn load_history_task(&self, workspace: std::path::PathBuf) -> Task<Message> {
         load_history_task(workspace)
+    }
+
+    fn open_pending_new_file_if_available(&mut self) -> bool {
+        let Some(path) = self.pending_new_file_open.clone() else {
+            return false;
+        };
+        if self.open_or_activate_document(path) {
+            self.pending_new_file_open = None;
+            true
+        } else {
+            false
+        }
     }
 
     fn active_markdown_preview_items(&self) -> &[markdown::Item] {
@@ -1409,6 +1541,9 @@ impl FlokinApp {
             path.to_path_buf(),
             text_editor::Content::with_text(&tab.buffer),
         );
+        self.markdown_editor_scroll_offsets
+            .entry(path.to_path_buf())
+            .or_insert(0.0);
     }
 
     fn sync_markdown_editor_for_active_from_model(&mut self) {
@@ -1443,8 +1578,25 @@ impl FlokinApp {
     fn cleanup_markdown_editors(&mut self) {
         self.markdown_editors
             .retain(|path, _| self.model.editor.tab(path).is_some());
+        self.markdown_editor_scroll_offsets
+            .retain(|path, _| self.model.editor.tab(path).is_some());
         self.markdown_previews
             .retain(|path, _| self.model.editor.tab(path).is_some());
+    }
+
+    fn track_markdown_editor_scroll(
+        &mut self,
+        path: &std::path::Path,
+        action: &text_editor::Action,
+    ) {
+        let text_editor::Action::Scroll { lines } = action else {
+            return;
+        };
+        let offset = self
+            .markdown_editor_scroll_offsets
+            .entry(path.to_path_buf())
+            .or_insert(0.0);
+        *offset = (*offset + *lines as f32 * views::editor::editor_line_height_px()).max(0.0);
     }
 
     fn enqueue_workspace_events(
@@ -1562,6 +1714,17 @@ fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Ta
     Task::perform(
         async move { create_schema_file_if_absent(&workspace, &content) },
         Message::SchemaCreateCompleted,
+    )
+}
+
+fn create_markdown_file_task(
+    workspace: std::path::PathBuf,
+    parent: std::path::PathBuf,
+    file_name: String,
+) -> Task<Message> {
+    Task::perform(
+        async move { create_empty_markdown_file(&workspace, &parent, &file_name) },
+        Message::NewMarkdownFileCreated,
     )
 }
 
@@ -1801,6 +1964,66 @@ fn validate_workspace_path(path: &Path) -> Result<PathBuf, ()> {
     Ok(canonical)
 }
 
+fn normalize_new_markdown_file_name(input: &str) -> Result<String, NewMarkdownFileError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('\0')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(MAIN_SEPARATOR)
+        || trimmed
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    let path = Path::new(trimmed);
+    if path.components().count() != 1
+        || path.file_name().and_then(|name| name.to_str()) != Some(trimmed)
+    {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    match path.extension().and_then(|extension| extension.to_str()) {
+        None => Ok(format!("{trimmed}.md")),
+        Some(extension)
+            if extension.eq_ignore_ascii_case("md")
+                || extension.eq_ignore_ascii_case("markdown") =>
+        {
+            Ok(trimmed.to_string())
+        }
+        Some(_) => Err(NewMarkdownFileError::InvalidName),
+    }
+}
+
+fn create_empty_markdown_file(
+    workspace: &Path,
+    parent: &Path,
+    file_name: &str,
+) -> Result<PathBuf, NewMarkdownFileError> {
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|error| NewMarkdownFileError::Io(error.to_string()))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| NewMarkdownFileError::Io(error.to_string()))?;
+    if !parent.is_dir() || !parent.starts_with(&workspace) {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    let path = parent.join(file_name);
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(_) => Ok(path),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Err(NewMarkdownFileError::AlreadyExists)
+        }
+        Err(error) => Err(NewMarkdownFileError::Io(error.to_string())),
+    }
+}
+
 fn restored_workspace_from_settings_path(settings_path: &Path) -> Result<Option<PathBuf>, ()> {
     settings::load_last_workspace_path(settings_path)
         .map(|path| validate_workspace_path(&path))
@@ -1903,6 +2126,12 @@ fn focus_search_task() -> Task<Message> {
     ])
 }
 
+fn focus_active_markdown_editor_task() -> Task<Message> {
+    operate::<Message>(advanced_widget::operation::focusable::focus(
+        advanced_widget::Id::new(views::editor::ACTIVE_MARKDOWN_EDITOR_ID),
+    ))
+}
+
 fn debounce_search_task(target: Instant) -> Task<Message> {
     Task::perform(
         async move {
@@ -1993,19 +2222,23 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Mutex, OnceLock},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex, OnceLock,
+        },
         time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        create_schema_file_if_absent, hover_menu, keyboard_message, language_from_settings_path,
+        create_empty_markdown_file, create_schema_file_if_absent, hover_menu, keyboard_message,
+        language_from_settings_path, normalize_new_markdown_file_name,
         restored_workspace_from_settings_path, theme_from_settings_path, toggle_menu,
         validate_workspace_path, FlokinApp,
     };
     use crate::services::external_links::AboutContactLink;
     use crate::{
         i18n::AppLanguage,
-        message::{AppMode, MenuAction, MenuId, Message, SplitterKind},
+        message::{AppMode, MenuAction, MenuId, Message, NewMarkdownFileError, SplitterKind},
         services::{file_watcher::WatcherMessage, settings},
         theme::AppTheme,
     };
@@ -2241,6 +2474,21 @@ mod tests {
 
         app.open_or_activate_document(path.clone());
 
+        assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "");
+        assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "");
+    }
+
+    #[test]
+    fn saving_empty_file_keeps_zero_byte_content() {
+        let workspace = TempWorkspace::new();
+        workspace.write("empty.md", "");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("empty.md");
+
+        app.open_or_activate_document(path.clone());
+        assert!(flokin_core::save_markdown_file(&path, "").is_ok());
+
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
         assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "");
         assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "");
     }
@@ -3483,6 +3731,134 @@ mod tests {
         assert_eq!(app.graph.zoom, 1.0);
     }
 
+    #[test]
+    fn new_markdown_file_name_normalization_accepts_markdown_names() {
+        assert_eq!(
+            normalize_new_markdown_file_name("notes").unwrap(),
+            "notes.md"
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("notes.md").unwrap(),
+            "notes.md"
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("notes.markdown").unwrap(),
+            "notes.markdown"
+        );
+    }
+
+    #[test]
+    fn new_markdown_file_name_validation_rejects_non_markdown_and_traversal() {
+        assert_eq!(
+            normalize_new_markdown_file_name("spec.txt"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("../escape"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("nested/file"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+    }
+
+    #[test]
+    fn create_empty_markdown_file_does_not_overwrite_existing_file() {
+        let workspace = TempWorkspace::new();
+        workspace.write("notes.md", "# Existing\n");
+
+        let result = create_empty_markdown_file(workspace.path(), workspace.path(), "notes.md");
+
+        assert_eq!(result, Err(NewMarkdownFileError::AlreadyExists));
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("notes.md")).unwrap(),
+            "# Existing\n"
+        );
+    }
+
+    #[test]
+    fn new_file_request_without_workspace_does_not_open_dialog() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::NewMarkdownFileRequested);
+
+        assert!(!app.new_file_dialog_open);
+    }
+
+    #[test]
+    fn new_file_created_opens_clean_editor_after_store_update() {
+        let workspace = TempWorkspace::new();
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("notes.md");
+        fs::write(&path, "").unwrap();
+
+        let _ = app.update(Message::NewMarkdownFileCreated(Ok(path.clone())));
+        let update =
+            workspace_update_from_events(workspace.path(), &[WorkspaceEvent::Upsert(path.clone())])
+                .unwrap();
+        let _ = app.update(Message::WorkspaceUpdateCompleted(
+            app.workspace_generation,
+            workspace.path().to_path_buf(),
+            Ok(update),
+        ));
+
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.markdown_editors.contains_key(&path));
+        assert!(!app.model.editor.has_dirty_tabs());
+        assert_eq!(
+            app.model
+                .documents
+                .iter()
+                .filter(|document| document.path == path)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn new_file_dialog_keeps_open_when_name_exists() {
+        let workspace = TempWorkspace::new();
+        workspace.write("notes.md", "");
+        let mut app = app_from_workspace(&workspace);
+
+        let _ = app.update(Message::NewMarkdownFileRequested);
+        let _ = app.update(Message::NewMarkdownFileNameChanged(String::from(
+            "notes.md",
+        )));
+        let _ = app.update(Message::NewMarkdownFileConfirmed);
+
+        assert!(app.new_file_dialog_open);
+        assert_eq!(
+            app.new_file_error,
+            Some(NewMarkdownFileError::AlreadyExists)
+        );
+    }
+
+    #[test]
+    fn explorer_tree_toggle_is_visual_only_and_preserves_selection() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a/b/c.md", "# C\n");
+        let mut app = app_from_workspace(&workspace);
+        let selected = workspace.path().join("a/b/c.md");
+        app.open_or_activate_document(selected.clone());
+
+        let _ = app.update(Message::ExplorerTreeExpandCollapseToggled);
+
+        assert_eq!(app.model.selected_document_path, Some(selected));
+        assert!(!app.model.explorer_tree_has_expanded_dirs());
+        assert_eq!(
+            app.model.scan_state,
+            ScanState::Completed {
+                documents: 1,
+                directories: 2,
+                collections: 1,
+                errors: 0,
+                warnings: 0,
+            }
+        );
+    }
+
     fn app_from_workspace(workspace: &TempWorkspace) -> FlokinApp {
         let mut app = FlokinApp::new();
         app.model
@@ -3523,7 +3899,12 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            path.push(format!("flokin-md-app-{}-{unique}", std::process::id()));
+            static NEXT_TEMP_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+            let serial = NEXT_TEMP_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+            path.push(format!(
+                "flokin-md-app-{}-{unique}-{serial}",
+                std::process::id()
+            ));
             fs::create_dir(&path).unwrap();
             Self { path }
         }
@@ -3549,7 +3930,10 @@ mod tests {
 
     fn env_guard() -> std::sync::MutexGuard<'static, ()> {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn restore_app_data_env(previous: Option<std::ffi::OsString>) {

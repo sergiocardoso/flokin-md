@@ -9,6 +9,11 @@ action-save = Salvar
 action-save-all = Salvar tudo
 action-do-not-save = Não salvar
 action-reset = Restaurar
+action-back = Voltar
+action-previous = Anterior
+action-next = Próxima
+action-yes = Sim
+action-no = Não
 state-on = ON
 state-off = OFF
 
@@ -18,6 +23,7 @@ menu-view = Exibir
 menu-navigate = Navegar
 menu-data = Dados
 menu-help = Ajuda
+menu-new-file = Novo arquivo
 menu-open-folder = Abrir pasta
 menu-close-folder = Fechar pasta
 menu-reindex = Reindexar
@@ -96,6 +102,14 @@ search-results-limited = { $count }+ resultados
 
 # Explorer
 explorer-title = EXPLORADOR
+explorer-new-file = Novo arquivo
+explorer-file-name = Nome do arquivo
+explorer-create-file = Criar arquivo
+explorer-file-exists = Já existe um arquivo com esse nome.
+explorer-file-create-failed = Não foi possível criar o arquivo: { $message }
+explorer-invalid-file-name = Informe um nome de arquivo Markdown válido.
+explorer-expand-all = Expandir tudo
+explorer-collapse-all = Recolher tudo
 explorer-open = Abrir
 explorer-reindex = Reindexar
 explorer-no-workspace = Nenhuma pasta aberta
@@ -107,6 +121,7 @@ explorer-data = DATA
 explorer-collections = COLLECTIONS
 explorer-filters = FILTROS
 explorer-filters-empty = Disponíveis após indexação
+explorer-database = DATABASE
 semantic-agent = Agente
 semantic-agent-instructions = Instruções de agente
 semantic-skill = Skill
@@ -142,7 +157,9 @@ status-scanning = Analisando documentos...
 status-updating = Atualizando...
 status-scan-failed = Falha ao analisar workspace
 status-workspace-watched = Workspace monitorado
-status-read-only = Read only
+status-read-only = Somente leitura
+status-sqlite-memory = SQLite :memory:
+status-markdown = Markdown
 status-documents =
     { $count ->
         [one] 1 documento
@@ -155,12 +172,13 @@ status-collections =
     }
 status-warnings =
     { $count ->
-        [one] 1 warning
-       *[other] { $count } warnings
+        [one] 1 aviso
+       *[other] { $count } avisos
     }
 
 # Editor
 editor-empty-workspace-hint = Abra uma pasta que contenha arquivos .md ou .markdown.
+editor-scanned-folder = Pasta escaneada: { $path }
 editor-mode-edit = Editar
 editor-mode-split = Dividido
 editor-mode-preview = Prévia
@@ -176,18 +194,143 @@ editor-select-document = Selecione um documento Markdown para ver o conteúdo.
 # SQL
 sql-reviewing = Revisando...
 sql-running = Executando...
+sql-query-tab = Consulta 1
 sql-review-update = Revisar atualização
 sql-run = Executar
 sql-mode-query = Consulta
 sql-mode-update = Atualização
 sql-update-context = SQL Updates são convertidos em alterações Markdown e sempre exigem preview.
 sql-query-context = Modo Consulta é read-only.
+sql-results = RESULTADOS
+sql-error = Erro:
+sql-no-results = Sem resultados
+sql-preview-status = { $matched } documentos correspondem • { $changed } serão alterados
+sql-result-status = { $rows } linhas • { $ms } ms
+sql-results-limited = Resultados limitados a 1.000 linhas.
+sql-empty-update-preview = Revise uma atualização UPDATE para ver o preview.
+sql-empty-query-results = Execute uma consulta SELECT para ver o grid.
+sql-update-no-matches = Nenhum documento corresponde a esta atualização.
+sql-update-no-changes =
+    { $count ->
+        [one] 1 documento corresponde, mas nenhuma alteração é necessária.
+       *[other] { $count } documentos correspondem, mas nenhuma alteração é necessária.
+    }
+sql-documents-match =
+    { $count ->
+        [one] 1 documento corresponde
+       *[other] { $count } documentos correspondem
+    }
+sql-no-result-columns = Consulta executada sem colunas de resultado.
+sql-schema-table-name = SQL: { $table }
+sql-column-type-text = TEXT
+sql-column-type-integer = INTEGER
+sql-column-type-real = REAL
+sql-column-type-boolean = BOOLEAN
+sql-column-type-json = JSON
+sql-column-type-null = NULL
+
+# Data / Schema / Bulk
+data-properties =
+    { $count ->
+        [one] 1 propriedade
+       *[other] { $count } propriedades
+    }
+data-panel-data = Dados
+data-panel-schema = Schema
+data-empty-collection = Nenhum documento nesta Collection.
+data-empty-schema = Nenhum schema disponível para esta Collection.
+schema-source-inferred = Schema inferido
+schema-source-explicit = Schema explícito + observações inferidas
+schema-inferred-title = Schema inferido
+schema-inferred-description = O FlokinMD detectou esta estrutura automaticamente a partir dos seus documentos. Crie um schema explícito para definir tipos e campos obrigatórios.
+schema-explicit-title = Schema explícito
+schema-explicit-invalid = Schema explícito inválido
+schema-field = FIELD
+schema-type = TYPE
+schema-required = REQUIRED
+schema-present = PRESENT
+schema-present-in = Present in
+schema-present-ratio = { $observed } / { $total } documentos
+schema-null-values = Null values
+schema-declared = Declared
+schema-not-declared = Não declarado
+schema-observed-types = Observed types: { $types }
+schema-unknown = Unknown
+schema-structural-suffix =  · campo estrutural/derivado
+bulk-edit-title = Editar em massa
+bulk-clear-selection = Limpar seleção
+bulk-selected-count =
+    { $count ->
+        [one] 1 selecionado
+       *[other] { $count } selecionados
+    }
+bulk-selected-documents =
+    { $count ->
+        [one] 1 documento selecionado
+       *[other] { $count } documentos selecionados
+    }
+bulk-step-configure = 1. Configurar
+bulk-step-review = 2. Revisar
+bulk-preview-unavailable = Preview indisponível. Volte e revise a configuração.
+bulk-review-changes = Revisar alterações
+bulk-operation = Operação
+bulk-operation-set = Definir propriedade
+bulk-operation-remove = Remover propriedade
+bulk-new-property-option = + Nova propriedade...
+bulk-property-placeholder = Escolha uma propriedade
+bulk-property = Propriedade
+bulk-property-name = Nome da propriedade
+bulk-property-name-placeholder = ex.: reviewed
+bulk-type = Tipo
+bulk-value = Valor
+bulk-target = Destino
+bulk-target-placeholder = Destino
+bulk-value-placeholder = Valor
+bulk-null-value = Valor: null
+value-true = Verdadeiro
+value-false = Falso
+value-type-string = Texto
+value-type-integer = Inteiro
+value-type-float = Decimal
+value-type-boolean = Booleano
+value-type-array = Lista
+value-type-object = Objeto
+value-type-mixed = Mixed
+value-type-null = Nulo
+value-type-relation = Relação
+change-status-changed = Alterado
+change-status-no-change = Sem alteração
+change-status-blocked = Bloqueado
+change-status-unsupported = Não suportado
+apply-changes =
+    { $count ->
+        [one] Aplicar 1 alteração
+       *[other] Aplicar { $count } alterações
+    }
+changes-will-change =
+    { $count ->
+        [one] 1 será alterado
+       *[other] { $count } serão alterados
+    }
+changes-no-change =
+    { $count ->
+        [one] 1 sem alteração
+       *[other] { $count } sem alteração
+    }
+changes-blocked =
+    { $count ->
+        [one] 1 bloqueado
+       *[other] { $count } bloqueados
+    }
+pagination-status = { $start }-{ $end } de { $total }  ·  Página { $page } de { $pages }
 
 # Settings
 settings-section-interface = INTERFACE
 settings-language = Idioma
 settings-section-appearance = APARÊNCIA
 settings-theme = Tema
+theme-light = Claro
+theme-dark = Escuro
 settings-section-layout = LAYOUT
 settings-hide-left-sidebar = Ocultar barra lateral esquerda
 settings-show-left-sidebar = Mostrar barra lateral esquerda
@@ -291,6 +434,48 @@ health-category = CATEGORY
 health-document = DOCUMENT
 health-property = PROPERTY
 health-problem = PROBLEM
+health-expected = EXPECTED
+health-found = FOUND
+health-workspace = workspace
+health-severity-error = Erro
+health-severity-warning = Warning
+health-severity-info = Info
+health-category-parsing = Parsing
+health-category-schema = Schema
+health-category-relations = Relations
+health-category-workspace = Workspace
+health-issue-invalid-frontmatter = Frontmatter YAML inválido.
+health-issue-file-read-error = Não foi possível ler o arquivo.
+health-issue-workspace-scan-error = Erro ao processar o workspace.
+health-issue-explicit-schema-invalid = Schema explícito inválido.
+health-issue-required-field-missing = Campo obrigatório ausente.
+health-issue-type-mismatch = Esperado { $expected }, encontrado { $found }.
+health-issue-undeclared-field = Campo não declarado no schema explícito.
+health-issue-mixed-observed-types = Tipos inconsistentes observados.
+health-issue-relation-unresolved = Relação não resolvida.
+health-issue-relation-ambiguous =
+    { $count ->
+        [one] Relação ambígua: 1 documento corresponde.
+       *[other] Relação ambígua: { $count } documentos correspondem.
+    }
+
+# Inspector
+inspector-properties = PROPRIEDADES
+inspector-relations = RELAÇÕES
+inspector-referenced-by = REFERENCIADO POR
+inspector-tags = TAGS
+inspector-warnings = WARNINGS
+inspector-metadata = METADADOS
+inspector-issue = ISSUE
+inspector-details = DETALHES
+inspector-open-document = Abrir documento
+relation-unresolved = Não resolvido
+relation-ambiguous-count =
+    { $count ->
+        [one] Ambíguo — 1 documento corresponde
+       *[other] Ambíguo — { $count } documentos correspondem
+    }
+relation-structured-reference = referência estruturada
 
 # Graph
 graph-title = Grafo

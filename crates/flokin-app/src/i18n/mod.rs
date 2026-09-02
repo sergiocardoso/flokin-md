@@ -32,6 +32,12 @@ impl I18nCatalog {
             (AppLanguage::English, "health-filter-placeholder") => "Filter issues...",
             (AppLanguage::PortugueseBrazil, "editor-empty-file") => "Arquivo vazio.",
             (AppLanguage::English, "editor-empty-file") => "Empty file.",
+            (AppLanguage::PortugueseBrazil, "bulk-property-name-placeholder") => "ex.: reviewed",
+            (AppLanguage::English, "bulk-property-name-placeholder") => "e.g. reviewed",
+            (AppLanguage::PortugueseBrazil, "bulk-target-placeholder") => "Destino",
+            (AppLanguage::English, "bulk-target-placeholder") => "Target",
+            (AppLanguage::PortugueseBrazil, "bulk-value-placeholder") => "Valor",
+            (AppLanguage::English, "bulk-value-placeholder") => "Value",
             _ => {
                 #[cfg(debug_assertions)]
                 eprintln!("Missing static translation key: {key}");
@@ -146,7 +152,7 @@ fn bundle(language: AppLanguage) -> FluentBundle<FluentResource> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
 
@@ -175,6 +181,32 @@ mod tests {
     }
 
     #[test]
+    fn locale_files_do_not_have_duplicate_keys() {
+        assert_eq!(
+            duplicate_keys(AppLanguage::PortugueseBrazil.resource()),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            duplicate_keys(AppLanguage::English.resource()),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn locale_messages_use_matching_arguments() {
+        let pt = messages(AppLanguage::PortugueseBrazil.resource());
+        let en = messages(AppLanguage::English.resource());
+
+        for key in keys(AppLanguage::PortugueseBrazil.resource()) {
+            assert_eq!(
+                message_args(pt.get(&key).map(String::as_str).unwrap_or_default()),
+                message_args(en.get(&key).map(String::as_str).unwrap_or_default()),
+                "translation arguments differ for key {key}"
+            );
+        }
+    }
+
+    #[test]
     fn plural_messages_use_active_language() {
         let pt = I18nCatalog::new(AppLanguage::PortugueseBrazil);
         let en = I18nCatalog::new(AppLanguage::English);
@@ -189,11 +221,85 @@ mod tests {
     }
 
     fn keys(resource: &str) -> BTreeSet<String> {
-        resource
-            .lines()
-            .filter_map(|line| line.split_once('='))
-            .map(|(key, _)| key.trim().to_owned())
-            .filter(|key| !key.is_empty() && !key.starts_with('#'))
+        messages(resource).into_keys().collect()
+    }
+
+    fn duplicate_keys(resource: &str) -> Vec<String> {
+        let mut counts = BTreeMap::<String, usize>::new();
+        for key in resource.lines().filter_map(message_key) {
+            *counts.entry(key).or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .filter_map(|(key, count)| (count > 1).then_some(key))
             .collect()
     }
+
+    fn messages(resource: &str) -> BTreeMap<String, String> {
+        let mut messages = BTreeMap::<String, String>::new();
+        let mut current_key: Option<String> = None;
+        let mut current_message = String::new();
+
+        for line in resource.lines() {
+            if let Some(key) = message_key(line) {
+                if let Some(previous) = current_key.replace(key) {
+                    messages.insert(previous, current_message.trim_end().to_owned());
+                    current_message.clear();
+                }
+                if let Some((_, value)) = line.split_once('=') {
+                    current_message.push_str(value);
+                    current_message.push('\n');
+                }
+            } else if current_key.is_some() {
+                current_message.push_str(line);
+                current_message.push('\n');
+            }
+        }
+
+        if let Some(previous) = current_key {
+            messages.insert(previous, current_message.trim_end().to_owned());
+        }
+
+        messages
+    }
+
+    fn message_key(line: &str) -> Option<String> {
+        if line
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_whitespace())
+        {
+            return None;
+        }
+        let (key, _) = line.split_once('=')?;
+        let key = key.trim();
+        if key.is_empty() || key.starts_with('#') {
+            None
+        } else {
+            Some(key.to_owned())
+        }
+    }
+
+    fn message_args(message: &str) -> BTreeSet<String> {
+        let mut args = BTreeSet::new();
+        let mut rest = message;
+        while let Some(start) = rest.find("{ $") {
+            rest = &rest[start + 3..];
+            let name_len = rest
+                .chars()
+                .take_while(|character| {
+                    character.is_ascii_alphanumeric()
+                        || *character == '-'
+                        || *character == '_'
+                })
+                .map(char::len_utf8)
+                .sum();
+            if name_len > 0 {
+                args.insert(rest[..name_len].to_owned());
+                rest = &rest[name_len..];
+            }
+        }
+        args
+    }
+
 }
