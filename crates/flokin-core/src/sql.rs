@@ -10,7 +10,7 @@ use rusqlite::{
     Connection, ToSql,
 };
 use sqlparser::{
-    ast::{AssignmentTarget, Expr, ObjectName, Statement, TableFactor},
+    ast::{AssignmentTarget, BinaryOperator, Expr, ObjectName, Statement, TableFactor},
     dialect::SQLiteDialect,
     parser::Parser,
 };
@@ -202,7 +202,14 @@ impl SqlProjection {
         let statement_sql = single_statement_with_message(sql, "Execute uma atualização por vez.")?;
         let parsed = parse_update_statement(statement_sql)?;
         let projection = SqlProjection::build_writable(documents, collections)?;
-        projection.simulate_update(statement_sql, parsed, documents, editor, schema_catalog)
+        projection.simulate_update(
+            sql,
+            statement_sql,
+            parsed,
+            documents,
+            editor,
+            schema_catalog,
+        )
     }
 
     fn build_writable(
@@ -228,7 +235,8 @@ impl SqlProjection {
 
     fn simulate_update(
         &self,
-        sql: &str,
+        original_sql: &str,
+        statement_sql: &str,
         parsed: ParsedUpdate,
         documents: &[Document],
         editor: &crate::EditorState,
@@ -252,7 +260,9 @@ impl SqlProjection {
             .execute_batch("SAVEPOINT flokinmd_sql_update_preview;")
             .map_err(SqlError::from)?;
         let simulation_result = (|| {
-            self.connection.execute(sql, []).map_err(SqlError::from)?;
+            self.connection
+                .execute(statement_sql, [])
+                .map_err(SqlError::from)?;
             let matched_paths = before_rows
                 .iter()
                 .map(|row| row.path.clone())
@@ -272,7 +282,7 @@ impl SqlProjection {
         let after_rows = simulation_result?;
 
         build_sql_write_plan(SqlWritePlanBuild {
-            sql,
+            sql: original_sql,
             table,
             columns: target_columns.as_slice(),
             before_rows,
@@ -281,6 +291,7 @@ impl SqlProjection {
             editor,
             schema_catalog,
             no_where: parsed.selection.is_none(),
+            arithmetic_columns: parsed.arithmetic_columns,
         })
     }
 }
@@ -733,6 +744,7 @@ fn single_statement_with_message<'a>(sql: &'a str, message: &str) -> Result<&'a 
 struct ParsedUpdate {
     table: String,
     columns: Vec<String>,
+    arithmetic_columns: BTreeSet<String>,
     selection: Option<String>,
 }
 
@@ -762,10 +774,15 @@ fn parse_update_statement(sql: &str) -> Result<ParsedUpdate, SqlError> {
                 return Err(SqlError::new("Informe pelo menos uma coluna em SET."));
             }
             let mut columns = Vec::new();
+            let mut arithmetic_columns = BTreeSet::new();
             for assignment in assignments {
                 match &assignment.target {
                     AssignmentTarget::ColumnName(name) => {
-                        columns.push(object_name_last_part(name)?);
+                        let column = object_name_last_part(name)?;
+                        if expr_contains_arithmetic(&assignment.value) {
+                            arithmetic_columns.insert(column.clone());
+                        }
+                        columns.push(column);
                     }
                     AssignmentTarget::Tuple(_) => {
                         return Err(SqlError::new(
@@ -779,6 +796,7 @@ fn parse_update_statement(sql: &str) -> Result<ParsedUpdate, SqlError> {
             Ok(ParsedUpdate {
                 table: table_name,
                 columns,
+                arithmetic_columns,
                 selection: selection.as_ref().map(Expr::to_string),
             })
         }
@@ -817,6 +835,27 @@ fn object_name_last_part(name: &ObjectName) -> Result<String, SqlError> {
         .last()
         .map(|ident| ident.value.clone())
         .ok_or_else(|| SqlError::new("Identificador SQL inválido."))
+}
+
+fn expr_contains_arithmetic(expr: &Expr) -> bool {
+    match expr {
+        Expr::BinaryOp { left, op, right } => {
+            matches!(
+                op,
+                BinaryOperator::Plus
+                    | BinaryOperator::Minus
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
+            ) || expr_contains_arithmetic(left)
+                || expr_contains_arithmetic(right)
+        }
+        Expr::UnaryOp { expr, .. }
+        | Expr::Nested(expr)
+        | Expr::Cast { expr, .. }
+        | Expr::Collate { expr, .. } => expr_contains_arithmetic(expr),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -920,6 +959,7 @@ struct SqlWritePlanBuild<'a> {
     editor: &'a crate::EditorState,
     schema_catalog: &'a SchemaCatalog,
     no_where: bool,
+    arithmetic_columns: BTreeSet<String>,
 }
 
 fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, SqlError> {
@@ -933,6 +973,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
         editor,
         schema_catalog,
         no_where,
+        arithmetic_columns,
     } = input;
     let documents_by_relative = documents
         .iter()
@@ -989,6 +1030,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
         }
 
         let mut frontmatter_changes = Vec::new();
+        let mut block_reason = None;
         for column in columns {
             let before_value = before.values.get(&column.name).unwrap_or(&SqlValue::Null);
             let after_value = after.values.get(&column.name).unwrap_or(&SqlValue::Null);
@@ -999,8 +1041,32 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
                 .source_property
                 .as_ref()
                 .expect("validated source property");
-            let value = markdown_value_for_sql(table, column, after_value, schema_catalog)?;
+            let value = match markdown_value_for_sql(
+                table,
+                column,
+                document,
+                before_value,
+                after_value,
+                arithmetic_columns.contains(&column.name),
+                schema_catalog,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    block_reason = Some(error.message);
+                    break;
+                }
+            };
             frontmatter_changes.push((property.clone(), Some(value)));
+        }
+
+        if let Some(reason) = block_reason {
+            changes.push(sql_blocked_change(
+                document.path.clone(),
+                document.relative_path.clone(),
+                fingerprint,
+                &reason,
+            ));
+            continue;
         }
 
         if frontmatter_changes.is_empty() {
@@ -1008,6 +1074,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
                 path: document.path.clone(),
                 relative_path: document.relative_path.clone(),
                 original_fingerprint: fingerprint,
+                original_content: Some(source.to_owned()),
                 before: None,
                 after: None,
                 property_changes: Vec::new(),
@@ -1026,6 +1093,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
                 path: document.path.clone(),
                 relative_path: document.relative_path.clone(),
                 original_fingerprint: fingerprint,
+                original_content: Some(source.to_owned()),
                 before: property_changes
                     .first()
                     .and_then(|change| change.before.clone()),
@@ -1042,6 +1110,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
                     path: document.path.clone(),
                     relative_path: document.relative_path.clone(),
                     original_fingerprint: fingerprint,
+                    original_content: Some(source.to_owned()),
                     before: None,
                     after: None,
                     property_changes,
@@ -1054,6 +1123,7 @@ fn build_sql_write_plan(input: SqlWritePlanBuild<'_>) -> Result<SqlWritePlan, Sq
                 document.path.clone(),
                 document.relative_path.clone(),
                 fingerprint,
+                source,
                 &message,
             )),
         }
@@ -1107,6 +1177,7 @@ fn sql_blocked_change(
         path,
         relative_path,
         original_fingerprint,
+        original_content: None,
         before: None,
         after: None,
         property_changes: Vec::new(),
@@ -1120,12 +1191,14 @@ fn sql_unsupported_change(
     path: PathBuf,
     relative_path: PathBuf,
     original_fingerprint: u64,
+    source: &str,
     reason: &str,
 ) -> BulkEditFileChange {
     BulkEditFileChange {
         path,
         relative_path,
         original_fingerprint,
+        original_content: Some(source.to_owned()),
         before: None,
         after: None,
         property_changes: Vec::new(),
@@ -1138,52 +1211,89 @@ fn sql_unsupported_change(
 fn markdown_value_for_sql(
     table: &SqlTable,
     column: &SqlColumn,
+    document: &Document,
+    before_value: &SqlValue,
     value: &SqlValue,
+    arithmetic_expression: bool,
     schema_catalog: &SchemaCatalog,
 ) -> Result<BulkEditValue, SqlError> {
     let property = column.source_property.as_deref().unwrap_or(&column.name);
     let schema_field = schema_catalog
         .collection(&table.collection_id)
         .and_then(|schema| schema.fields.iter().find(|field| field.name == property));
-    let expected_type = schema_field.map(|field| field.field_type);
-    if matches!(expected_type, Some(SchemaType::Array | SchemaType::Object)) {
+    let declared_type = schema_field.and_then(|field| field.declared.then_some(field.field_type));
+    let inferred_type = schema_field.map(|field| field.field_type);
+
+    let before_type = document
+        .properties
+        .get(property)
+        .map(|value| property_value_schema_type(value, inferred_type))
+        .unwrap_or_else(|| sql_value_schema_type(before_value));
+    let target_type = declared_type
+        .or_else(|| (inferred_type == Some(SchemaType::Relation)).then_some(SchemaType::Relation))
+        .unwrap_or(before_type);
+
+    if matches!(target_type, SchemaType::Array | SchemaType::Object) {
         return Err(SqlError::new(
             "Atualização SQL de Array/Object ainda não é suportada.",
         ));
     }
-    if matches!(expected_type, Some(SchemaType::Mixed | SchemaType::Unknown)) {
+    if matches!(target_type, SchemaType::Mixed | SchemaType::Unknown) {
         return Err(SqlError::new(
             "Atualização SQL de campo Mixed ainda não é segura nesta milestone.",
         ));
     }
 
-    let inferred = sql_column_to_schema_type(column.value_type);
-    let target_type = expected_type.unwrap_or(inferred);
+    if arithmetic_expression && before_type == SchemaType::String {
+        let produced_type = arithmetic_result_schema_type(value);
+        return Err(SqlError::new(format!(
+            "{}.{} possui valor String neste documento e a atualização produziria {}.",
+            table.name,
+            property,
+            produced_type.label()
+        )));
+    }
     let converted = match (target_type, value) {
         (_, SqlValue::Null) => BulkEditValue::Null,
         (SchemaType::String, SqlValue::Text(value)) => BulkEditValue::String(value.clone()),
         (SchemaType::Integer, SqlValue::Integer(value)) => {
             BulkEditValue::Integer(value.to_string())
         }
+        (SchemaType::Integer, SqlValue::Text(value)) if before_type != SchemaType::String => value
+            .parse::<i64>()
+            .map(|value| BulkEditValue::Integer(value.to_string()))
+            .map_err(|_| {
+                SqlError::new(format!(
+                    "{}.{} possui valor {} neste documento e a atualização produziria {}.",
+                    table.name,
+                    property,
+                    target_type.label(),
+                    SchemaType::String.label()
+                ))
+            })?,
         (SchemaType::Float, SqlValue::Integer(value)) => BulkEditValue::Float(value.to_string()),
         (SchemaType::Float, SqlValue::Real(value)) => BulkEditValue::Float(value.to_string()),
+        (SchemaType::Float, SqlValue::Text(value)) if before_type != SchemaType::String => value
+            .parse::<f64>()
+            .map(|value| BulkEditValue::Float(value.to_string()))
+            .map_err(|_| {
+                SqlError::new(format!(
+                    "{}.{} possui valor {} neste documento e a atualização produziria {}.",
+                    table.name,
+                    property,
+                    target_type.label(),
+                    SchemaType::String.label()
+                ))
+            })?,
         (SchemaType::Boolean, SqlValue::Integer(0)) => BulkEditValue::Boolean(false),
         (SchemaType::Boolean, SqlValue::Integer(1)) => BulkEditValue::Boolean(true),
         (SchemaType::Relation, SqlValue::Text(value)) if is_relation_literal(value) => {
             BulkEditValue::String(value.clone())
         }
-        (SchemaType::String, SqlValue::Integer(value))
-            if column.value_type == SqlColumnType::Text =>
-        {
-            BulkEditValue::String(value.to_string())
-        }
-        (SchemaType::String, SqlValue::Real(value)) if column.value_type == SqlColumnType::Text => {
-            BulkEditValue::String(value.to_string())
-        }
         (expected, actual) => {
             return Err(SqlError::new(format!(
-                "{}.{} espera {}, mas a atualização produziria {}.",
-                table.display_name,
+                "{}.{} possui valor {} neste documento e a atualização produziria {}.",
+                table.name,
                 property,
                 expected.label(),
                 sql_value_schema_type(actual).label()
@@ -1219,14 +1329,27 @@ fn markdown_value_for_sql(
     Ok(converted)
 }
 
-fn sql_column_to_schema_type(column_type: SqlColumnType) -> SchemaType {
-    match column_type {
-        SqlColumnType::Text => SchemaType::String,
-        SqlColumnType::Integer => SchemaType::Integer,
-        SqlColumnType::Real => SchemaType::Float,
-        SqlColumnType::Boolean => SchemaType::Boolean,
-        SqlColumnType::Json => SchemaType::Object,
-        SqlColumnType::Null => SchemaType::Null,
+fn property_value_schema_type(
+    value: &PropertyValue,
+    inferred_type: Option<SchemaType>,
+) -> SchemaType {
+    if inferred_type == Some(SchemaType::Relation) && matches!(value, PropertyValue::String(_)) {
+        return SchemaType::Relation;
+    }
+
+    match value {
+        PropertyValue::Null => SchemaType::Null,
+        PropertyValue::Bool(_) => SchemaType::Boolean,
+        PropertyValue::Number(value) => {
+            if value.parse::<i64>().is_ok() {
+                SchemaType::Integer
+            } else {
+                SchemaType::Float
+            }
+        }
+        PropertyValue::String(_) => SchemaType::String,
+        PropertyValue::Array(_) => SchemaType::Array,
+        PropertyValue::Object(_) => SchemaType::Object,
     }
 }
 
@@ -1236,6 +1359,14 @@ fn sql_value_schema_type(value: &SqlValue) -> SchemaType {
         SqlValue::Integer(_) => SchemaType::Integer,
         SqlValue::Real(_) => SchemaType::Float,
         SqlValue::Text(_) => SchemaType::String,
+    }
+}
+
+fn arithmetic_result_schema_type(value: &SqlValue) -> SchemaType {
+    match value {
+        SqlValue::Text(value) if value.parse::<i64>().is_ok() => SchemaType::Integer,
+        SqlValue::Text(value) if value.parse::<f64>().is_ok() => SchemaType::Float,
+        _ => sql_value_schema_type(value),
     }
 }
 
@@ -1962,6 +2093,251 @@ mod tests {
     }
 
     #[test]
+    fn update_preview_blocks_unsafe_sqlite_type_coercion() {
+        let safe_numbers = vec![
+            doc_with_source(
+                "Projects/int.md",
+                "Int",
+                "project",
+                [("priority", PropertyValue::Number(String::from("10")))],
+                "---\npriority: 10\n---\n# Int\n",
+            ),
+            doc_with_source(
+                "Projects/float.md",
+                "Float",
+                "project",
+                [("score", PropertyValue::Number(String::from("10.5")))],
+                "---\nscore: 10.5\n---\n# Float\n",
+            ),
+            doc_with_source(
+                "Projects/status.md",
+                "Status",
+                "project",
+                [("status", PropertyValue::String(String::from("active")))],
+                "---\nstatus: active\n---\n# Status\n",
+            ),
+            doc_with_source(
+                "Projects/bool.md",
+                "Bool",
+                "project",
+                [("published", PropertyValue::Bool(true))],
+                "---\npublished: true\n---\n# Bool\n",
+            ),
+            doc_with_source(
+                "Projects/null.md",
+                "Null",
+                "project",
+                [("reviewed_at", PropertyValue::Null)],
+                "---\nreviewed_at: null\n---\n# Null\n",
+            ),
+        ];
+        let collections = collections_from_documents(&safe_numbers);
+        let schema = schema_catalog(&safe_numbers, &collections);
+
+        let int_plan = SqlProjection::preview_update(
+            "UPDATE projects SET priority = priority + 1 WHERE title = 'Int'",
+            &safe_numbers,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(
+            int_plan.mutation_plan.changes[0].property_changes[0].after,
+            Some(String::from("priority: 11"))
+        );
+
+        let float_plan = SqlProjection::preview_update(
+            "UPDATE projects SET score = score + 1 WHERE title = 'Float'",
+            &safe_numbers,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(
+            float_plan.mutation_plan.changes[0].property_changes[0].after,
+            Some(String::from("score: 11.5"))
+        );
+
+        let string_plan = SqlProjection::preview_update(
+            "UPDATE projects SET status = 'archived' WHERE title = 'Status'",
+            &safe_numbers,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(
+            string_plan.mutation_plan.changes[0].property_changes[0].after,
+            Some(String::from("status: archived"))
+        );
+
+        let bool_plan = SqlProjection::preview_update(
+            "UPDATE projects SET published = 0 WHERE title = 'Bool'",
+            &safe_numbers,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(
+            bool_plan.mutation_plan.changes[0].property_changes[0].after,
+            Some(String::from("published: false"))
+        );
+
+        let null_plan = SqlProjection::preview_update(
+            "UPDATE projects SET reviewed_at = NULL WHERE title = 'Null'",
+            &safe_numbers,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+        assert_eq!(null_plan.affected_rows, 0);
+
+        let unsafe_strings = vec![
+            doc_with_source(
+                "Projects/high.md",
+                "High",
+                "project",
+                [("priority", PropertyValue::String(String::from("high")))],
+                "---\npriority: high\n---\n# High\n",
+            ),
+            doc_with_source(
+                "Projects/string-number.md",
+                "String Number",
+                "project",
+                [("priority", PropertyValue::String(String::from("10")))],
+                "---\npriority: \"10\"\n---\n# String Number\n",
+            ),
+        ];
+        let collections = collections_from_documents(&unsafe_strings);
+        let schema = schema_catalog(&unsafe_strings, &collections);
+        for title in ["High", "String Number"] {
+            let plan = SqlProjection::preview_update(
+                &format!("UPDATE projects SET priority = priority + 1 WHERE title = '{title}'"),
+                &unsafe_strings,
+                &collections,
+                &EditorState::default(),
+                &schema,
+            )
+            .unwrap();
+            assert!(!plan.mutation_plan.can_apply());
+            assert_eq!(
+                plan.mutation_plan.changes[0].status,
+                BulkEditChangeStatus::Blocked
+            );
+            assert!(plan.mutation_plan.changes[0]
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("produziria Integer"));
+        }
+    }
+
+    #[test]
+    fn update_preview_blocks_explicit_relation_mixed_and_writes_nothing_when_blocked() {
+        let workspace = temp_workspace();
+        workspace.write("Projects/carf.md", "---\npriority: high\n---\n# CARF\n");
+        let path = workspace.path().join("Projects/carf.md");
+        let mut string_document = doc_with_source(
+            "Projects/carf.md",
+            "CARF",
+            "project",
+            [("priority", PropertyValue::String(String::from("high")))],
+            "---\npriority: high\n---\n# CARF\n",
+        );
+        string_document.path = path.clone();
+        let documents = vec![string_document];
+        let collections = collections_from_documents(&documents);
+        let schema = schema_catalog(&documents, &collections);
+        let blocked = SqlProjection::preview_update(
+            "UPDATE projects SET priority = priority + 1 WHERE title = 'CARF'",
+            &documents,
+            &collections,
+            &EditorState::default(),
+            &schema,
+        )
+        .unwrap();
+
+        assert!(!blocked.mutation_plan.can_apply());
+        apply_bulk_edit_plan(&blocked.mutation_plan).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "---\npriority: high\n---\n# CARF\n"
+        );
+
+        let explicit_integer = explicit_schema_catalog(
+            &documents,
+            &collections,
+            "priority",
+            SchemaType::Integer,
+            false,
+        );
+        let blocked = SqlProjection::preview_update(
+            "UPDATE projects SET priority = 'low' WHERE title = 'CARF'",
+            &documents,
+            &collections,
+            &EditorState::default(),
+            &explicit_integer,
+        )
+        .unwrap();
+        assert_eq!(
+            blocked.mutation_plan.changes[0].status,
+            BulkEditChangeStatus::Blocked
+        );
+
+        let explicit_string = explicit_schema_catalog(
+            &documents,
+            &collections,
+            "priority",
+            SchemaType::String,
+            false,
+        );
+        let blocked = SqlProjection::preview_update(
+            "UPDATE projects SET priority = priority + 1 WHERE title = 'CARF'",
+            &documents,
+            &collections,
+            &EditorState::default(),
+            &explicit_string,
+        )
+        .unwrap();
+        assert_eq!(
+            blocked.mutation_plan.changes[0].status,
+            BulkEditChangeStatus::Blocked
+        );
+
+        let explicit_relation = explicit_schema_catalog(
+            &documents,
+            &collections,
+            "owner",
+            SchemaType::Relation,
+            false,
+        );
+        let relation = vec![doc_with_source(
+            "Projects/rel.md",
+            "Rel",
+            "project",
+            [("owner", PropertyValue::String(String::from("[[Ana]]")))],
+            "---\nowner: \"[[Ana]]\"\n---\n# Rel\n",
+        )];
+        let relation_collections = collections_from_documents(&relation);
+        let bad_relation = SqlProjection::preview_update(
+            "UPDATE projects SET owner = 'Ana'",
+            &relation,
+            &relation_collections,
+            &EditorState::default(),
+            &explicit_relation,
+        )
+        .unwrap();
+        assert_eq!(
+            bad_relation.mutation_plan.changes[0].status,
+            BulkEditChangeStatus::Blocked
+        );
+    }
+
+    #[test]
     fn unsafe_types_are_blocked() {
         let documents = vec![
             doc_with_source(
@@ -2002,16 +2378,88 @@ mod tests {
         .unwrap_err()
         .message
         .contains("Array/Object"));
-        assert!(SqlProjection::preview_update(
+
+        let explicit_mixed =
+            explicit_schema_catalog(&documents, &collections, "mixed", SchemaType::Mixed, false);
+        let mixed = SqlProjection::preview_update(
             "UPDATE projects SET mixed = 'y'",
+            &documents,
+            &collections,
+            &EditorState::default(),
+            &explicit_mixed,
+        )
+        .unwrap();
+        assert_eq!(
+            mixed.mutation_plan.changes[0].status,
+            BulkEditChangeStatus::Blocked
+        );
+        assert!(mixed.mutation_plan.changes[0]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("Mixed"));
+    }
+
+    #[test]
+    fn update_preview_blocks_mixed_batch_by_document_and_writes_nothing() {
+        let workspace = temp_workspace();
+        workspace.write("Projects/a.md", "---\npriority: 10\n---\n# A\n");
+        workspace.write("Projects/b.md", "---\npriority: high\n---\n# B\n");
+        let a_path = workspace.path().join("Projects/a.md");
+        let b_path = workspace.path().join("Projects/b.md");
+        let mut a = doc_with_source(
+            "Projects/a.md",
+            "A",
+            "project",
+            [("priority", PropertyValue::Number(String::from("10")))],
+            "---\npriority: 10\n---\n# A\n",
+        );
+        a.path = a_path.clone();
+        let mut b = doc_with_source(
+            "Projects/b.md",
+            "B",
+            "project",
+            [("priority", PropertyValue::String(String::from("high")))],
+            "---\npriority: high\n---\n# B\n",
+        );
+        b.path = b_path.clone();
+        let documents = vec![a, b];
+        let collections = collections_from_documents(&documents);
+        let schema = schema_catalog(&documents, &collections);
+
+        let plan = SqlProjection::preview_update(
+            "UPDATE projects SET priority = priority + 1",
             &documents,
             &collections,
             &EditorState::default(),
             &schema,
         )
-        .unwrap_err()
-        .message
-        .contains("Mixed"));
+        .unwrap();
+
+        assert_eq!(plan.matched_rows, 2);
+        assert_eq!(
+            plan.mutation_plan.changes[0].status,
+            BulkEditChangeStatus::Changed
+        );
+        assert_eq!(
+            plan.mutation_plan.changes[0].property_changes[0].after,
+            Some(String::from("priority: 11"))
+        );
+        assert_eq!(
+            plan.mutation_plan.changes[1].status,
+            BulkEditChangeStatus::Blocked
+        );
+        assert!(!plan.mutation_plan.can_apply());
+
+        apply_bulk_edit_plan(&plan.mutation_plan).unwrap();
+        assert_eq!(
+            fs::read_to_string(&a_path).unwrap(),
+            "---\npriority: 10\n---\n# A\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&b_path).unwrap(),
+            "---\npriority: high\n---\n# B\n"
+        );
     }
 
     #[test]
@@ -2161,6 +2609,38 @@ mod tests {
             collections,
             &RelationIndex::build(documents),
             crate::ExplicitSchemaState::Absent,
+        )
+    }
+
+    fn explicit_schema_catalog(
+        documents: &[Document],
+        collections: &[Collection],
+        property: &str,
+        field_type: SchemaType,
+        required: bool,
+    ) -> SchemaCatalog {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            property.to_owned(),
+            crate::ExplicitFieldSchema {
+                field_type,
+                required,
+                target: None,
+            },
+        );
+        let mut explicit_collections = BTreeMap::new();
+        explicit_collections.insert(
+            String::from("project"),
+            crate::ExplicitCollectionSchema { fields },
+        );
+        SchemaCatalog::build(
+            documents,
+            collections,
+            &RelationIndex::build(documents),
+            crate::ExplicitSchemaState::Loaded(crate::ExplicitSchema {
+                version: 1,
+                collections: explicit_collections,
+            }),
         )
     }
 

@@ -30,9 +30,9 @@ pub use health::{
 };
 pub use history::{
     build_undo_plan, bulk_history_entry, new_history_id, now_unix_seconds, sql_history_entry,
-    undo_history_entry, workspace_identity, HistoryFileChange, HistoryState,
-    MutationHistoryEntry, MutationHistoryStore, MutationSource, UndoBuildError,
-    HISTORY_RETENTION_LIMIT, HISTORY_STORAGE_VERSION,
+    undo_history_entry, workspace_identity, HistoryFileChange, HistoryState, MutationHistoryEntry,
+    MutationHistoryStore, MutationSource, UndoBuildError, HISTORY_RETENTION_LIMIT,
+    HISTORY_STORAGE_VERSION,
 };
 pub use mock::mock_shell;
 pub use model::{

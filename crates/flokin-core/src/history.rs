@@ -8,8 +8,8 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    content_fingerprint, BulkEditChangeStatus, BulkEditFileChange, BulkEditOperation,
-    BulkEditPlan, EditorState, FrontmatterPropertyChange, SqlWritePlan,
+    content_fingerprint, BulkEditChangeStatus, BulkEditFileChange, BulkEditOperation, BulkEditPlan,
+    EditorState, FrontmatterPropertyChange, SqlWritePlan,
 };
 
 pub const HISTORY_STORAGE_VERSION: i64 = 1;
@@ -46,7 +46,7 @@ pub struct HistoryFileChange {
     pub property_changes: Vec<FrontmatterPropertyChange>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HistoryState {
     pub entries: Vec<MutationHistoryEntry>,
     pub selected_entry_id: Option<String>,
@@ -58,36 +58,60 @@ pub struct HistoryState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UndoBuildError {
+    WrongWorkspace,
     UnsupportedSource,
-    MissingFile { relative_path: PathBuf },
-    DirtyFile { relative_path: PathBuf },
-    ExternalConflict { relative_path: PathBuf },
-    StaleFile { relative_path: PathBuf },
-    ReadFile { relative_path: PathBuf, message: String },
+    MissingFile {
+        relative_path: PathBuf,
+    },
+    DirtyFile {
+        relative_path: PathBuf,
+    },
+    ExternalConflict {
+        relative_path: PathBuf,
+    },
+    StaleFile {
+        relative_path: PathBuf,
+    },
+    ReadFile {
+        relative_path: PathBuf,
+        message: String,
+    },
 }
 
+#[derive(Debug)]
 pub struct MutationHistoryStore {
     path: PathBuf,
     connection: Connection,
-}
-
-impl Default for HistoryState {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            selected_entry_id: None,
-            undo_plan: None,
-            clear_confirm: false,
-            error: None,
-            last_result: None,
-        }
-    }
 }
 
 impl HistoryState {
     pub fn selected_entry(&self) -> Option<&MutationHistoryEntry> {
         let id = self.selected_entry_id.as_ref()?;
         self.entries.iter().find(|entry| &entry.id == id)
+    }
+
+    pub fn is_entry_undone(&self, original: &MutationHistoryEntry) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.source == MutationSource::Undo
+                && entry.workspace_id == original.workspace_id
+                && entry.original_entry_id.as_deref() == Some(original.id.as_str())
+        })
+    }
+
+    pub fn is_entry_undoable(&self, entry: &MutationHistoryEntry) -> bool {
+        entry.is_intrinsically_undoable() && !self.is_entry_undone(entry)
+    }
+
+    pub fn entry_status_label(&self, entry: &MutationHistoryEntry) -> &'static str {
+        if entry.source == MutationSource::Undo {
+            "undo indisponível"
+        } else if self.is_entry_undone(entry) {
+            "desfeita"
+        } else if entry.is_intrinsically_undoable() {
+            "undo disponível"
+        } else {
+            "undo indisponível"
+        }
     }
 }
 
@@ -119,8 +143,12 @@ impl MutationSource {
 }
 
 impl MutationHistoryEntry {
-    pub fn is_undoable(&self) -> bool {
+    pub fn is_intrinsically_undoable(&self) -> bool {
         !matches!(self.source, MutationSource::Undo) && !self.files.is_empty()
+    }
+
+    pub fn is_undoable(&self) -> bool {
+        self.is_intrinsically_undoable()
     }
 
     pub fn file_count_label(&self) -> String {
@@ -293,7 +321,8 @@ impl MutationHistoryStore {
                 before_content,
                 after_content,
                 property_changes_json,
-            ) = row.map_err(|error| format!("Não foi possível ler arquivos do histórico: {error}"))?;
+            ) = row
+                .map_err(|error| format!("Não foi possível ler arquivos do histórico: {error}"))?;
             let property_changes = serde_json::from_str(&property_changes_json)
                 .map_err(|error| format!("Histórico possui diff inválido: {error}"))?;
             files.push(HistoryFileChange {
@@ -516,8 +545,12 @@ fn history_file_from_change(change: &BulkEditFileChange) -> Result<HistoryFileCh
         .original_content
         .clone()
         .ok_or_else(|| format!("Conteúdo original ausente para {}", change.path.display()))?;
-    let after_content = fs::read_to_string(&change.path)
-        .map_err(|error| format!("Não foi possível ler {} após commit: {error}", change.path.display()))?;
+    let after_content = fs::read_to_string(&change.path).map_err(|error| {
+        format!(
+            "Não foi possível ler {} após commit: {error}",
+            change.path.display()
+        )
+    })?;
     Ok(HistoryFileChange {
         relative_path: change.relative_path.clone(),
         before_fingerprint: change.original_fingerprint,
@@ -533,6 +566,9 @@ pub fn build_undo_plan(
     entry: &MutationHistoryEntry,
     editor: &EditorState,
 ) -> Result<BulkEditPlan, UndoBuildError> {
+    if entry.workspace_id != workspace_identity(workspace) {
+        return Err(UndoBuildError::WrongWorkspace);
+    }
     if !entry.is_undoable() {
         return Err(UndoBuildError::UnsupportedSource);
     }
@@ -632,6 +668,7 @@ fn documents_label(count: usize) -> String {
 impl std::fmt::Display for UndoBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::WrongWorkspace => f.write_str("Esta operação pertence a outro workspace."),
             Self::UnsupportedSource => f.write_str("Undo desta operação não é suportado."),
             Self::MissingFile { .. } => f.write_str("O arquivo não existe mais."),
             Self::DirtyFile { .. } => {
@@ -662,7 +699,10 @@ impl From<io::Error> for UndoBuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{scan_workspace, BulkEditSelection, BulkEditValue, EditorState};
+    use crate::{
+        apply_bulk_edit_plan, scan_workspace, BulkEditSelection, BulkEditValue,
+        EditorExternalConflict, EditorState, EditorTab, EditorTabKind, EditorViewMode,
+    };
     use std::{env, time::SystemTime};
 
     #[test]
@@ -739,12 +779,117 @@ mod tests {
     }
 
     #[test]
+    fn storage_reports_corrupt_file_payload_without_panicking() {
+        let temp = TempDir::new();
+        let db = temp.path().join("history.sqlite3");
+        {
+            let mut store = MutationHistoryStore::open(&db).unwrap();
+            store.save_entry(&sample_entry("workspace")).unwrap();
+        }
+        let connection = Connection::open(&db).unwrap();
+        connection
+            .execute(
+                "UPDATE mutation_files SET property_changes_json = 'not-json'",
+                [],
+            )
+            .unwrap();
+
+        let store = MutationHistoryStore::open(&db).unwrap();
+        let error = store.load_workspace("workspace").unwrap_err();
+
+        assert!(error.contains("Histórico possui diff inválido"));
+    }
+
+    #[test]
+    fn history_state_derives_undoable_undone_and_workspace_isolation() {
+        let bulk = sample_entry("workspace");
+        let mut sql = sample_entry("workspace");
+        sql.id = String::from("sql-entry");
+        sql.source = MutationSource::SqlUpdate;
+        let mut undo_bulk = sample_entry("workspace");
+        undo_bulk.id = String::from("undo-bulk");
+        undo_bulk.source = MutationSource::Undo;
+        undo_bulk.original_entry_id = Some(bulk.id.clone());
+        let mut undo_other_workspace = sample_entry("other");
+        undo_other_workspace.id = String::from("undo-other");
+        undo_other_workspace.source = MutationSource::Undo;
+        undo_other_workspace.original_entry_id = Some(sql.id.clone());
+
+        let state = HistoryState {
+            entries: vec![bulk.clone(), sql.clone(), undo_bulk, undo_other_workspace],
+            ..HistoryState::default()
+        };
+
+        assert!(!state.is_entry_undoable(&bulk));
+        assert_eq!(state.entry_status_label(&bulk), "desfeita");
+        assert!(state.is_entry_undoable(&sql));
+        assert_eq!(state.entry_status_label(&sql), "undo disponível");
+        assert_eq!(
+            state.entry_status_label(
+                state
+                    .entries
+                    .iter()
+                    .find(|entry| entry.source == MutationSource::Undo)
+                    .unwrap()
+            ),
+            "undo indisponível"
+        );
+    }
+
+    #[test]
+    fn history_state_marks_sql_entry_undone_after_undo() {
+        let mut sql = sample_entry("workspace");
+        sql.id = String::from("sql-entry");
+        sql.source = MutationSource::SqlUpdate;
+        let mut undo = sample_entry("workspace");
+        undo.source = MutationSource::Undo;
+        undo.original_entry_id = Some(sql.id.clone());
+        let state = HistoryState {
+            entries: vec![undo, sql.clone()],
+            ..HistoryState::default()
+        };
+
+        assert!(!state.is_entry_undoable(&sql));
+        assert_eq!(state.entry_status_label(&sql), "desfeita");
+    }
+
+    #[test]
+    fn undone_status_survives_restart_from_persisted_entries() {
+        let temp = TempDir::new();
+        let db = temp.path().join("history.sqlite3");
+        let original = sample_entry("workspace");
+        let undo = undo_history_entry(
+            String::from("workspace"),
+            &original,
+            &[PathBuf::from("a.md")],
+        )
+        .unwrap();
+        {
+            let mut store = MutationHistoryStore::open(&db).unwrap();
+            store.save_entry(&original).unwrap();
+            store.save_entry(&undo).unwrap();
+        }
+
+        let entries = MutationHistoryStore::open(&db)
+            .unwrap()
+            .load_workspace("workspace")
+            .unwrap();
+        let state = HistoryState {
+            entries,
+            ..HistoryState::default()
+        };
+
+        assert_eq!(state.entry_status_label(&original), "desfeita");
+        assert!(!state.is_entry_undoable(&original));
+    }
+
+    #[test]
     fn build_undo_plan_restores_exact_before_content() {
         let temp = TempDir::new();
         temp.write("projects/a.md", "---\nstatus: archived\n---\n# A\n");
         let entry = MutationHistoryEntry {
             id: String::from("entry"),
-            workspace_id: String::from("workspace"),
+            workspace_id: workspace_identity(temp.path()),
             created_at_unix: 1,
             source: MutationSource::BulkEdit,
             summary: String::from("summary"),
@@ -778,11 +923,63 @@ mod tests {
     }
 
     #[test]
+    fn build_undo_plan_rejects_wrong_workspace_and_undo_entries() {
+        let temp = TempDir::new();
+        temp.write("a.md", "after");
+        let mut entry = sample_entry("other");
+        entry.files[0].after_content = String::from("after");
+        entry.files[0].after_fingerprint = content_fingerprint("after");
+
+        assert!(matches!(
+            build_undo_plan(temp.path(), &entry, &EditorState::default()),
+            Err(UndoBuildError::WrongWorkspace)
+        ));
+
+        entry.workspace_id = workspace_identity(temp.path());
+        entry.source = MutationSource::Undo;
+        assert!(matches!(
+            build_undo_plan(temp.path(), &entry, &EditorState::default()),
+            Err(UndoBuildError::UnsupportedSource)
+        ));
+    }
+
+    #[test]
+    fn build_undo_plan_blocks_dirty_conflict_and_missing_files() {
+        let temp = TempDir::new();
+        temp.write("a.md", "after");
+        let mut entry = sample_entry(&workspace_identity(temp.path()));
+        entry.files[0].after_content = String::from("after");
+        entry.files[0].after_fingerprint = content_fingerprint("after");
+
+        let dirty = editor_with_tab(temp.path().join("a.md"), true, None);
+        assert!(matches!(
+            build_undo_plan(temp.path(), &entry, &dirty),
+            Err(UndoBuildError::DirtyFile { .. })
+        ));
+
+        let conflict = editor_with_tab(
+            temp.path().join("a.md"),
+            false,
+            Some(EditorExternalConflict::Modified(String::from("disk"))),
+        );
+        assert!(matches!(
+            build_undo_plan(temp.path(), &entry, &conflict),
+            Err(UndoBuildError::ExternalConflict { .. })
+        ));
+
+        fs::remove_file(temp.path().join("a.md")).unwrap();
+        assert!(matches!(
+            build_undo_plan(temp.path(), &entry, &EditorState::default()),
+            Err(UndoBuildError::MissingFile { .. })
+        ));
+    }
+
+    #[test]
     fn build_undo_plan_blocks_current_fingerprint_mismatch_for_entire_batch() {
         let temp = TempDir::new();
         temp.write("a.md", "after\n");
         temp.write("b.md", "manual\n");
-        let mut entry = sample_entry("workspace");
+        let mut entry = sample_entry(&workspace_identity(temp.path()));
         entry.files = vec![
             HistoryFileChange {
                 relative_path: PathBuf::from("a.md"),
@@ -808,9 +1005,93 @@ mod tests {
     }
 
     #[test]
+    fn undo_plan_restores_single_and_multi_file_content_via_safe_writer() {
+        let temp = TempDir::new();
+        temp.write("a.md", "---\nstatus: archived\n---\n# A\n");
+        temp.write("b.md", "---\npriority: 20\n---\n# B\n");
+        let entry = MutationHistoryEntry {
+            id: String::from("entry"),
+            workspace_id: workspace_identity(temp.path()),
+            created_at_unix: 1,
+            source: MutationSource::BulkEdit,
+            summary: String::from("summary"),
+            sql: None,
+            original_entry_id: None,
+            files: vec![
+                HistoryFileChange {
+                    relative_path: PathBuf::from("a.md"),
+                    before_fingerprint: content_fingerprint("---\nstatus: active\n---\n# A\n"),
+                    after_fingerprint: content_fingerprint("---\nstatus: archived\n---\n# A\n"),
+                    before_content: String::from("---\nstatus: active\n---\n# A\n"),
+                    after_content: String::from("---\nstatus: archived\n---\n# A\n"),
+                    property_changes: vec![FrontmatterPropertyChange {
+                        property: String::from("status"),
+                        before: Some(String::from("status: active")),
+                        after: Some(String::from("status: archived")),
+                    }],
+                },
+                HistoryFileChange {
+                    relative_path: PathBuf::from("b.md"),
+                    before_fingerprint: content_fingerprint("---\npriority: 10\n---\n# B\n"),
+                    after_fingerprint: content_fingerprint("---\npriority: 20\n---\n# B\n"),
+                    before_content: String::from("---\npriority: 10\n---\n# B\n"),
+                    after_content: String::from("---\npriority: 20\n---\n# B\n"),
+                    property_changes: vec![FrontmatterPropertyChange {
+                        property: String::from("priority"),
+                        before: Some(String::from("priority: 10")),
+                        after: Some(String::from("priority: 20")),
+                    }],
+                },
+            ],
+        };
+
+        let plan = build_undo_plan(temp.path(), &entry, &EditorState::default()).unwrap();
+        let result = apply_bulk_edit_plan(&plan).unwrap();
+
+        assert_eq!(result.changed_paths.len(), 2);
+        assert_eq!(
+            fs::read_to_string(temp.path().join("a.md")).unwrap(),
+            "---\nstatus: active\n---\n# A\n"
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("b.md")).unwrap(),
+            "---\npriority: 10\n---\n# B\n"
+        );
+    }
+
+    #[test]
+    fn successful_undo_creates_auditable_history_entry() {
+        let original = sample_entry("workspace");
+        let entry = undo_history_entry(
+            String::from("workspace"),
+            &original,
+            &[PathBuf::from("a.md")],
+        )
+        .unwrap();
+
+        assert_eq!(entry.source, MutationSource::Undo);
+        assert_eq!(
+            entry.original_entry_id.as_deref(),
+            Some(original.id.as_str())
+        );
+        assert_eq!(entry.files.len(), 1);
+        assert_eq!(
+            entry.files[0].before_content,
+            original.files[0].after_content
+        );
+        assert_eq!(
+            entry.files[0].after_content,
+            original.files[0].before_content
+        );
+    }
+
+    #[test]
     fn successful_bulk_plan_can_be_recorded_after_commit() {
         let temp = TempDir::new();
-        temp.write("projects/a.md", "---\ntype: project\nstatus: active\n---\n# A\n");
+        temp.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\n---\n# A\n",
+        );
         let scan = scan_workspace(temp.path()).unwrap();
         let selection = BulkEditSelection::new(
             String::from("project"),
@@ -834,13 +1115,130 @@ mod tests {
         .unwrap();
         let result = crate::apply_bulk_edit_plan(&plan).unwrap();
 
-        let entry = bulk_history_entry(String::from("workspace"), &plan, &result.changed_paths)
-            .unwrap();
+        let entry =
+            bulk_history_entry(String::from("workspace"), &plan, &result.changed_paths).unwrap();
 
         assert_eq!(entry.source, MutationSource::BulkEdit);
         assert_eq!(entry.files.len(), 1);
         assert!(entry.files[0].before_content.contains("status: active"));
         assert!(entry.files[0].after_content.contains("status: archived"));
+    }
+
+    #[test]
+    fn successful_sql_plan_records_statement_metadata() {
+        let temp = TempDir::new();
+        temp.write(
+            "projects/a.md",
+            "---\ntype: project\npriority: 10\n---\n# A\n",
+        );
+        let scan = scan_workspace(temp.path()).unwrap();
+        let plan = crate::SqlProjection::preview_update(
+            "UPDATE projects SET priority = 20 WHERE priority = 10;",
+            &scan.documents,
+            &scan.collections,
+            &EditorState::default(),
+            &crate::SchemaCatalog::build(
+                &scan.documents,
+                &scan.collections,
+                &crate::RelationIndex::build(&scan.documents),
+                crate::ExplicitSchemaState::Absent,
+            ),
+        )
+        .unwrap();
+        let result = apply_bulk_edit_plan(&plan.mutation_plan).unwrap();
+
+        let entry =
+            sql_history_entry(String::from("workspace"), &plan, &result.changed_paths).unwrap();
+
+        assert_eq!(entry.source, MutationSource::SqlUpdate);
+        assert_eq!(
+            entry.sql.as_deref(),
+            Some("UPDATE projects SET priority = 20 WHERE priority = 10;")
+        );
+        assert!(entry.summary.contains("SQL Update em Projects"));
+        assert_eq!(entry.files.len(), 1);
+    }
+
+    #[test]
+    fn restart_style_load_then_undo_succeeds() {
+        let temp = TempDir::new();
+        temp.write(
+            "projects/a.md",
+            "---\ntype: project\nstatus: active\n---\n# A\n",
+        );
+        let scan = scan_workspace(temp.path()).unwrap();
+        let plan = crate::build_bulk_edit_plan(
+            BulkEditSelection::new(
+                String::from("project"),
+                vec![temp.path().join("projects/a.md")],
+            ),
+            BulkEditOperation::SetProperty {
+                property: String::from("status"),
+                value: BulkEditValue::String(String::from("archived")),
+            },
+            &scan.documents,
+            &EditorState::default(),
+            &crate::SchemaCatalog::build(
+                &scan.documents,
+                &scan.collections,
+                &crate::RelationIndex::build(&scan.documents),
+                crate::ExplicitSchemaState::Absent,
+            ),
+        )
+        .unwrap();
+        let result = apply_bulk_edit_plan(&plan).unwrap();
+        let history_entry = bulk_history_entry(
+            workspace_identity(temp.path()),
+            &plan,
+            &result.changed_paths,
+        )
+        .unwrap();
+        let db = temp.path().join("app-data").join("history.sqlite3");
+        MutationHistoryStore::open(&db)
+            .unwrap()
+            .save_entry(&history_entry)
+            .unwrap();
+
+        let entries = MutationHistoryStore::open(&db)
+            .unwrap()
+            .load_workspace(&workspace_identity(temp.path()))
+            .unwrap();
+        let undo_plan = build_undo_plan(temp.path(), &entries[0], &EditorState::default()).unwrap();
+        apply_bulk_edit_plan(&undo_plan).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(temp.path().join("projects/a.md")).unwrap(),
+            "---\ntype: project\nstatus: active\n---\n# A\n"
+        );
+    }
+
+    fn editor_with_tab(
+        path: PathBuf,
+        dirty: bool,
+        external_conflict: Option<EditorExternalConflict>,
+    ) -> EditorState {
+        EditorState {
+            tabs: vec![EditorTab {
+                document_path: path,
+                relative_path: PathBuf::from("a.md"),
+                title: String::from("a"),
+                kind: EditorTabKind::Markdown,
+                buffer: if dirty {
+                    String::from("dirty")
+                } else {
+                    String::from("after")
+                },
+                saved_content: String::from("after"),
+                dirty,
+                view_mode: EditorViewMode::Edit,
+                split_ratio: 500,
+                external_conflict,
+                ignored_external_conflict: None,
+                save_error: None,
+            }],
+            active_path: None,
+            dialog: None,
+        }
     }
 
     fn sample_entry(workspace_id: &str) -> MutationHistoryEntry {

@@ -8,8 +8,8 @@ use std::{
 use crate::{
     build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
-    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue,
-    HistoryState, MutationHistoryEntry, Relation, RelationIndex, RelationStatus, ScanError,
+    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, HistoryState,
+    MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus, ScanError,
     ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection, SqlCatalog,
     SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
 };
@@ -501,7 +501,12 @@ impl ShellModel {
             Ok(entries) => {
                 self.history.entries = entries;
                 if let Some(selected) = self.history.selected_entry_id.as_ref() {
-                    if !self.history.entries.iter().any(|entry| &entry.id == selected) {
+                    if !self
+                        .history
+                        .entries
+                        .iter()
+                        .any(|entry| &entry.id == selected)
+                    {
                         self.history.selected_entry_id = None;
                     }
                 }

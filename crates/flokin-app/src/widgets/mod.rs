@@ -78,31 +78,6 @@ pub fn icon_slot(icon: Icon, size: f32, slot: f32, accent: bool) -> Element<'sta
     .into()
 }
 
-pub fn icon_slot_placeholder(icon: Icon, size: f32, slot: f32) -> Element<'static, Message> {
-    let body = theme::icon_svg(icon)
-        .trim_start_matches(r#"<svg viewBox="0 0 24 24">"#)
-        .trim_end_matches("</svg>");
-    let data = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{}</svg>"##,
-        body
-    )
-    .into_bytes();
-
-    container(
-        svg(svg::Handle::from_memory(data))
-            .width(size)
-            .height(size)
-            .style(|_, _| svg::Style {
-                color: Some(iced::Color::TRANSPARENT),
-            }),
-    )
-    .width(slot)
-    .height(slot)
-    .align_x(alignment::Horizontal::Center)
-    .align_y(alignment::Vertical::Center)
-    .into()
-}
-
 pub fn button_label<'a>(label: &'a str) -> Element<'a, Message> {
     text(label)
         .size(theme::typography::BODY)

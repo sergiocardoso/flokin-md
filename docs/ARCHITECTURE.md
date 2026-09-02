@@ -199,6 +199,70 @@ paths. DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search,
 and SQL converge through the existing Document Store pipeline instead of being
 manually patched from the bulk editor.
 
+## Mutation History And Safe Undo
+
+MDB-018 adds durable local history for successful Markdown mutations produced by
+Bulk Edit, SQL Update, and Undo.
+
+```text
+Mutation preview
+      ↓
+Safe writer
+      ↓
+Filesystem success
+      ↓
+History persistence
+```
+
+History is internal app metadata, not document source of truth. It is stored in
+a versioned local SQLite database under the platform app-data location
+(`FLOKINMD_APP_DATA/history.sqlite3` when that override is set, otherwise the
+OS app-data directory). The database is outside user Markdown workspaces and is
+never mixed into Collections. It is local only and can contain previous Markdown
+file contents because each entry stores complete before/after content for
+changed files.
+
+Each entry has a persistent id, canonical workspace identity, UTC Unix
+timestamp, source (`BulkEdit`, `SqlUpdate`, or `Undo`), summary, optional SQL
+statement or original undo target, and per-file changes with relative path,
+before fingerprint, after fingerprint, before content, after content, and
+property-level historical diffs. Retention keeps the latest 100 operations per
+workspace. Clearing history deletes only metadata for the current workspace; it
+does not touch Markdown files.
+
+Undo is modeled as a new explicit mutation, not as rollback. Rollback remains an
+internal best-effort protection for a failed write. Undo starts from a selected
+history entry and builds an `UndoPlan` only after validating that the entry
+belongs to the current workspace, is not itself an Undo entry, every file still
+exists, no affected editor tab is dirty or in external conflict, and the current
+file fingerprint still matches the recorded after fingerprint. If any file is
+missing, dirty, conflicted, or stale, the entire Undo is blocked; this milestone
+does not merge or recreate renamed/deleted files.
+
+```text
+History Entry
+      ↓
+UndoPlan
+      ↓
+Preview
+      ↓
+Preflight
+      ↓
+Safe writer
+      ↓
+Filesystem
+      ↓
+Watcher
+      ↓
+Document Store + projections
+```
+
+The Undo plan reuses the existing `BulkEditPlan` and staged safe writer. It
+restores the complete recorded before content for existing files only. A
+successful Undo writes Markdown, records its own History entry for auditability,
+and then lets the watcher rebuild Document Store, Schema, Health, Relations,
+Graph, Search, and SQL projection from the filesystem.
+
 ## Markdown Editor And Tabs
 
 MDB-012 replaces the read-only center source viewer with real Markdown tabs and editable buffers.

@@ -5,10 +5,12 @@ use std::{
 };
 
 use flokin_core::{
-    apply_bulk_edit_plan, clamp_graph_zoom, complete_sql, default_query, document_node_id,
-    fit_graph_viewport, graph_bounds, graph_collections_map, initial_graph_layout, mock_shell,
-    replace_sql_completion, save_markdown_file, BulkEditApplyError, BulkEditPlan, GraphNodeId,
-    GraphProjection, ScanError, ShellModel, SqlCompletionItem, SqlExplorerMode, WorkspaceEvent,
+    apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom, complete_sql,
+    default_query, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
+    initial_graph_layout, mock_shell, replace_sql_completion, save_markdown_file,
+    sql_history_entry, undo_history_entry, workspace_identity, BulkEditApplyError, BulkEditPlan,
+    GraphNodeId, GraphProjection, MutationHistoryEntry, MutationHistoryStore, ScanError,
+    ShellModel, SqlCompletionItem, SqlExplorerMode, SqlWritePlan, WorkspaceEvent,
     DEFAULT_SQL_COMPLETION_LIMIT,
 };
 use iced::{
@@ -125,6 +127,7 @@ impl FlokinApp {
                     AppMode::Settings => flokin_core::Activity::Settings,
                     AppMode::Graph => flokin_core::Activity::Relations,
                     AppMode::Health => flokin_core::Activity::Health,
+                    AppMode::History => flokin_core::Activity::History,
                     AppMode::Files | AppMode::Data => flokin_core::Activity::Explorer,
                 });
                 if mode == AppMode::Sql {
@@ -395,16 +398,25 @@ impl FlokinApp {
                 if !plan.can_apply() {
                     return Task::none();
                 }
-                return apply_bulk_edit_task(plan);
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    return Task::none();
+                };
+                return apply_bulk_edit_task(workspace, plan);
             }
             Message::BulkApplyCompleted(result) => match result {
-                Ok((paths, count)) => {
+                Ok((paths, count, warning)) => {
                     self.model.bulk_apply_completed(Ok(count));
+                    if let Some(warning) = warning {
+                        self.model.bulk_edit.error = Some(warning);
+                    }
                     if let Some(workspace) = self.model.current_workspace.clone() {
-                        return self.enqueue_workspace_events(
-                            workspace,
-                            paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
-                        );
+                        return Task::batch([
+                            self.load_history_task(workspace.clone()),
+                            self.enqueue_workspace_events(
+                                workspace,
+                                paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
+                            ),
+                        ]);
                     }
                 }
                 Err(error) => {
@@ -590,6 +602,11 @@ impl FlokinApp {
                     return window::close(window_id);
                 }
             }
+            Message::WindowFocused(focused) => {
+                if !focused {
+                    self.clear_focus_transients();
+                }
+            }
             Message::SearchOpened => {
                 self.model.open_search();
                 self.search_needs_refresh = false;
@@ -744,22 +761,112 @@ impl FlokinApp {
                 if !plan.mutation_plan.can_apply() {
                     return Task::none();
                 }
-                return apply_sql_update_task(plan.mutation_plan);
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    return Task::none();
+                };
+                return apply_sql_update_task(workspace, plan);
             }
             Message::SqlUpdateApplyCompleted(result) => match result {
-                Ok((paths, count)) => {
+                Ok((paths, count, warning)) => {
                     self.model.sql_update_apply_completed(Ok(count));
+                    if let Some(warning) = warning {
+                        self.model.sql_explorer.error = Some(warning);
+                    }
                     if let Some(workspace) = self.model.current_workspace.clone() {
-                        return self.enqueue_workspace_events(
-                            workspace,
-                            paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
-                        );
+                        return Task::batch([
+                            self.load_history_task(workspace.clone()),
+                            self.enqueue_workspace_events(
+                                workspace,
+                                paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
+                            ),
+                        ]);
                     }
                 }
                 Err(error) => {
                     self.model.sql_update_apply_completed(Err(error));
                 }
             },
+            Message::HistoryLoaded(workspace, result) => {
+                if self.model.current_workspace.as_ref() == Some(&workspace) {
+                    self.model.history_loaded(result);
+                }
+            }
+            Message::HistoryEntrySelected(id) => {
+                self.model.select_history_entry(id);
+            }
+            Message::HistoryUndoRequested => {
+                let Some(entry) = self.model.selected_history_entry().cloned() else {
+                    return Task::none();
+                };
+                if !self.model.history.is_entry_undoable(&entry) {
+                    return Task::none();
+                }
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    return Task::none();
+                };
+                let result = build_undo_plan(&workspace, &entry, &self.model.editor)
+                    .map_err(|error| error.to_string());
+                self.model.undo_preview_completed(result);
+            }
+            Message::HistoryUndoPreviewCanceled => {
+                self.model.cancel_undo_preview();
+            }
+            Message::HistoryUndoApplyRequested => {
+                let Some(plan) = self.model.history.undo_plan.clone() else {
+                    return Task::none();
+                };
+                if !plan.can_apply() {
+                    return Task::none();
+                }
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    return Task::none();
+                };
+                let Some(entry) = self.model.selected_history_entry().cloned() else {
+                    return Task::none();
+                };
+                if !self.model.history.is_entry_undoable(&entry) {
+                    return Task::none();
+                }
+                return apply_history_undo_task(workspace, entry, plan);
+            }
+            Message::HistoryUndoApplyCompleted(result) => match result {
+                Ok((paths, count, warning)) => {
+                    self.model.undo_apply_completed(Ok(count));
+                    if let Some(warning) = warning {
+                        self.model.history.error = Some(warning);
+                    }
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return Task::batch([
+                            self.load_history_task(workspace.clone()),
+                            self.enqueue_workspace_events(
+                                workspace,
+                                paths.into_iter().map(WorkspaceEvent::Upsert).collect(),
+                            ),
+                        ]);
+                    }
+                }
+                Err(error) => {
+                    self.model.undo_apply_completed(Err(error));
+                }
+            },
+            Message::HistoryClearRequested => {
+                self.model.request_clear_history();
+            }
+            Message::HistoryClearCanceled => {
+                self.model.cancel_clear_history();
+            }
+            Message::HistoryClearConfirmed => {
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    self.model.clear_history_completed(Err(String::from(
+                        "Abra um workspace para limpar o histórico.",
+                    )));
+                    return Task::none();
+                };
+                return clear_history_task(workspace);
+            }
+            Message::HistoryClearCompleted(result) => {
+                self.model.clear_history_completed(result);
+            }
             Message::KeyboardEvent(event) => {
                 if let Some(message) = keyboard_message(
                     event,
@@ -808,6 +915,9 @@ impl FlokinApp {
                     }
                     MenuAction::SqlExplorer => {
                         return self.update(Message::AppModeSelected(AppMode::Sql))
+                    }
+                    MenuAction::History => {
+                        return self.update(Message::AppModeSelected(AppMode::History))
                     }
                     MenuAction::Settings => {
                         return self.update(Message::AppModeSelected(AppMode::Settings))
@@ -939,6 +1049,10 @@ impl FlokinApp {
             window::close_requests().map(Message::WindowCloseRequested),
             keyboard::listen().map(Message::KeyboardEvent),
             event::listen_with(|event, _status, _window| match event {
+                iced::Event::Window(window::Event::Focused) => Some(Message::WindowFocused(true)),
+                iced::Event::Window(window::Event::Unfocused) => {
+                    Some(Message::WindowFocused(false))
+                }
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::SplitterMoved(position.x, position.y))
                 }
@@ -948,6 +1062,15 @@ impl FlokinApp {
                 _ => None,
             }),
         ])
+    }
+
+    fn clear_focus_transients(&mut self) {
+        self.open_menu = None;
+        self.splitter = None;
+        self.sql_completion.close();
+        self.model.close_search();
+        self.search_needs_refresh = false;
+        self.search_debounce_target = None;
     }
 }
 
@@ -1061,7 +1184,14 @@ impl FlokinApp {
         self.pending_reindex = false;
         self.schema_create_dialog_open = false;
         self.schema_create_error = None;
-        scan_workspace_task(generation, path)
+        Task::batch([
+            scan_workspace_task(generation, path.clone()),
+            self.load_history_task(path),
+        ])
+    }
+
+    fn load_history_task(&self, workspace: std::path::PathBuf) -> Task<Message> {
+        load_history_task(workspace)
     }
 
     fn active_markdown_preview_items(&self) -> &[markdown::Item] {
@@ -1459,17 +1589,55 @@ fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Ta
     )
 }
 
-fn apply_bulk_edit_task(plan: BulkEditPlan) -> Task<Message> {
+fn apply_bulk_edit_task(workspace: std::path::PathBuf, plan: BulkEditPlan) -> Task<Message> {
     Task::perform(
         async move {
             apply_bulk_edit_plan(&plan)
                 .map(|result| {
                     let count = result.changed_paths.len();
-                    (result.changed_paths, count)
+                    let warning = record_history(bulk_history_entry(
+                        workspace_identity(&workspace),
+                        &plan,
+                        &result.changed_paths,
+                    ));
+                    (result.changed_paths, count, warning)
                 })
                 .map_err(format_bulk_apply_error)
         },
         Message::BulkApplyCompleted,
+    )
+}
+
+fn apply_history_undo_task(
+    workspace: std::path::PathBuf,
+    original: MutationHistoryEntry,
+    plan: BulkEditPlan,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            apply_bulk_edit_plan(&plan)
+                .map(|result| {
+                    let count = result.changed_paths.len();
+                    let changed = result
+                        .changed_paths
+                        .iter()
+                        .collect::<std::collections::BTreeSet<_>>();
+                    let changed_relative_paths = plan
+                        .changes
+                        .iter()
+                        .filter(|change| changed.contains(&change.path))
+                        .map(|change| change.relative_path.clone())
+                        .collect::<Vec<_>>();
+                    let warning = record_history(undo_history_entry(
+                        workspace_identity(&workspace),
+                        &original,
+                        &changed_relative_paths,
+                    ));
+                    (result.changed_paths, count, warning)
+                })
+                .map_err(format_bulk_apply_error)
+        },
+        Message::HistoryUndoApplyCompleted,
     )
 }
 
@@ -1576,18 +1744,106 @@ fn preview_sql_update_task(
     )
 }
 
-fn apply_sql_update_task(plan: BulkEditPlan) -> Task<Message> {
+fn apply_sql_update_task(workspace: std::path::PathBuf, plan: SqlWritePlan) -> Task<Message> {
     Task::perform(
         async move {
-            apply_bulk_edit_plan(&plan)
+            apply_bulk_edit_plan(&plan.mutation_plan)
                 .map(|result| {
                     let count = result.changed_paths.len();
-                    (result.changed_paths, count)
+                    let warning = record_history(sql_history_entry(
+                        workspace_identity(&workspace),
+                        &plan,
+                        &result.changed_paths,
+                    ));
+                    (result.changed_paths, count, warning)
                 })
                 .map_err(format_bulk_apply_error)
         },
         Message::SqlUpdateApplyCompleted,
     )
+}
+
+fn load_history_task(workspace: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            let workspace_id = workspace_identity(&workspace);
+            let result = MutationHistoryStore::open(history_storage_path())
+                .and_then(|store| store.load_workspace(&workspace_id));
+            (workspace, result)
+        },
+        |(workspace, result)| Message::HistoryLoaded(workspace, result),
+    )
+}
+
+fn clear_history_task(workspace: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            let workspace_id = workspace_identity(&workspace);
+            let mut store = MutationHistoryStore::open(history_storage_path())?;
+            store.clear_workspace(&workspace_id)
+        },
+        Message::HistoryClearCompleted,
+    )
+}
+
+fn record_history(entry: Result<MutationHistoryEntry, String>) -> Option<String> {
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(error) => {
+            return Some(format!(
+                "Alterações aplicadas, mas não foi possível registrar o histórico: {error}"
+            ));
+        }
+    };
+    let mut store = match MutationHistoryStore::open(history_storage_path()) {
+        Ok(store) => store,
+        Err(error) => {
+            return Some(format!(
+                "Alterações aplicadas, mas não foi possível registrar o histórico: {error}"
+            ));
+        }
+    };
+    store.save_entry(&entry).err().map(|error| {
+        format!("Alterações aplicadas, mas não foi possível registrar o histórico: {error}")
+    })
+}
+
+fn history_storage_path() -> std::path::PathBuf {
+    app_data_dir().join("history.sqlite3")
+}
+
+fn app_data_dir() -> std::path::PathBuf {
+    if let Some(value) = std::env::var_os("FLOKINMD_APP_DATA") {
+        return std::path::PathBuf::from(value);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(value) = std::env::var_os("APPDATA") {
+            return std::path::PathBuf::from(value).join("FlokinMD");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(value) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(value)
+                .join("Library")
+                .join("Application Support")
+                .join("FlokinMD");
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if let Some(value) = std::env::var_os("XDG_DATA_HOME") {
+            return std::path::PathBuf::from(value).join("flokinmd");
+        }
+        if let Some(value) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(value)
+                .join(".local")
+                .join("share")
+                .join("flokinmd");
+        }
+    }
+    std::env::temp_dir().join("flokinmd")
 }
 
 fn focus_search_task() -> Task<Message> {
@@ -1672,8 +1928,8 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 #[cfg(test)]
 mod tests {
     use flokin_core::{
-        scan_workspace, workspace_update_from_events, Activity, ScanResult, ScanState, SqlError,
-        WorkspaceEvent,
+        scan_workspace, workspace_update_from_events, Activity, ScanResult, ScanState,
+        SqlCompletionItem, SqlCompletionKind, SqlError, WorkspaceEvent,
     };
     use iced::{
         keyboard::{
@@ -1685,7 +1941,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
@@ -1723,6 +1979,78 @@ mod tests {
             hover_menu(Some(MenuId::File), MenuId::View),
             Some(MenuId::View)
         );
+    }
+
+    #[test]
+    fn focus_lost_clears_only_transient_input_state() {
+        let mut app = FlokinApp::new();
+        app.open_menu = Some(MenuId::File);
+        app.model.open_search();
+        app.search_needs_refresh = true;
+        app.search_debounce_target = Some(Instant::now());
+        app.splitter = Some((SplitterKind::LeftSidebar, 100.0, app.left_width));
+        app.sql_completion.set_items(vec![SqlCompletionItem {
+            label: String::from("projects"),
+            insert_text: String::from("projects"),
+            kind: SqlCompletionKind::Table,
+            detail: String::from("table"),
+            replacement_start: 0,
+            replacement_end: 0,
+        }]);
+        app.left_width = 360.0;
+        app.mode = AppMode::Data;
+
+        let _ = app.update(Message::WindowFocused(false));
+
+        assert_eq!(app.open_menu, None);
+        assert!(!app.model.search.open);
+        assert!(!app.search_needs_refresh);
+        assert_eq!(app.search_debounce_target, None);
+        assert_eq!(app.splitter, None);
+        assert!(!app.sql_completion.open);
+        assert_eq!(app.left_width, 360.0);
+        assert_eq!(app.mode, AppMode::Data);
+    }
+
+    #[test]
+    fn focus_gained_does_not_reset_interactive_state() {
+        let mut app = FlokinApp::new();
+        app.open_menu = Some(MenuId::Data);
+        app.model.open_search();
+        app.splitter = Some((SplitterKind::Inspector, 800.0, app.inspector_width));
+        app.left_width = 340.0;
+        app.mode = AppMode::Graph;
+
+        let _ = app.update(Message::WindowFocused(true));
+
+        assert_eq!(app.open_menu, Some(MenuId::Data));
+        assert!(app.model.search.open);
+        assert!(app.splitter.is_some());
+        assert_eq!(app.left_width, 340.0);
+        assert_eq!(app.mode, AppMode::Graph);
+    }
+
+    #[test]
+    fn input_messages_still_apply_after_focus_cycle() {
+        let mut app = FlokinApp::new();
+        let _ = app.update(Message::WindowFocused(false));
+        let _ = app.update(Message::WindowFocused(true));
+
+        let _ = app.update(Message::MenuToggled(MenuId::File));
+        assert_eq!(app.open_menu, Some(MenuId::File));
+
+        let event = Event::KeyPressed {
+            key: Key::Character("k".into()),
+            modified_key: Key::Character("k".into()),
+            physical_key: Physical::Code(Code::KeyK),
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        };
+        let _ = app.update(Message::KeyboardEvent(event));
+
+        assert!(app.model.search.open);
     }
 
     #[test]

@@ -78,7 +78,6 @@ pub mod typography {
 pub mod icons {
     use super::tokens;
 
-    pub const BRAND: f32 = 28.0;
     pub const TREE: f32 = 16.0;
     pub const TOOLBAR: f32 = tokens::SIZES.toolbar_icon_size;
     pub const ACTIVITY: f32 = tokens::SIZES.activity_icon_size;
@@ -158,7 +157,6 @@ pub enum Icon {
     Frame,
     Graph,
     Health,
-    Mark,
     Minus,
     PanelLeft,
     Plus,
@@ -920,9 +918,6 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Health => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/><path d="M7 12h3l1.5-4 2 7 1.5-3h2"/></svg>"#
-        }
-        Icon::Mark => {
-            r#"<svg viewBox="0 0 24 24"><path d="M6 19V5h10"/><path d="M6 12h8"/><path d="M14 5v14"/><path d="M14 12l4.5 4.5"/><path d="M19 8v8"/></svg>"#
         }
         Icon::Minus => r#"<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>"#,
         Icon::PanelLeft => {

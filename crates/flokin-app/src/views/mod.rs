@@ -3,6 +3,7 @@ pub mod editor;
 pub mod explorer;
 pub mod graph;
 pub mod health;
+pub mod history;
 pub mod inspector;
 pub mod settings;
 pub mod shell;

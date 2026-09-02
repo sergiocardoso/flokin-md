@@ -2,8 +2,8 @@ use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
     BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
-    GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlExplorerMode, SqlQueryResult,
-    SqlWritePlan, WorkspaceUpdate, MutationHistoryEntry, BulkEditPlan,
+    GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog, SqlError,
+    SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -37,6 +37,7 @@ pub enum MenuAction {
     Settings,
     Search,
     ExecuteSql,
+    History,
     About,
 }
 
@@ -137,6 +138,7 @@ pub enum Message {
     EditorExternalReload,
     EditorExternalKeep,
     WindowCloseRequested(window::Id),
+    WindowFocused(bool),
     SearchOpened,
     SearchClosed,
     SearchQueryChanged(String),
@@ -163,10 +165,9 @@ pub enum Message {
     SqlUpdatePreviewCanceled,
     SqlUpdateApplyRequested,
     SqlUpdateApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
-    HistoryLoaded(Result<Vec<MutationHistoryEntry>, String>),
+    HistoryLoaded(PathBuf, Result<Vec<MutationHistoryEntry>, String>),
     HistoryEntrySelected(String),
     HistoryUndoRequested,
-    HistoryUndoPreviewCompleted(Result<BulkEditPlan, String>),
     HistoryUndoPreviewCanceled,
     HistoryUndoApplyRequested,
     HistoryUndoApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),

@@ -6,6 +6,7 @@ use iced::widget::{markdown, text_editor};
 use iced::{alignment, mouse, Alignment, Element, Length};
 
 use crate::{
+    brand,
     message::{AppMode, MenuAction, MenuId, Message, SplitterKind},
     theme::{self, AppTheme},
     views,
@@ -93,6 +94,13 @@ pub fn view<'a>(
                 .push(views::inspector::view(model, inspector_width));
         }
         content
+    } else if mode == AppMode::History {
+        row![
+            activity_bar(mode),
+            panel_gutter(),
+            views::history::view(model)
+        ]
+        .height(Length::Fill)
     } else {
         let mut content = row![activity_bar(mode), panel_gutter()].height(Length::Fill);
         if left_visible {
@@ -182,7 +190,7 @@ fn top_shell<'a>(
         ("Ajuda", MenuId::Help),
     ];
 
-    let mut left = row![brand_mark()]
+    let mut left = row![brand::lockup(app_theme)]
         .spacing(theme::spacing::SM)
         .align_y(Alignment::Center);
 
@@ -293,36 +301,6 @@ fn top_shell<'a>(
     .into()
 }
 
-fn brand_mark<'a>() -> Element<'a, Message> {
-    row![
-        widgets::icon(theme::Icon::Mark, theme::icons::BRAND, true),
-        text("FlokinMD")
-            .size(theme::typography::TITLE)
-            .style(theme::text_normal),
-    ]
-    .spacing(theme::spacing::SM)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn brand_placeholder<'a>() -> Element<'a, Message> {
-    row![
-        widgets::icon_slot_placeholder(
-            theme::Icon::Mark,
-            theme::icons::BRAND,
-            theme::sizes::ICON_SLOT_LARGE,
-        ),
-        text("FlokinMD")
-            .size(theme::typography::TITLE)
-            .style(|_| iced::widget::text::Style {
-                color: Some(iced::Color::TRANSPARENT),
-            }),
-    ]
-    .spacing(theme::spacing::SM)
-    .align_y(Alignment::Center)
-    .into()
-}
-
 fn menu_trigger<'a>(
     label: &'a str,
     menu: MenuId,
@@ -405,7 +383,7 @@ fn menu_overlay<'a>(menu: MenuId) -> Element<'a, Message> {
         ("Ajuda", MenuId::Help),
     ];
 
-    let mut anchor_prefix = row![brand_placeholder()]
+    let mut anchor_prefix = row![brand::placeholder()]
         .spacing(theme::spacing::SM)
         .align_y(Alignment::Center);
     for (label, id) in items {
@@ -461,6 +439,7 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
             ("Grafo", None, MenuAction::Graph),
             ("Saúde do banco", None, MenuAction::Health),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
+            ("Histórico", None, MenuAction::History),
             ("Configurações", None, MenuAction::Settings),
             ("Buscar", Some("Ctrl+K"), MenuAction::Search),
         ],
@@ -469,6 +448,7 @@ fn menu_items(menu: MenuId) -> Element<'static, Message> {
             ("Abrir Grafo", None, MenuAction::Graph),
             ("Saúde do banco", None, MenuAction::Health),
             ("SQL Explorer", None, MenuAction::SqlExplorer),
+            ("Histórico", None, MenuAction::History),
             ("Executar query", Some("Ctrl+Enter"), MenuAction::ExecuteSql),
         ],
         MenuId::Help => vec![("Sobre FlokinMD", None, MenuAction::About)],
@@ -924,6 +904,7 @@ fn activity_bar(mode: AppMode) -> Element<'static, Message> {
         (AppMode::Graph, theme::Icon::Graph, "Grafo"),
         (AppMode::Health, theme::Icon::Health, "Saúde do banco"),
         (AppMode::Sql, theme::Icon::Terminal, "SQL Explorer"),
+        (AppMode::History, theme::Icon::Clock, "Histórico"),
     ];
     let mut top = column![]
         .spacing(theme::spacing::SM)
