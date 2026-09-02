@@ -66,6 +66,7 @@ pub struct ExplorerNode {
     pub id: ExplorerNodeId,
     pub name: String,
     pub kind: ExplorerNodeKind,
+    pub semantic_kind: Option<SemanticKind>,
     pub path: PathBuf,
     pub children: Vec<ExplorerNode>,
     pub expanded: bool,
@@ -77,12 +78,28 @@ pub enum ExplorerNodeKind {
     File,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticKind {
+    Agent,
+    AgentInstructions,
+    Skill,
+    Spec,
+    Context,
+    Prompt,
+    Rules,
+    Memory,
+    Mcp,
+}
+
 impl ExplorerNode {
     pub fn folder(id: usize, name: impl Into<String>, path: PathBuf, children: Vec<Self>) -> Self {
+        let name = name.into();
+        let semantic_kind = classify_semantic_entry(&name, ExplorerNodeKind::Folder, &children);
         Self {
             id: ExplorerNodeId(id),
-            name: name.into(),
+            name,
             kind: ExplorerNodeKind::Folder,
+            semantic_kind,
             path,
             children,
             expanded: true,
@@ -102,9 +119,11 @@ impl ExplorerNode {
     }
 
     pub fn file(id: usize, name: impl Into<String>, path: PathBuf) -> Self {
+        let name = name.into();
         Self {
             id: ExplorerNodeId(id),
-            name: name.into(),
+            semantic_kind: classify_semantic_entry(&name, ExplorerNodeKind::File, &[]),
+            name,
             kind: ExplorerNodeKind::File,
             path,
             children: Vec::new(),
@@ -124,6 +143,62 @@ impl ExplorerNode {
 
         self.children.iter_mut().any(|child| child.toggle(id))
     }
+}
+
+pub fn classify_semantic_entry(
+    name: &str,
+    kind: ExplorerNodeKind,
+    children: &[ExplorerNode],
+) -> Option<SemanticKind> {
+    match kind {
+        ExplorerNodeKind::Folder => classify_semantic_folder(name, children),
+        ExplorerNodeKind::File => classify_semantic_file(name),
+    }
+}
+
+fn classify_semantic_folder(name: &str, children: &[ExplorerNode]) -> Option<SemanticKind> {
+    let normalized = normalized_entry_name(name);
+    let by_name = match normalized.as_str() {
+        "agent" | "agents" => Some(SemanticKind::Agent),
+        "skill" | "skills" => Some(SemanticKind::Skill),
+        "spec" | "specs" | "sdd" => Some(SemanticKind::Spec),
+        "context" | "contexts" => Some(SemanticKind::Context),
+        "prompt" | "prompts" => Some(SemanticKind::Prompt),
+        "rules" | "instructions" => Some(SemanticKind::Rules),
+        "memory" | "memories" => Some(SemanticKind::Memory),
+        ".mcp" | "mcp" => Some(SemanticKind::Mcp),
+        _ => None,
+    };
+
+    by_name.or_else(|| {
+        children
+            .iter()
+            .any(|child| {
+                matches!(child.kind, ExplorerNodeKind::File)
+                    && child.name.eq_ignore_ascii_case("SKILL.md")
+            })
+            .then_some(SemanticKind::Skill)
+    })
+}
+
+fn classify_semantic_file(name: &str) -> Option<SemanticKind> {
+    let normalized = normalized_entry_name(name);
+    match normalized.as_str() {
+        "skill.md" => Some(SemanticKind::Skill),
+        "spec.md" => Some(SemanticKind::Spec),
+        "context.md" => Some(SemanticKind::Context),
+        "prompt.md" => Some(SemanticKind::Prompt),
+        "rules.md" | "instructions.md" => Some(SemanticKind::Rules),
+        "memory.md" => Some(SemanticKind::Memory),
+        "mcp.json" => Some(SemanticKind::Mcp),
+        "agents.md" => Some(SemanticKind::AgentInstructions),
+        _ if normalized.ends_with(".spec.md") => Some(SemanticKind::Spec),
+        _ => None,
+    }
+}
+
+fn normalized_entry_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -456,33 +531,41 @@ impl ShellModel {
     pub fn workspace_selected(&mut self, path: Option<PathBuf>) {
         if let Some(path) = path {
             self.current_workspace = Some(path);
-            self.explorer.clear();
-            self.documents.clear();
-            self.collections.clear();
-            self.selected_document_path = None;
-            self.selected_collection = None;
-            self.collection_table_sort = None;
-            self.search = SearchState::closed();
-            self.relation_index = RelationIndex::default();
-            self.schema_catalog = SchemaCatalog::default();
-            self.health = DatabaseHealth::default();
-            self.health_filter = HealthFilter::All;
-            self.health_query.clear();
-            self.selected_health_issue_id = None;
-            self.workspace_errors.clear();
-            self.selected_schema_field = None;
-            self.collection_panel = CollectionPanel::Data;
-            self.bulk_edit = BulkEditState::default();
-            self.editor = EditorState::default();
-            self.sql_explorer.open = false;
-            self.sql_explorer.catalog = None;
-            self.sql_explorer.result = None;
-            self.sql_explorer.error = None;
-            self.sql_explorer.running = false;
-            self.history = HistoryState::default();
-            self.collapsed_sql_tables.clear();
+            self.clear_workspace_state();
             self.scan_state = ScanState::Scanning;
         }
+    }
+
+    pub fn close_workspace(&mut self) {
+        self.current_workspace = None;
+        self.clear_workspace_state();
+        self.active_activity = Activity::Explorer;
+        self.scan_state = ScanState::Idle;
+    }
+
+    fn clear_workspace_state(&mut self) {
+        self.explorer.clear();
+        self.documents.clear();
+        self.collections.clear();
+        self.selected_document_path = None;
+        self.selected_collection = None;
+        self.collection_table_sort = None;
+        self.search = SearchState::closed();
+        self.relation_index = RelationIndex::default();
+        self.schema_catalog = SchemaCatalog::default();
+        self.health = DatabaseHealth::default();
+        self.health_filter = HealthFilter::All;
+        self.health_query.clear();
+        self.selected_health_issue_id = None;
+        self.workspace_errors.clear();
+        self.selected_schema_field = None;
+        self.collection_panel = CollectionPanel::Data;
+        self.bulk_edit = BulkEditState::default();
+        self.editor = EditorState::default();
+        self.sql_explorer = SqlExplorerState::closed();
+        self.history = HistoryState::default();
+        self.collapsed_sql_tables.clear();
+        self.filters.clear();
     }
 
     pub fn workspace_display(&self) -> WorkspaceDisplay {
@@ -2637,8 +2720,9 @@ mod tests {
     };
 
     use super::{
-        workspace_display, Activity, BulkEditStep, EditorTabKind, EditorViewMode, ExplorerNode,
-        ExplorerNodeId, InspectorModel, InspectorValue, ScanState,
+        classify_semantic_entry, workspace_display, Activity, BulkEditStep, EditorTabKind,
+        EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, InspectorModel,
+        InspectorValue, ScanState, SemanticKind,
     };
 
     #[test]
@@ -2697,6 +2781,26 @@ mod tests {
     }
 
     #[test]
+    fn close_workspace_clears_workspace_state_without_deleting_history_storage() {
+        let mut shell = mock_shell();
+        let path = PathBuf::from("/home/sc/Documents/Knowledge");
+        shell.workspace_selected(Some(path));
+        shell.open_sql_explorer();
+        shell.open_search();
+
+        shell.close_workspace();
+
+        assert_eq!(shell.current_workspace, None);
+        assert_eq!(shell.scan_state, ScanState::Idle);
+        assert!(shell.documents.is_empty());
+        assert!(shell.explorer.is_empty());
+        assert!(shell.editor.tabs.is_empty());
+        assert!(!shell.sql_explorer.open);
+        assert!(shell.history.entries.is_empty());
+        assert_eq!(shell.active_activity, Activity::Explorer);
+    }
+
+    #[test]
     fn selecting_another_folder_replaces_workspace() {
         let mut shell = mock_shell();
         let first = PathBuf::from("/home/sc/Documents/Knowledge");
@@ -2751,6 +2855,87 @@ mod tests {
         let mut shell = mock_shell();
 
         assert!(!shell.toggle_explorer_node(ExplorerNodeId(999)));
+    }
+
+    #[test]
+    fn classifies_explicit_ai_semantic_folders() {
+        assert_eq!(
+            classify_semantic_entry("skills", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Skill)
+        );
+        assert_eq!(
+            classify_semantic_entry("specs", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Spec)
+        );
+        assert_eq!(
+            classify_semantic_entry("context", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Context)
+        );
+        assert_eq!(
+            classify_semantic_entry("prompts", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Prompt)
+        );
+        assert_eq!(
+            classify_semantic_entry("agents", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Agent)
+        );
+        assert_eq!(
+            classify_semantic_entry("rules", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Rules)
+        );
+        assert_eq!(
+            classify_semantic_entry("memory", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Memory)
+        );
+        assert_eq!(
+            classify_semantic_entry(".mcp", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Mcp)
+        );
+    }
+
+    #[test]
+    fn classifies_direct_skill_marker_folder_without_filesystem_io() {
+        let marker = ExplorerNode::file(1, "SKILL.md", PathBuf::from("/workspace/foo/SKILL.md"));
+
+        assert_eq!(
+            classify_semantic_entry("deploy-production", ExplorerNodeKind::Folder, &[marker]),
+            Some(SemanticKind::Skill)
+        );
+    }
+
+    #[test]
+    fn classifies_explicit_ai_semantic_files() {
+        let cases = [
+            ("SKILL.md", SemanticKind::Skill),
+            ("SPEC.md", SemanticKind::Spec),
+            ("foo.spec.md", SemanticKind::Spec),
+            ("CONTEXT.md", SemanticKind::Context),
+            ("PROMPT.md", SemanticKind::Prompt),
+            ("MEMORY.md", SemanticKind::Memory),
+            ("RULES.md", SemanticKind::Rules),
+            ("INSTRUCTIONS.md", SemanticKind::Rules),
+            ("mcp.json", SemanticKind::Mcp),
+            ("AGENTS.md", SemanticKind::AgentInstructions),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(
+                classify_semantic_entry(name, ExplorerNodeKind::File, &[]),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_normal_files_and_folders_without_semantic_kind() {
+        assert_eq!(
+            classify_semantic_entry("notes.md", ExplorerNodeKind::File, &[]),
+            None
+        );
+        assert_eq!(
+            classify_semantic_entry("docs", ExplorerNodeKind::Folder, &[]),
+            None
+        );
     }
 
     #[test]

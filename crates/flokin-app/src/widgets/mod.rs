@@ -2,7 +2,7 @@ use iced::widget::{
     button, column, container, row, svg, text,
     text::{LineHeight, Wrapping},
 };
-use iced::{alignment, Alignment, Element};
+use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
     message::Message,
@@ -47,11 +47,17 @@ pub fn tab_button<'a>(label: &'a str, selected: bool, on_press: Message) -> Elem
         theme::button_tab
     };
 
-    column![button(text(label).size(theme::typography::BODY))
-        .padding([0.0, 16.0])
-        .height(theme::sizes::TAB_BUTTON_HEIGHT)
-        .style(style)
-        .on_press(on_press)]
+    column![button(
+        container(text(label).size(theme::typography::BODY))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .padding([0.0, 16.0])
+    .height(theme::sizes::TAB_BUTTON_HEIGHT)
+    .style(style)
+    .on_press(on_press)]
     .spacing(0)
     .into()
 }

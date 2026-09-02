@@ -1,9 +1,9 @@
 use flokin_core::{
-    BulkEditChangeStatus, BulkEditOperationKind, BulkEditStep, BulkEditValueType, Collection,
-    CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind,
+    BulkEditChangeStatus, BulkEditOperationKind, BulkEditStep, BulkEditValueType, CollectionPanel,
+    CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind,
     EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel,
-    SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlExplorerMode,
-    SqlQueryResult, SqlValue, SqlWritePlan, TableCell, TableColumn, TableModel, TableValueType,
+    SortDirection, SqlColumnType, SqlExplorerMode, SqlQueryResult, SqlValue, SqlWritePlan,
+    TableCell, TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
     button, column, container, markdown, mouse_area, pick_list, row, scrollable,
@@ -139,22 +139,11 @@ pub fn view<'a>(
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
-    sql_completion_items: &'a [SqlCompletionItem],
-    sql_completion_selected: usize,
-    sql_completion_open: bool,
     sql_editor_height: f32,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
     if model.sql_explorer.open {
-        return sql_explorer_view(
-            model,
-            sql_editor,
-            sql_completion_items,
-            sql_completion_selected,
-            sql_completion_open,
-            sql_editor_height,
-            i18n,
-        );
+        return sql_explorer_view(model, sql_editor, sql_editor_height, i18n);
     }
 
     if let Some(collection) = model.selected_collection() {
@@ -206,9 +195,6 @@ fn empty_workspace_view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Ele
 fn sql_explorer_view<'a>(
     model: &'a ShellModel,
     sql_editor: &'a text_editor::Content,
-    sql_completion_items: &'a [SqlCompletionItem],
-    sql_completion_selected: usize,
-    sql_completion_open: bool,
     sql_editor_height: f32,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
@@ -239,20 +225,30 @@ fn sql_explorer_view<'a>(
             model.sql_explorer.mode
         ),
         iced::widget::Space::new().width(Length::Fill),
-        button(widgets::icon_text(
-            theme::Icon::Terminal,
-            action_label,
-            theme::icons::TOOLBAR,
-            false
-        ))
+        button(
+            container(widgets::icon_text(
+                theme::Icon::Terminal,
+                action_label,
+                theme::icons::TOOLBAR,
+                false,
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+        )
         .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding([0.0, 10.0])
         .style(theme::button_primary)
         .on_press(Message::SqlExecute),
-        text("Ctrl+Enter")
-            .font(theme::mono())
-            .size(theme::typography::LABEL)
-            .style(theme::text_muted),
+        container(
+            text("Ctrl+Enter")
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+        )
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .align_y(alignment::Vertical::Center),
     ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
@@ -271,7 +267,7 @@ fn sql_explorer_view<'a>(
         text_editor(sql_editor)
             .placeholder(placeholder)
             .on_action(Message::SqlEditorAction)
-            .key_binding(move |press| sql_editor_key_binding(press, sql_completion_open))
+            .key_binding(sql_editor_key_binding)
             .font(theme::mono())
             .size(theme::typography::EDITOR)
             .line_height(LineHeight::Relative(theme::sizes::EDITOR_LINE_HEIGHT_RATIO))
@@ -282,17 +278,6 @@ fn sql_explorer_view<'a>(
     )
     .height(Length::Fixed(sql_editor_height))
     .width(Length::Fill);
-    let editor: Element<'a, Message> = if sql_completion_open && !sql_completion_items.is_empty() {
-        stack![
-            editor_widget,
-            sql_completion_popup(sql_completion_items, sql_completion_selected)
-        ]
-        .width(Length::Fill)
-        .height(Length::Fixed(sql_editor_height))
-        .into()
-    } else {
-        editor_widget.into()
-    };
 
     let results = sql_results(model);
     let editor_splitter = iced::widget::mouse_area(
@@ -307,7 +292,7 @@ fn sql_explorer_view<'a>(
         text(context_text)
             .size(theme::typography::LABEL)
             .style(theme::text_muted),
-        editor,
+        editor_widget,
         editor_splitter,
         container(results).height(Length::Fill)
     ]
@@ -346,104 +331,12 @@ fn sql_mode_button(
     .into()
 }
 
-fn sql_editor_key_binding(
-    press: text_editor::KeyPress,
-    completion_open: bool,
-) -> Option<text_editor::Binding<Message>> {
+fn sql_editor_key_binding(press: text_editor::KeyPress) -> Option<text_editor::Binding<Message>> {
     if press.modifiers.control() && matches!(press.key, Key::Named(keyboard::key::Named::Enter)) {
         Some(text_editor::Binding::Custom(Message::SqlExecute))
-    } else if press.modifiers.control()
-        && matches!(press.key, Key::Named(keyboard::key::Named::Space))
-    {
-        Some(text_editor::Binding::Custom(
-            Message::SqlCompletionRequested,
-        ))
-    } else if completion_open {
-        match press.key.as_ref() {
-            Key::Named(keyboard::key::Named::ArrowDown) => {
-                Some(text_editor::Binding::Custom(Message::SqlCompletionNext))
-            }
-            Key::Named(keyboard::key::Named::ArrowUp) => {
-                Some(text_editor::Binding::Custom(Message::SqlCompletionPrevious))
-            }
-            Key::Named(keyboard::key::Named::Enter) | Key::Named(keyboard::key::Named::Tab) => {
-                Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
-            }
-            Key::Named(keyboard::key::Named::Escape) => {
-                Some(text_editor::Binding::Custom(Message::SqlCompletionClosed))
-            }
-            _ => text_editor::Binding::from_key_press(press),
-        }
     } else {
         text_editor::Binding::from_key_press(press)
     }
-}
-
-fn sql_completion_popup<'a>(
-    items: &'a [SqlCompletionItem],
-    selected_index: usize,
-) -> Element<'a, Message> {
-    let mut rows = column![].spacing(0);
-    for (index, item) in items.iter().take(50).enumerate() {
-        rows = rows.push(sql_completion_row(item, index == selected_index, index));
-    }
-
-    container(
-        container(scrollable(rows).height(Length::Shrink))
-            .width(360)
-            .max_height(336)
-            .padding(theme::spacing::XS)
-            .style(theme::sql_completion_popup),
-    )
-    .padding([42.0, 24.0])
-    .width(Length::Shrink)
-    .height(Length::Shrink)
-    .into()
-}
-
-fn sql_completion_row<'a>(
-    item: &'a SqlCompletionItem,
-    selected: bool,
-    index: usize,
-) -> Element<'a, Message> {
-    let kind = match item.kind {
-        SqlCompletionKind::Keyword => "K",
-        SqlCompletionKind::Table => "T",
-        SqlCompletionKind::Column => "C",
-        SqlCompletionKind::Alias => "A",
-        SqlCompletionKind::Function => "F",
-    };
-    mouse_area(
-        button(
-            row![
-                container(
-                    text(kind)
-                        .font(theme::mono())
-                        .size(theme::typography::LABEL)
-                        .style(theme::text_muted)
-                )
-                .width(22),
-                text(item.label.as_str())
-                    .font(theme::mono())
-                    .size(theme::typography::BODY)
-                    .style(theme::text_normal)
-                    .width(Length::Fill),
-                text(item.detail.as_str())
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_muted),
-            ]
-            .spacing(theme::spacing::SM)
-            .align_y(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(26)
-        .padding([3.0, theme::spacing::SM])
-        .style(move |theme, status| theme::sql_completion_button(theme, selected, status))
-        .on_press(Message::SqlCompletionSelected(index)),
-    )
-    .on_press(Message::SqlCompletionSelected(index))
-    .into()
 }
 
 fn sql_results(model: &ShellModel) -> Element<'_, Message> {
@@ -844,7 +737,7 @@ fn collection_view<'a>(
 
     let page = container(
         column![
-            collection_header(collection, property_count, model),
+            collection_header(collection.document_count, property_count, model),
             bulk_selection_toolbar(model),
             content
         ]
@@ -863,17 +756,14 @@ fn collection_view<'a>(
 }
 
 fn collection_header<'a>(
-    collection: &'a Collection,
+    document_count: usize,
     property_count: usize,
     model: &'a ShellModel,
 ) -> Element<'a, Message> {
     container(
         row![
             column![
-                text(collection.display_name.as_str())
-                    .size(22)
-                    .style(theme::text_accent),
-                text(format!("{} documentos", collection.document_count))
+                text(format!("{} documentos", document_count))
                     .size(theme::typography::BODY)
                     .style(theme::text_muted),
             ]
@@ -905,16 +795,22 @@ fn collection_panel_button(
     panel: CollectionPanel,
     model: &ShellModel,
 ) -> Element<'static, Message> {
-    button(text(label).size(theme::typography::LABEL))
-        .height(28)
-        .padding([0.0, theme::spacing::MD])
-        .style(if model.collection_panel == panel {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        })
-        .on_press(Message::CollectionPanelSelected(panel))
-        .into()
+    button(
+        container(text(label).size(theme::typography::LABEL))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(28)
+    .padding([0.0, theme::spacing::MD])
+    .style(if model.collection_panel == panel {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    })
+    .on_press(Message::CollectionPanelSelected(panel))
+    .into()
 }
 
 fn empty_collection_view<'a>() -> Element<'a, Message> {
@@ -2296,8 +2192,9 @@ fn markdown_editor_body<'a>(
     markdown_editor: &'a text_editor::Content,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
+    let frontmatter_range = frontmatter_line_range(markdown_editor);
     let editor = stack![
-        editor_zebra_background(),
+        editor_zebra_background(frontmatter_range),
         text_editor(markdown_editor)
             .placeholder(i18n.tr_static("editor-empty-file"))
             .on_action(Message::MarkdownEditorAction)
@@ -2313,27 +2210,36 @@ fn markdown_editor_body<'a>(
     .height(Length::Fill)
     .width(Length::Fill);
 
-    container(row![line_number_gutter(markdown_editor.line_count()), editor].spacing(0))
-        .style(theme::editor)
-        .height(Length::Fill)
-        .width(Length::Fill)
-        .into()
+    container(
+        row![
+            line_number_gutter(markdown_editor.line_count(), frontmatter_range),
+            editor
+        ]
+        .spacing(0),
+    )
+    .style(theme::editor)
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
 }
 
-fn editor_zebra_background<'a>() -> Element<'a, Message> {
-    iced::widget::responsive(|size| {
+fn editor_zebra_background<'a>(frontmatter_range: Option<(usize, usize)>) -> Element<'a, Message> {
+    iced::widget::responsive(move |size| {
         let line_height = editor_line_height_px();
         let usable_height = (size.height - theme::spacing::LG * 2.0).max(0.0);
         let visible_rows = (usable_height / line_height).ceil() as usize + 1;
         let mut rows = column![].spacing(0);
 
         for index in 0..visible_rows.max(1) {
-            rows = rows.push(
-                container("")
-                    .width(Length::Fill)
-                    .height(line_height)
-                    .style(move |theme| theme::editor_row(theme, index)),
-            );
+            rows = rows.push(container("").width(Length::Fill).height(line_height).style(
+                move |theme| {
+                    theme::editor_row_with_frontmatter(
+                        theme,
+                        index,
+                        is_frontmatter_line(frontmatter_range, index),
+                    )
+                },
+            ));
         }
 
         container(rows)
@@ -2351,9 +2257,13 @@ fn editor_line_height_px() -> f32 {
     theme::typography::EDITOR as f32 * theme::sizes::EDITOR_LINE_HEIGHT_RATIO
 }
 
-fn line_number_gutter<'a>(line_count: usize) -> Element<'a, Message> {
+fn line_number_gutter<'a>(
+    line_count: usize,
+    frontmatter_range: Option<(usize, usize)>,
+) -> Element<'a, Message> {
     let mut lines = column![].spacing(0);
     for index in 1..=line_count.max(1) {
+        let row_index = index - 1;
         lines = lines.push(
             container(
                 text(format!("{index:>4}"))
@@ -2363,7 +2273,13 @@ fn line_number_gutter<'a>(line_count: usize) -> Element<'a, Message> {
                     .style(theme::text_muted),
             )
             .width(Length::Fill)
-            .style(move |theme| theme::editor_row(theme, index - 1)),
+            .style(move |theme| {
+                theme::editor_row_with_frontmatter(
+                    theme,
+                    row_index,
+                    is_frontmatter_line(frontmatter_range, row_index),
+                )
+            }),
         );
     }
 
@@ -2373,6 +2289,26 @@ fn line_number_gutter<'a>(line_count: usize) -> Element<'a, Message> {
         .padding([theme::spacing::XL, theme::spacing::SM])
         .style(theme::gutter)
         .into()
+}
+
+fn frontmatter_line_range(content: &text_editor::Content) -> Option<(usize, usize)> {
+    let mut lines = content.lines();
+    let first = lines.next()?;
+    if first.text.trim() != "---" {
+        return None;
+    }
+
+    for (offset, line) in lines.enumerate() {
+        if line.text.trim() == "---" {
+            return Some((0, offset + 1));
+        }
+    }
+
+    None
+}
+
+fn is_frontmatter_line(range: Option<(usize, usize)>, line: usize) -> bool {
+    range.is_some_and(|(start, end)| (start..=end).contains(&line))
 }
 
 fn markdown_editor_key_binding(
@@ -2418,7 +2354,10 @@ fn empty_document_area<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
 mod tests {
     use iced::{keyboard, keyboard::Key, widget::text_editor};
 
-    use super::{markdown_editor_key_binding, sql_editor_key_binding};
+    use super::{
+        frontmatter_line_range, is_frontmatter_line, markdown_editor_key_binding,
+        sql_editor_key_binding,
+    };
     use crate::message::Message;
 
     fn key_press(modifiers: keyboard::Modifiers) -> text_editor::KeyPress {
@@ -2446,11 +2385,7 @@ mod tests {
     #[test]
     fn ctrl_enter_in_sql_editor_publishes_execute_message() {
         assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL), false),
-            Some(text_editor::Binding::Custom(Message::SqlExecute))
-        );
-        assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL), true),
+            sql_editor_key_binding(key_press(keyboard::Modifiers::CTRL)),
             Some(text_editor::Binding::Custom(Message::SqlExecute))
         );
     }
@@ -2478,54 +2413,89 @@ mod tests {
     #[test]
     fn plain_enter_keeps_text_editor_newline_behavior() {
         assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE), false),
+            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE)),
             Some(text_editor::Binding::Enter)
         );
     }
 
     #[test]
-    fn plain_enter_accepts_completion_when_popup_is_open() {
+    fn sql_editor_common_character_uses_default_text_editor_binding() {
+        let press = latin_key_press('s', keyboard::Modifiers::NONE);
+
         assert_eq!(
-            sql_editor_key_binding(key_press(keyboard::Modifiers::NONE), true),
-            Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
+            sql_editor_key_binding(press.clone()),
+            text_editor::Binding::from_key_press(press)
         );
     }
 
     #[test]
-    fn tab_accepts_completion_when_popup_is_open() {
+    fn tab_is_not_captured_by_sql_completion() {
         let mut press = key_press(keyboard::Modifiers::NONE);
         press.key = Key::Named(keyboard::key::Named::Tab);
         press.modified_key = Key::Named(keyboard::key::Named::Tab);
+
         assert_eq!(
-            sql_editor_key_binding(press, true),
-            Some(text_editor::Binding::Custom(Message::SqlCompletionAccepted))
+            sql_editor_key_binding(press.clone()),
+            text_editor::Binding::from_key_press(press)
         );
     }
 
     #[test]
-    fn arrows_and_escape_control_open_completion_popup() {
+    fn arrows_and_escape_are_not_captured_by_sql_completion() {
         let mut down = key_press(keyboard::Modifiers::NONE);
         down.key = Key::Named(keyboard::key::Named::ArrowDown);
         down.modified_key = Key::Named(keyboard::key::Named::ArrowDown);
         assert_eq!(
-            sql_editor_key_binding(down, true),
-            Some(text_editor::Binding::Custom(Message::SqlCompletionNext))
+            sql_editor_key_binding(down.clone()),
+            text_editor::Binding::from_key_press(down)
         );
 
         let mut up = key_press(keyboard::Modifiers::NONE);
         up.key = Key::Named(keyboard::key::Named::ArrowUp);
         up.modified_key = Key::Named(keyboard::key::Named::ArrowUp);
         assert_eq!(
-            sql_editor_key_binding(up, true),
-            Some(text_editor::Binding::Custom(Message::SqlCompletionPrevious))
+            sql_editor_key_binding(up.clone()),
+            text_editor::Binding::from_key_press(up)
         );
 
         let mut escape = key_press(keyboard::Modifiers::NONE);
         escape.key = Key::Named(keyboard::key::Named::Escape);
         escape.modified_key = Key::Named(keyboard::key::Named::Escape);
         assert_eq!(
-            sql_editor_key_binding(escape, true),
-            Some(text_editor::Binding::Custom(Message::SqlCompletionClosed))
+            sql_editor_key_binding(escape.clone()),
+            text_editor::Binding::from_key_press(escape)
         );
+    }
+
+    #[test]
+    fn frontmatter_range_includes_delimiters_when_document_starts_with_yaml() {
+        let content =
+            text_editor::Content::with_text("---\ntitle: CARF\nstatus: active\n---\n# Body\n");
+
+        assert_eq!(frontmatter_line_range(&content), Some((0, 3)));
+        assert!(is_frontmatter_line(Some((0, 3)), 0));
+        assert!(is_frontmatter_line(Some((0, 3)), 2));
+        assert!(is_frontmatter_line(Some((0, 3)), 3));
+        assert!(!is_frontmatter_line(Some((0, 3)), 4));
+    }
+
+    #[test]
+    fn frontmatter_range_expands_and_contracts_with_current_buffer() {
+        let expanded = text_editor::Content::with_text(
+            "---\ntitle: CARF\nstatus: active\npriority: 10\n---\nBody\n",
+        );
+        let contracted = text_editor::Content::with_text("---\ntitle: CARF\n---\nBody\n");
+
+        assert_eq!(frontmatter_line_range(&expanded), Some((0, 4)));
+        assert_eq!(frontmatter_line_range(&contracted), Some((0, 2)));
+    }
+
+    #[test]
+    fn body_delimiters_and_unclosed_yaml_are_not_frontmatter() {
+        let body_separator = text_editor::Content::with_text("# Body\n---\nnot frontmatter\n---\n");
+        let unclosed = text_editor::Content::with_text("---\ntitle: CARF\n");
+
+        assert_eq!(frontmatter_line_range(&body_separator), None);
+        assert_eq!(frontmatter_line_range(&unclosed), None);
     }
 }

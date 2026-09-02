@@ -1,5 +1,6 @@
 use flokin_core::{
-    Collection, ExplorerNode, ExplorerNodeKind, ScanState, ShellModel, SqlCatalog, SqlTable,
+    Collection, ExplorerNode, ExplorerNodeKind, ScanState, SemanticKind, ShellModel, SqlCatalog,
+    SqlTable,
 };
 use iced::widget::{
     button, column, container, row, scrollable,
@@ -403,9 +404,12 @@ fn tree_node<'a>(
         container("").width(theme::icons::TREE).into()
     };
 
-    let icon = match node.kind {
-        ExplorerNodeKind::Folder => widgets::icon(theme::Icon::Folder, theme::icons::TREE, false),
-        ExplorerNodeKind::File => file_icon(&node.path, app_theme),
+    let icon = match (node.semantic_kind, node.kind) {
+        (Some(semantic_kind), _) => semantic_icon(semantic_kind),
+        (None, ExplorerNodeKind::Folder) => {
+            widgets::icon(theme::Icon::Folder, theme::icons::TREE, false)
+        }
+        (None, ExplorerNodeKind::File) => file_icon(&node.path, app_theme),
     };
 
     let item = button(
@@ -448,6 +452,23 @@ fn tree_node<'a>(
     }
 
     children.into()
+}
+
+fn semantic_icon(kind: SemanticKind) -> Element<'static, Message> {
+    widgets::icon(semantic_theme_icon(kind), theme::icons::TREE, false)
+}
+
+fn semantic_theme_icon(kind: SemanticKind) -> theme::Icon {
+    match kind {
+        SemanticKind::Agent | SemanticKind::AgentInstructions => theme::Icon::Agent,
+        SemanticKind::Skill => theme::Icon::Puzzle,
+        SemanticKind::Spec => theme::Icon::ScrollCheck,
+        SemanticKind::Context => theme::Icon::Split,
+        SemanticKind::Prompt => theme::Icon::Prompt,
+        SemanticKind::Rules => theme::Icon::ScrollCheck,
+        SemanticKind::Memory => theme::Icon::Database,
+        SemanticKind::Mcp => theme::Icon::Terminal,
+    }
 }
 
 fn file_icon(path: &std::path::Path, app_theme: AppTheme) -> Element<'static, Message> {
@@ -556,4 +577,36 @@ fn filters<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     container(list)
         .padding([theme::spacing::LG, theme::spacing::XS])
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use flokin_core::SemanticKind;
+
+    use super::semantic_theme_icon;
+    use crate::theme;
+
+    #[test]
+    fn semantic_icons_use_dedicated_theme_icons_before_devicon_fallback() {
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Skill),
+            theme::Icon::Puzzle
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Spec),
+            theme::Icon::ScrollCheck
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Prompt),
+            theme::Icon::Prompt
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Context),
+            theme::Icon::Split
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::AgentInstructions),
+            theme::Icon::Agent
+        );
+    }
 }

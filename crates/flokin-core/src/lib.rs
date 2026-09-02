@@ -36,13 +36,13 @@ pub use history::{
 };
 pub use mock::mock_shell;
 pub use model::{
-    save_markdown_file, workspace_display, Activity, BulkEditOperationKind, BulkEditState,
-    BulkEditStep, BulkEditValueType, CollectionPanel, DocumentInspector, DocumentSourceView,
-    EditorDialog, EditorExternalConflict, EditorState, EditorTab, EditorTabKind, EditorViewMode,
-    ExplorerNode, ExplorerNodeId, ExplorerNodeKind, FilterCount, HealthFilter,
-    HealthIssueInspector, InspectorField, InspectorModel, InspectorRelation,
-    InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState, ShellModel,
-    SqlExplorerMode, SqlExplorerState, WorkspaceDisplay,
+    classify_semantic_entry, save_markdown_file, workspace_display, Activity,
+    BulkEditOperationKind, BulkEditState, BulkEditStep, BulkEditValueType, CollectionPanel,
+    DocumentInspector, DocumentSourceView, EditorDialog, EditorExternalConflict, EditorState,
+    EditorTab, EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind,
+    FilterCount, HealthFilter, HealthIssueInspector, InspectorField, InspectorModel,
+    InspectorRelation, InspectorRelationStatus, InspectorValue, RelationDocumentSummary, ScanState,
+    SemanticKind, ShellModel, SqlExplorerMode, SqlExplorerState, WorkspaceDisplay,
 };
 pub use relation::{
     display_relation_value, parse_wikilink, relation_display_property, Relation, RelationDocument,

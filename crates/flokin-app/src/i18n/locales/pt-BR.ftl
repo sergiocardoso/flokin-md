@@ -19,6 +19,7 @@ menu-navigate = Navegar
 menu-data = Dados
 menu-help = Ajuda
 menu-open-folder = Abrir pasta
+menu-close-folder = Fechar pasta
 menu-reindex = Reindexar
 menu-toggle-theme = Alternar tema
 menu-left-sidebar = Barra lateral esquerda
@@ -33,7 +34,7 @@ menu-search = Buscar
 menu-open-data = Abrir Dados
 menu-open-graph = Abrir Grafo
 menu-run-query = Executar query
-menu-about = Sobre FlokinMD
+menu-about = Sobre o FlokinMD
 
 # Activity
 activity-files = Arquivos
@@ -51,7 +52,25 @@ tooltip-show-left-sidebar = Mostrar barra lateral esquerda
 tooltip-hide-right-sidebar = Ocultar barra lateral direita
 tooltip-show-right-sidebar = Mostrar barra lateral direita
 tooltip-toggle-theme = Alternar tema
-about-description = Workspace Markdown com projeção SQL descartável.
+about-version = Versão { $version }
+about-tagline = Um banco de dados local-first para seus arquivos Markdown.
+about-body-markdown =
+    FlokinMD é um projeto open source criado para transformar pastas Markdown em espaços de dados estruturados, sem tirar do usuário a propriedade dos seus arquivos.
+
+    Markdown continua sendo a fonte de verdade.
+
+    Criado por Sérgio Cardoso.
+
+    Um projeto Flokin.
+
+    Construído com Rust + Iced.
+about-description = FlokinMD é um projeto open source criado para transformar pastas Markdown em espaços de dados estruturados, sem tirar do usuário a propriedade dos seus arquivos.
+about-source-truth = Markdown continua sendo a fonte de verdade.
+about-open-source = Projeto open source
+about-created-by = Criado por Sérgio Cardoso.
+about-flokin-project = Um projeto Flokin.
+about-built-with = Construído com Rust + Iced.
+about-principle = "Markdown is the database."
 
 # Search
 search-type-to-search = Digite para buscar documentos.
@@ -76,6 +95,15 @@ explorer-data = DATA
 explorer-collections = COLLECTIONS
 explorer-filters = FILTROS
 explorer-filters-empty = Disponíveis após indexação
+semantic-agent = Agente
+semantic-agent-instructions = Instruções de agente
+semantic-skill = Skill
+semantic-spec = Spec
+semantic-context = Contexto
+semantic-prompt = Prompt
+semantic-rules = Regras
+semantic-memory = Memória
+semantic-mcp = MCP
 explorer-documents-found =
     { $count ->
         [one] 1 documento encontrado

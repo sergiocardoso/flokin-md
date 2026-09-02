@@ -66,6 +66,12 @@ pub fn save_last_workspace_path(path: &Path, workspace: PathBuf) -> Result<(), S
     save_settings(path, settings)
 }
 
+pub fn clear_last_workspace_path(path: &Path) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.last_workspace_path = None;
+    save_settings(path, settings)
+}
+
 pub fn save_settings(path: &Path, settings: AppSettings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -198,6 +204,23 @@ mod tests {
         assert_eq!(settings.theme, Some(AppTheme::Light));
         assert_eq!(settings.language, Some(AppLanguage::English));
         assert_eq!(settings.last_workspace_path, Some(workspace));
+    }
+
+    #[test]
+    fn clears_last_workspace_without_dropping_theme_or_language() {
+        let temp = temp_dir();
+        let path = settings_path(&temp);
+        let workspace = temp.join("My Workspace");
+
+        save_theme(&path, AppTheme::Light).unwrap();
+        save_language(&path, AppLanguage::English).unwrap();
+        save_last_workspace_path(&path, workspace).unwrap();
+        clear_last_workspace_path(&path).unwrap();
+
+        let settings = load_settings(&path).unwrap();
+        assert_eq!(settings.theme, Some(AppTheme::Light));
+        assert_eq!(settings.language, Some(AppLanguage::English));
+        assert_eq!(settings.last_workspace_path, None);
     }
 
     #[test]

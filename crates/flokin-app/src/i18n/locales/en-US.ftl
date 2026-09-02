@@ -19,6 +19,7 @@ menu-navigate = Navigate
 menu-data = Data
 menu-help = Help
 menu-open-folder = Open folder
+menu-close-folder = Close folder
 menu-reindex = Reindex
 menu-toggle-theme = Toggle theme
 menu-left-sidebar = Left sidebar
@@ -51,7 +52,25 @@ tooltip-show-left-sidebar = Show left sidebar
 tooltip-hide-right-sidebar = Hide right sidebar
 tooltip-show-right-sidebar = Show right sidebar
 tooltip-toggle-theme = Toggle theme
-about-description = Markdown workspace with a disposable SQL projection.
+about-version = Version { $version }
+about-tagline = A local-first database for your Markdown files.
+about-body-markdown =
+    FlokinMD is an open-source project built to turn Markdown folders into structured data workspaces without taking ownership of the user's files.
+
+    Markdown remains the source of truth.
+
+    Created by Sérgio Cardoso.
+
+    A Flokin project.
+
+    Built with Rust + Iced.
+about-description = FlokinMD is an open-source project built to turn Markdown folders into structured data workspaces without taking ownership of the user's files.
+about-source-truth = Markdown remains the source of truth.
+about-open-source = Open-source project
+about-created-by = Created by Sérgio Cardoso.
+about-flokin-project = A Flokin project.
+about-built-with = Built with Rust + Iced.
+about-principle = "Markdown is the database."
 
 # Search
 search-type-to-search = Type to search documents.
@@ -76,6 +95,15 @@ explorer-data = DATA
 explorer-collections = COLLECTIONS
 explorer-filters = FILTERS
 explorer-filters-empty = Available after indexing
+semantic-agent = Agent
+semantic-agent-instructions = Agent instructions
+semantic-skill = Skill
+semantic-spec = Spec
+semantic-context = Context
+semantic-prompt = Prompt
+semantic-rules = Rules
+semantic-memory = Memory
+semantic-mcp = MCP
 explorer-documents-found =
     { $count ->
         [one] 1 document found

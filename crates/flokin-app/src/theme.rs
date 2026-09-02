@@ -144,27 +144,34 @@ pub mod sizes {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
+    Agent,
     #[allow(dead_code)]
     ChevronRight,
     #[allow(dead_code)]
     ChevronDown,
     Clock,
     Database,
+    ExternalLink,
     FileText,
     Folder,
     Focus,
     Frame,
+    Globe,
     Graph,
     Health,
+    Mail,
     Minus,
     PanelLeft,
     Plus,
+    Prompt,
+    Puzzle,
     Refresh,
     Reset,
     Save,
     Search,
     Settings,
     Split,
+    ScrollCheck,
     Tag,
     Terminal,
     X,
@@ -436,24 +443,6 @@ pub fn search_overlay_panel(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn sql_completion_popup(theme: &Theme) -> container::Style {
-    let palette = palette(theme);
-    container::Style {
-        text_color: Some(palette.text),
-        background: Some(Background::Color(palette.surface_elevated)),
-        border: border(palette.border, 1.0, radius::SM),
-        shadow: Shadow {
-            color: Color {
-                a: 0.22,
-                ..Color::BLACK
-            },
-            offset: iced::Vector::new(0.0, 8.0),
-            blur_radius: 18.0,
-        },
-        ..container::Style::default()
-    }
-}
-
 pub fn overlay_backdrop(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {
@@ -510,9 +499,19 @@ pub fn gutter(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn editor_row(theme: &Theme, row_index: usize) -> container::Style {
+pub fn editor_row_with_frontmatter(
+    theme: &Theme,
+    row_index: usize,
+    frontmatter: bool,
+) -> container::Style {
     let palette = palette(theme);
-    let background = if row_index.is_multiple_of(2) {
+    let background = if frontmatter {
+        if row_index.is_multiple_of(2) {
+            palette.editor_frontmatter_row_odd
+        } else {
+            palette.editor_frontmatter_row_even
+        }
+    } else if row_index.is_multiple_of(2) {
         palette.editor_row_odd
     } else {
         palette.editor_row_even
@@ -741,6 +740,21 @@ pub fn button_primary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+pub fn welcome_button(theme: &Theme, status: button::Status) -> button::Style {
+    let mut style = button_primary(theme, status);
+    let palette = palette(theme);
+    style.border = border(palette.accent_hover, 1.0, radius::MD);
+    style.shadow = Shadow {
+        color: Color {
+            a: 0.22,
+            ..Color::BLACK
+        },
+        offset: iced::Vector::new(0.0, 4.0),
+        blur_radius: 12.0,
+    };
+    style
+}
+
 pub fn button_ghost(theme: &Theme, status: button::Status) -> button::Style {
     let palette = palette(theme);
     let background = match status {
@@ -799,29 +813,6 @@ pub fn button_tree_selected(theme: &Theme, status: button::Status) -> button::St
     button::Style {
         background: Some(Background::Color(background)),
         text_color: palette.selected_text,
-        border: Border::default(),
-        shadow: Shadow::default(),
-        ..button::Style::default()
-    }
-}
-
-pub fn sql_completion_button(
-    theme: &Theme,
-    selected: bool,
-    status: button::Status,
-) -> button::Style {
-    let palette = palette(theme);
-    let background = if selected {
-        Some(Background::Color(palette.accent_soft))
-    } else if matches!(status, button::Status::Hovered) {
-        Some(Background::Color(palette.surface_hover))
-    } else {
-        None
-    };
-
-    button::Style {
-        background,
-        text_color: palette.text,
         border: Border::default(),
         shadow: Shadow::default(),
         ..button::Style::default()
@@ -929,6 +920,9 @@ fn container_style(
 
 pub const fn icon_svg(icon: Icon) -> &'static str {
     match icon {
+        Icon::Agent => {
+            r#"<svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="3"/><path d="M12 8V5"/><path d="M9 5h6"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M9.5 16h5"/><path d="M5 12H3"/><path d="M21 12h-2"/></svg>"#
+        }
         Icon::ChevronRight => r#"<svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>"#,
         Icon::ChevronDown => r#"<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>"#,
         Icon::Clock => {
@@ -936,6 +930,9 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Database => {
             r#"<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>"#
+        }
+        Icon::ExternalLink => {
+            r#"<svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="m10 14 10-10"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/></svg>"#
         }
         Icon::FileText => {
             r#"<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5"/><path d="M9 12h6"/><path d="M9 16h6"/></svg>"#
@@ -949,17 +946,29 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         Icon::Frame => {
             r#"<svg viewBox="0 0 24 24"><path d="M8 4H4v4"/><path d="M16 4h4v4"/><path d="M20 16v4h-4"/><path d="M8 20H4v-4"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>"#
         }
+        Icon::Globe => {
+            r#"<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>"#
+        }
         Icon::Graph => {
             r#"<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="8" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/><path d="M8.4 7.8 15.6 6.4"/><path d="M7 9.2 7.7 15.6"/><path d="M10.3 17.4 14.7 16.5"/></svg>"#
         }
         Icon::Health => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/><path d="M7 12h3l1.5-4 2 7 1.5-3h2"/></svg>"#
         }
+        Icon::Mail => {
+            r#"<svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="m4 8 8 6 8-6"/></svg>"#
+        }
         Icon::Minus => r#"<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>"#,
         Icon::PanelLeft => {
             r#"<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#
         }
         Icon::Plus => r#"<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>"#,
+        Icon::Prompt => {
+            r#"<svg viewBox="0 0 24 24"><path d="M5 6h14v10H8l-3 3z"/><path d="M8 10h8"/><path d="M8 13h5"/></svg>"#
+        }
+        Icon::Puzzle => {
+            r#"<svg viewBox="0 0 24 24"><path d="M8 4h5v3a2 2 0 1 0 4 0h3v5h-3a2 2 0 1 0 0 4h3v4h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4V4h4z"/></svg>"#
+        }
         Icon::Refresh => {
             r#"<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5"/><path d="M4 12a8 8 0 0 1 14-5"/><path d="M18 3v4h-4"/><path d="M6 21v-4h4"/></svg>"#
         }
@@ -977,6 +986,9 @@ pub const fn icon_svg(icon: Icon) -> &'static str {
         }
         Icon::Split => {
             r#"<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>"#
+        }
+        Icon::ScrollCheck => {
+            r#"<svg viewBox="0 0 24 24"><path d="M8 4h10v14a3 3 0 0 1-3 3H7a3 3 0 0 0 3-3V6a2 2 0 0 0-4 0v2h4"/><path d="m12 13 2 2 4-5"/></svg>"#
         }
         Icon::Tag => {
             r#"<svg viewBox="0 0 24 24"><path d="M4 12V5h7l9 9-6 6z"/><circle cx="8" cy="8" r="1"/></svg>"#

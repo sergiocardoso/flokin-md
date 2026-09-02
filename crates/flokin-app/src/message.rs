@@ -12,6 +12,7 @@ use iced::{
 };
 
 use crate::i18n::AppLanguage;
+use crate::services::external_links::AboutContactLink;
 use crate::services::file_watcher::WatcherMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,7 @@ pub enum MenuId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     OpenFolder,
+    CloseFolder,
     Reindex,
     ToggleTheme,
     ToggleLeftSidebar,
@@ -51,6 +53,7 @@ pub enum AppMode {
     Sql,
     Settings,
     History,
+    About,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,12 +71,14 @@ pub enum Message {
     #[allow(dead_code)]
     ExplorerNodeToggled(ExplorerNodeId),
     OpenFolder,
+    CloseFolderRequested,
     FolderSelected(Option<PathBuf>),
     ScanCompleted(u64, PathBuf, Result<ScanResult, String>),
     ReindexWorkspace,
     WorkspaceWatcher(WatcherMessage),
     WorkspaceUpdateCompleted(u64, PathBuf, Result<WorkspaceUpdate, String>),
     LastWorkspacePersisted(Result<(), String>),
+    LastWorkspaceCleared(Result<(), String>),
     CollectionSelected(String),
     CollectionPanelSelected(CollectionPanel),
     SchemaFieldSelected {
@@ -181,6 +186,8 @@ pub enum Message {
     MenuHovered(MenuId),
     MenuAction(MenuAction),
     MenuClosed,
+    AboutContactOpened(AboutContactLink),
+    AboutContactOpenCompleted(Result<(), String>),
     AboutClosed,
     SplitterPressed(SplitterKind, f32),
     SplitterMoved(f32, f32),

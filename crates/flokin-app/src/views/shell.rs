@@ -1,4 +1,4 @@
-use flokin_core::{EditorDialog, ExplicitSchemaState, SchemaType, ShellModel, SqlCompletionItem};
+use flokin_core::{EditorDialog, ExplicitSchemaState, SchemaType, ShellModel};
 use iced::widget::{
     button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_input,
 };
@@ -27,16 +27,14 @@ pub fn view<'a>(
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
-    sql_completion_items: &'a [SqlCompletionItem],
+    about_markdown: &'a [markdown::Item],
     graph_state: &'a GraphViewState,
-    sql_completion_selected: usize,
-    sql_completion_open: bool,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
     sql_editor_height: f32,
     open_menu: Option<MenuId>,
-    about_open: bool,
+    _about_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<&'a str>,
     left_visible: bool,
@@ -50,15 +48,17 @@ pub fn view<'a>(
         return no_workspace_shell(
             app_theme,
             open_menu,
-            about_open,
             mode,
             i18n,
             language,
+            about_markdown,
             workspace_restore_notice,
         );
     }
 
-    let content = if mode == AppMode::Settings {
+    let content = if mode == AppMode::About {
+        row![views::about::view(app_theme, i18n, about_markdown)].height(Length::Fill)
+    } else if mode == AppMode::Settings {
         row![
             activity_bar(mode, i18n),
             panel_gutter(),
@@ -78,9 +78,6 @@ pub fn view<'a>(
             sql_editor,
             markdown_editor,
             markdown_preview,
-            sql_completion_items,
-            sql_completion_selected,
-            sql_completion_open,
             sql_editor_height,
             i18n,
         ));
@@ -143,9 +140,6 @@ pub fn view<'a>(
             sql_editor,
             markdown_editor,
             markdown_preview,
-            sql_completion_items,
-            sql_completion_selected,
-            sql_completion_open,
             sql_editor_height,
             i18n,
         ));
@@ -187,12 +181,6 @@ pub fn view<'a>(
         shell
     };
 
-    let shell = if about_open {
-        stack![shell, about_overlay(i18n)].into()
-    } else {
-        shell
-    };
-
     if let Some(dialog) = model.editor.dialog.as_ref() {
         stack![shell, editor_dialog_overlay(dialog, model, i18n)].into()
     } else if schema_create_dialog_open {
@@ -209,13 +197,15 @@ pub fn view<'a>(
 fn no_workspace_shell<'a>(
     app_theme: AppTheme,
     open_menu: Option<MenuId>,
-    about_open: bool,
     mode: AppMode,
     i18n: &'a I18nCatalog,
     language: AppLanguage,
+    about_markdown: &'a [markdown::Item],
     workspace_restore_notice: Option<&'a str>,
 ) -> Element<'a, Message> {
-    let content = if mode == AppMode::Settings {
+    let content = if mode == AppMode::About {
+        views::about::view(app_theme, i18n, about_markdown)
+    } else if mode == AppMode::Settings {
         views::settings::view(app_theme, language, i18n, true, true, false)
     } else {
         views::welcome::view(app_theme, i18n, workspace_restore_notice)
@@ -228,17 +218,13 @@ fn no_workspace_shell<'a>(
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let shell = if open_menu == Some(MenuId::File) {
-        stack![shell, welcome_menu_overlay(i18n)].into()
+    let shell = if matches!(open_menu, Some(MenuId::File | MenuId::Help)) {
+        stack![shell, welcome_menu_overlay(open_menu.unwrap(), i18n)].into()
     } else {
         shell.into()
     };
 
-    if about_open {
-        stack![shell, about_overlay(i18n)].into()
-    } else {
-        shell
-    }
+    shell
 }
 
 fn welcome_top_shell<'a>(
@@ -256,6 +242,7 @@ fn welcome_top_shell<'a>(
             left: 0.0,
         }),
         menu_trigger(i18n.tr("menu-file"), MenuId::File, open_menu),
+        menu_trigger(i18n.tr("menu-help"), MenuId::Help, open_menu),
     ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
@@ -316,7 +303,20 @@ fn welcome_top_shell<'a>(
         .into()
 }
 
-fn welcome_menu_overlay<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
+fn welcome_menu_overlay<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    let mut anchor_prefix = row![brand::placeholder()]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center);
+    for (label, id) in [
+        (i18n.tr("menu-file"), MenuId::File),
+        (i18n.tr("menu-help"), MenuId::Help),
+    ] {
+        if id == menu {
+            break;
+        }
+        anchor_prefix = anchor_prefix.push(menu_trigger_placeholder(label));
+    }
+
     stack![
         column![
             iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
@@ -327,7 +327,7 @@ fn welcome_menu_overlay<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
         .height(Length::Fill),
         column![
             iced::widget::Space::new().height(theme::sizes::MENU_TOP_OFFSET),
-            row![brand::placeholder(), welcome_menu_items(i18n)].spacing(theme::spacing::SM),
+            row![anchor_prefix, welcome_menu_items(menu, i18n)].spacing(theme::spacing::SM),
         ]
         .padding([0.0, theme::spacing::XL])
         .width(Length::Fill)
@@ -338,22 +338,33 @@ fn welcome_menu_overlay<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     .into()
 }
 
-fn welcome_menu_items<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
-    container(column![button(
-        row![text(i18n.tr("menu-open-folder"))
-            .size(theme::typography::BODY)
-            .wrapping(iced::widget::text::Wrapping::None)
-            .width(Length::Fill)]
-        .align_y(Alignment::Center)
-    )
-    .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
-    .height(theme::sizes::MENU_ITEM_HEIGHT)
-    .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
-    .style(theme::button_menu)
-    .on_press(Message::MenuAction(MenuAction::OpenFolder))])
-    .padding(theme::sizes::MENU_POPUP_PADDING)
-    .style(theme::overlay_panel)
-    .into()
+fn welcome_menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    let entries: Vec<(String, MenuAction)> = match menu {
+        MenuId::File => vec![(i18n.tr("menu-open-folder"), MenuAction::OpenFolder)],
+        MenuId::Help => vec![(i18n.tr("menu-about"), MenuAction::About)],
+        _ => Vec::new(),
+    };
+    let mut items = column![];
+    for (label, action) in entries {
+        items = items.push(
+            button(
+                row![text(label)
+                    .size(theme::typography::BODY)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .width(Length::Fill)]
+                .align_y(Alignment::Center),
+            )
+            .width(theme::sizes::MENU_WIDTH - theme::spacing::SM)
+            .height(theme::sizes::MENU_ITEM_HEIGHT)
+            .padding([theme::sizes::MENU_PADDING_Y, theme::sizes::MENU_PADDING_X])
+            .style(theme::button_menu)
+            .on_press(Message::MenuAction(action)),
+        );
+    }
+    container(items)
+        .padding(theme::sizes::MENU_POPUP_PADDING)
+        .style(theme::overlay_panel)
+        .into()
 }
 
 fn top_shell<'a>(
@@ -494,7 +505,7 @@ fn top_shell<'a>(
     .width(Length::Fill);
 
     container(
-        row![left.width(Length::Fill), search, right]
+        row![left, search, right]
             .spacing(theme::spacing::LG)
             .align_y(Alignment::Center),
     )
@@ -634,6 +645,7 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let entries: Vec<(String, Option<&str>, MenuAction)> = match menu {
         MenuId::File => vec![
             (i18n.tr("menu-open-folder"), None, MenuAction::OpenFolder),
+            (i18n.tr("menu-close-folder"), None, MenuAction::CloseFolder),
             (i18n.tr("menu-reindex"), None, MenuAction::Reindex),
         ],
         MenuId::View => vec![
@@ -661,10 +673,6 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
         ],
         MenuId::Data => vec![
             (i18n.tr("menu-open-data"), None, MenuAction::Data),
-            (i18n.tr("menu-open-graph"), None, MenuAction::Graph),
-            (i18n.tr("menu-health"), None, MenuAction::Health),
-            (i18n.tr("menu-sql-explorer"), None, MenuAction::SqlExplorer),
-            (i18n.tr("menu-history"), None, MenuAction::History),
             (
                 i18n.tr("menu-run-query"),
                 Some("Ctrl+Enter"),
@@ -701,27 +709,6 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
         .padding(theme::sizes::MENU_POPUP_PADDING)
         .style(theme::overlay_panel)
         .into()
-}
-
-fn about_overlay<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
-    mouse_area(
-        container(
-            column![
-                text("FlokinMD")
-                    .size(theme::typography::TITLE)
-                    .style(theme::text_accent),
-                text(i18n.tr("about-description")).style(theme::text_muted),
-                button(text(i18n.tr("action-close")))
-                    .style(theme::button_toolbar)
-                    .on_press(Message::AboutClosed)
-            ]
-            .spacing(theme::spacing::SM),
-        )
-        .padding(theme::spacing::LG)
-        .style(theme::overlay_panel),
-    )
-    .on_press(Message::AboutClosed)
-    .into()
 }
 
 fn editor_dialog_overlay<'a>(
@@ -1238,9 +1225,6 @@ fn workspace<'a>(
     sql_editor: &'a text_editor::Content,
     markdown_editor: &'a text_editor::Content,
     markdown_preview: &'a [markdown::Item],
-    sql_completion_items: &'a [SqlCompletionItem],
-    sql_completion_selected: usize,
-    sql_completion_open: bool,
     sql_editor_height: f32,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
@@ -1253,9 +1237,6 @@ fn workspace<'a>(
                 sql_editor,
                 markdown_editor,
                 markdown_preview,
-                sql_completion_items,
-                sql_completion_selected,
-                sql_completion_open,
                 sql_editor_height,
                 i18n,
             )

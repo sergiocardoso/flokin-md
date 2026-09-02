@@ -375,17 +375,15 @@ After watcher updates, manual reindex, or workspace changes, the SQL projection 
 
 ## SQL Autocomplete
 
-MDB-010 adds contextual SQL autocomplete without introducing an LSP or coupling the core crate to Iced.
+SQL autocomplete is deferred until after v0.1. The v0.1 SQL Editor runtime deliberately behaves as a plain multiline editor: no popup is rendered, no suggestion state is mounted, and normal editing keys such as Enter, Tab, ArrowUp, ArrowDown, and Escape are not captured by completion logic. `Ctrl+Enter` remains the only SQL editor shortcut handled by the app for executing a query or generating an update preview.
 
 ```text
 SqlCatalog
 completion engine
-SQL Editor popup
+post-v0.1 UI
 ```
 
-`flokin-core` owns the completion model and uses `SqlCatalog` as the source of truth for real SQL table names, normalized column names, and column types. The engine performs lightweight context analysis for keywords, tables, columns, aliases, dotted alias access, and a small SQLite function set. It returns replacement ranges and insertion text so the GUI can replace only the current fragment.
-
-`flokin-app` owns editor interaction state: popup visibility, selected suggestion, keyboard navigation, and insertion into the existing Iced text editor. Because watcher updates already rebuild the disposable projection catalog, autocomplete suggestions update from the latest catalog without opening a separate database or rereading Markdown.
+`flokin-core` may retain GUI-independent completion helpers for future work, but `flokin-app` does not connect them to the active editor in v0.1.
 
 ## File Icons
 

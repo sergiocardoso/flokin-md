@@ -12,6 +12,7 @@ flokin-core = { path = "../flokin-core" }
 fluent-bundle = "0.15"
 iced = { version = "0.14", features = ["advanced", "canvas", "highlighter", "markdown", "svg"] }
 notify = "8.2.0"
+open = "5"
 rfd = "0.17"
 sys-locale = "0.3"
 unic-langid = "0.9"

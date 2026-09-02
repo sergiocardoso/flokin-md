@@ -1,3 +1,4 @@
+pub mod about;
 pub mod data_grid;
 pub mod editor;
 pub mod explorer;

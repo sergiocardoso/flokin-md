@@ -26,6 +26,26 @@ pub fn lockup(app_theme: AppTheme) -> Element<'static, Message> {
     .into()
 }
 
+pub fn welcome_lockup(app_theme: AppTheme) -> Element<'static, Message> {
+    row![
+        svg(svg::Handle::from_memory(LOGO_ICON.to_vec()))
+            .width(72.0)
+            .height(72.0),
+        svg(svg::Handle::from_memory(
+            match app_theme {
+                AppTheme::Light => LOGO_TEXT,
+                AppTheme::Dark => LOGO_TEXT_DARK,
+            }
+            .to_vec(),
+        ))
+        .width(286.0)
+        .height(56.0),
+    ]
+    .spacing(16.0)
+    .align_y(Alignment::Center)
+    .into()
+}
+
 pub fn placeholder() -> Element<'static, Message> {
     container("")
         .width(Length::Fixed(LOCKUP_WIDTH))
