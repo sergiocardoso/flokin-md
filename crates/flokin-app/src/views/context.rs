@@ -235,6 +235,10 @@ fn overview<'a>(
         "context-unconnected-count",
         &[("count", projection.unconnected_count().into())],
     );
+    let artifact_count = i18n.tr_with(
+        "context-artifact-count",
+        &[("count", projection.artifacts.len().into())],
+    );
 
     column![
         container(counters)
@@ -262,7 +266,7 @@ fn overview<'a>(
         row![
             widgets::section_title(i18n.tr("context-artifacts")),
             iced::widget::Space::new().width(Length::Fill),
-            text(summary)
+            text(artifact_count)
                 .size(theme::typography::LABEL)
                 .font(theme::mono())
                 .style(theme::text_muted),
