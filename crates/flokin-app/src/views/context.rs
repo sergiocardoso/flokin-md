@@ -283,10 +283,10 @@ fn artifacts_table<'a>(
     artifacts: Vec<ContextArtifact>,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let mut rows = column![table_header(i18n)].spacing(1.0);
-    for artifact in artifacts {
+    let mut rows = column![table_header(i18n)].spacing(0);
+    for (row_index, artifact) in artifacts.into_iter().enumerate() {
         let selected = model.selected_context_artifact.as_ref() == Some(&artifact.document_path);
-        rows = rows.push(artifact_row(artifact, selected, i18n));
+        rows = rows.push(artifact_row(artifact, row_index, selected, i18n));
     }
 
     container(scrollable(rows).direction(Direction::Vertical(
@@ -300,19 +300,25 @@ fn artifacts_table<'a>(
 }
 
 fn table_header<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
-    row![
-        header_cell(i18n.tr("context-name"), Length::FillPortion(3)),
-        header_cell(i18n.tr("context-kind"), Length::FillPortion(2)),
-        header_cell(i18n.tr("context-path"), Length::FillPortion(4)),
-        header_cell(i18n.tr("context-relations"), Length::Fixed(96.0)),
-    ]
-    .spacing(theme::spacing::SM)
-    .padding([0.0, theme::spacing::SM])
+    container(
+        row![
+            header_cell(i18n.tr("context-name"), Length::FillPortion(3)),
+            header_cell(i18n.tr("context-kind"), Length::FillPortion(2)),
+            header_cell(i18n.tr("context-path"), Length::FillPortion(4)),
+            header_cell(i18n.tr("context-relations"), Length::Fixed(96.0)),
+        ]
+        .spacing(theme::spacing::SM)
+        .padding([0.0, theme::spacing::SM])
+        .align_y(Alignment::Center),
+    )
+    .height(theme::sizes::DATA_GRID_HEADER_HEIGHT)
+    .style(theme::data_header)
     .into()
 }
 
 fn artifact_row<'a>(
     artifact: ContextArtifact,
+    row_index: usize,
     selected: bool,
     i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
@@ -358,17 +364,11 @@ fn artifact_row<'a>(
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
 
-    button(
-        container(row)
-            .width(Length::Fill)
-            .padding([6.0, theme::spacing::SM]),
-    )
+    button(container(row).width(Length::Fill).padding([8.0, theme::spacing::SM]))
     .width(Length::Fill)
     .padding(0)
-    .style(if selected {
-        theme::button_tree_selected
-    } else {
-        theme::button_tree
+    .style(move |theme, status| {
+        theme::data_row_button(theme, row_index, selected, status)
     })
     .on_press(Message::ContextArtifactSelected(
         artifact.document_path.clone(),
@@ -405,7 +405,12 @@ fn section_row<'a>(
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
 
-    button(container(row).width(Length::Fill).height(Length::Fill))
+    button(
+        container(row)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
+    )
         .width(Length::Fill)
         .height(theme::sizes::CONTROL_HEIGHT_MEDIUM)
         .padding([0.0, theme::spacing::XS])
