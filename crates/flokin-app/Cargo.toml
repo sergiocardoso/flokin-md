@@ -9,9 +9,12 @@ license.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 devicons = "0.6.13"
 flokin-core = { path = "../flokin-core" }
+fluent-bundle = "0.15"
 iced = { version = "0.14", features = ["advanced", "canvas", "highlighter", "markdown", "svg"] }
 notify = "8.2.0"
 rfd = "0.17"
+sys-locale = "0.3"
+unic-langid = "0.9"
 
 [lints]
 workspace = true

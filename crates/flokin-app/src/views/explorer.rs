@@ -19,22 +19,30 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
     let workspace = model.workspace_display();
     let header = column![
         row![
-            button(widgets::icon_text(
-                theme::Icon::Folder,
-                "Abrir",
-                theme::icons::TOOLBAR,
-                false
-            ))
+            button(
+                container(widgets::icon_text(
+                    theme::Icon::Folder,
+                    "Abrir",
+                    theme::icons::TOOLBAR,
+                    false,
+                ))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center),
+            )
             .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
             .padding([0.0, 12.0])
             .style(theme::button_accent_outline)
             .on_press(Message::OpenFolder),
-            button(widgets::icon_text(
-                theme::Icon::Refresh,
-                "Reindexar",
-                theme::icons::TOOLBAR,
-                false
-            ))
+            button(
+                container(widgets::icon_text(
+                    theme::Icon::Refresh,
+                    "Reindexar",
+                    theme::icons::TOOLBAR,
+                    false,
+                ))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center),
+            )
             .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
             .padding([0.0, 12.0])
             .style(theme::button_toolbar)
@@ -476,12 +484,18 @@ fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
         text("Nenhuma pasta aberta")
             .size(theme::typography::BODY)
             .style(theme::text_muted),
-        button(widgets::icon_text(
-            theme::Icon::Folder,
-            "Abrir pasta",
-            theme::icons::TOOLBAR,
-            false
-        ))
+        button(
+            container(
+                row![
+                    widgets::icon_inverse(theme::Icon::Folder, theme::icons::TOOLBAR),
+                    text("Abrir pasta").size(theme::typography::BODY),
+                ]
+                .spacing(theme::spacing::SM)
+                .align_y(Alignment::Center),
+            )
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
+        )
         .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding([0.0, 12.0])
         .style(theme::button_primary)

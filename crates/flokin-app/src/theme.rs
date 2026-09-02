@@ -269,6 +269,12 @@ pub fn icon_accent_style(theme: &Theme, _status: svg::Status) -> svg::Style {
     }
 }
 
+pub fn icon_inverse_style(theme: &Theme, _status: svg::Status) -> svg::Style {
+    svg::Style {
+        color: Some(palette(theme).text_inverse),
+    }
+}
+
 pub fn text_editor(theme: &Theme, status: iced_text_editor::Status) -> iced_text_editor::Style {
     text_editor_with_background(theme, status, palette(theme).editor_background)
 }
@@ -335,6 +341,15 @@ pub fn top_bar(theme: &Theme) -> container::Style {
     container_style(palette.top_bar_background, Some(palette.border_subtle), 0.0)
 }
 
+pub fn search_surface(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(
+        palette.search_background,
+        Some(palette.border_subtle),
+        radius::SM,
+    )
+}
+
 pub fn activity_bar(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(palette.activity_bar_background, None, radius::LG)
@@ -398,6 +413,10 @@ pub fn overlay_panel(theme: &Theme) -> container::Style {
         },
         ..container::Style::default()
     }
+}
+
+pub fn tooltip(theme: &Theme) -> container::Style {
+    overlay_panel(theme)
 }
 
 pub fn sql_completion_popup(theme: &Theme) -> container::Style {

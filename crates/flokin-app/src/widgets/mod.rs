@@ -9,12 +9,22 @@ use crate::{
     theme::{self, Icon},
 };
 
-pub fn section_title<'a>(label: &'a str) -> Element<'a, Message> {
-    text(label)
+pub fn section_title<'a>(label: impl Into<String>) -> Element<'a, Message> {
+    text(label.into())
         .size(theme::typography::LABEL)
         .font(theme::typography::UI)
         .style(theme::text_muted)
         .into()
+}
+
+pub fn tooltip_text<'a>(label: impl Into<String>) -> Element<'a, Message> {
+    container(
+        text(label.into())
+            .size(theme::typography::LABEL)
+            .wrapping(Wrapping::None),
+    )
+    .padding([6.0, 10.0])
+    .into()
 }
 
 #[allow(dead_code)]
@@ -50,7 +60,34 @@ pub fn icon(icon: Icon, size: f32, accent: bool) -> Element<'static, Message> {
     icon_slot(icon, size, default_icon_slot(size), accent)
 }
 
+pub fn icon_inverse(icon: Icon, size: f32) -> Element<'static, Message> {
+    icon_slot_with_style(
+        icon,
+        size,
+        default_icon_slot(size),
+        theme::icon_inverse_style,
+    )
+}
+
 pub fn icon_slot(icon: Icon, size: f32, slot: f32, accent: bool) -> Element<'static, Message> {
+    icon_slot_with_style(
+        icon,
+        size,
+        slot,
+        if accent {
+            theme::icon_accent_style
+        } else {
+            theme::icon_style
+        },
+    )
+}
+
+fn icon_slot_with_style(
+    icon: Icon,
+    size: f32,
+    slot: f32,
+    style: fn(&iced::Theme, iced::widget::svg::Status) -> iced::widget::svg::Style,
+) -> Element<'static, Message> {
     let body = theme::icon_svg(icon)
         .trim_start_matches(r#"<svg viewBox="0 0 24 24">"#)
         .trim_end_matches("</svg>");
@@ -59,12 +96,6 @@ pub fn icon_slot(icon: Icon, size: f32, slot: f32, accent: bool) -> Element<'sta
         body
     )
     .into_bytes();
-    let style = if accent {
-        theme::icon_accent_style
-    } else {
-        theme::icon_style
-    };
-
     container(
         svg(svg::Handle::from_memory(data))
             .width(size)

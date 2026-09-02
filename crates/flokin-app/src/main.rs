@@ -1,6 +1,7 @@
 mod app;
 mod brand;
 mod file_icons;
+mod i18n;
 mod message;
 mod services;
 mod theme;

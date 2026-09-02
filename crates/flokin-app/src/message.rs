@@ -11,6 +11,7 @@ use iced::{
     window,
 };
 
+use crate::i18n::AppLanguage;
 use crate::services::file_watcher::WatcherMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +179,9 @@ pub enum Message {
     KeyboardEvent(keyboard::Event),
     ThemeToggled,
     ThemeSelected(bool),
+    ThemePersisted(Result<(), String>),
+    LanguageSelected(AppLanguage),
+    LanguagePersisted(Result<(), String>),
     MenuToggled(MenuId),
     MenuHovered(MenuId),
     MenuAction(MenuAction),

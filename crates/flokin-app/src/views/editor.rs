@@ -2097,9 +2097,10 @@ fn save_button<'a>(tab: &'a EditorTab) -> Element<'a, Message> {
 
     iced::widget::tooltip(
         control,
-        text("Salvar (Ctrl+S)"),
+        widgets::tooltip_text("Salvar (Ctrl+S)"),
         iced::widget::tooltip::Position::Bottom,
     )
+    .style(theme::tooltip)
     .into()
 }
 

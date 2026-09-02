@@ -22,8 +22,9 @@ use iced::{
 };
 
 use crate::{
+    i18n::{AppLanguage, I18nCatalog},
     message::{AppMode, MenuAction, Message, SplitterKind},
-    services::{file_dialog, file_watcher},
+    services::{file_dialog, file_watcher, settings},
     theme::{self, AppTheme},
     views,
     views::graph::GraphViewState,
@@ -33,6 +34,8 @@ use crate::{
 pub struct FlokinApp {
     model: ShellModel,
     theme: AppTheme,
+    language: AppLanguage,
+    i18n: I18nCatalog,
     search_needs_refresh: bool,
     search_debounce_target: Option<Instant>,
     sql_editor: text_editor::Content,
@@ -80,9 +83,20 @@ fn hover_menu(
 
 impl FlokinApp {
     fn new() -> Self {
+        #[cfg(test)]
+        let theme = AppTheme::Dark;
+        #[cfg(not(test))]
+        let theme = initial_theme();
+        #[cfg(test)]
+        let language = AppLanguage::PortugueseBrazil;
+        #[cfg(not(test))]
+        let language = initial_language();
+
         Self {
             model: mock_shell(),
-            theme: AppTheme::Dark,
+            theme,
+            language,
+            i18n: I18nCatalog::new(language),
             search_needs_refresh: false,
             search_debounce_target: None,
             sql_editor: text_editor::Content::new(),
@@ -288,21 +302,21 @@ impl FlokinApp {
             }
             Message::SchemaCreateConfirmed => {
                 let Some(workspace) = self.model.current_workspace.clone() else {
-                    self.schema_create_error = Some(String::from("Nenhum workspace aberto."));
+                    self.schema_create_error = Some(self.i18n.tr("error-no-workspace-schema"));
                     return Task::none();
                 };
                 let generated =
                     match flokin_core::generate_explicit_schema(&self.model.schema_catalog) {
                         Ok(generated) => generated,
                         Err(flokin_core::SchemaGenerationError::Empty) => {
-                            self.schema_create_error = Some(String::from(
-                                "Nenhuma Collection disponível para gerar schema.",
-                            ));
+                            self.schema_create_error = Some(self.i18n.tr("error-schema-empty"));
                             return Task::none();
                         }
                         Err(flokin_core::SchemaGenerationError::Serialize(error)) => {
-                            self.schema_create_error =
-                                Some(format!("Não foi possível gerar o schema: {error}"));
+                            self.schema_create_error = Some(self.i18n.tr_with(
+                                "error-schema-generate",
+                                &[("error", error.to_string().into())],
+                            ));
                             return Task::none();
                         }
                     };
@@ -386,9 +400,7 @@ impl FlokinApp {
             }
             Message::BulkApplyRequested => {
                 if self.model.bulk_edit.stale {
-                    self.model.bulk_edit.error = Some(String::from(
-                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
-                    ));
+                    self.model.bulk_edit.error = Some(self.i18n.tr("error-stale-preview"));
                     return Task::none();
                 }
                 let Some(plan) = self.model.bulk_edit.plan.clone() else {
@@ -750,9 +762,7 @@ impl FlokinApp {
             }
             Message::SqlUpdateApplyRequested => {
                 if self.model.sql_explorer.stale {
-                    self.model.sql_explorer.error = Some(String::from(
-                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
-                    ));
+                    self.model.sql_explorer.error = Some(self.i18n.tr("error-stale-preview"));
                     return Task::none();
                 }
                 let Some(plan) = self.model.sql_explorer.write_plan.clone() else {
@@ -857,9 +867,8 @@ impl FlokinApp {
             }
             Message::HistoryClearConfirmed => {
                 let Some(workspace) = self.model.current_workspace.clone() else {
-                    self.model.clear_history_completed(Err(String::from(
-                        "Abra um workspace para limpar o histórico.",
-                    )));
+                    self.model
+                        .clear_history_completed(Err(self.i18n.tr("error-history-clear-no-workspace")));
                     return Task::none();
                 };
                 return clear_history_task(workspace);
@@ -879,6 +888,7 @@ impl FlokinApp {
             }
             Message::ThemeToggled => {
                 self.theme = self.theme.toggled();
+                return persist_theme_task(self.theme);
             }
             Message::ThemeSelected(light) => {
                 self.theme = if light {
@@ -886,7 +896,15 @@ impl FlokinApp {
                 } else {
                     AppTheme::Dark
                 };
+                return persist_theme_task(self.theme);
             }
+            Message::ThemePersisted(_result) => {}
+            Message::LanguageSelected(language) => {
+                self.language = language;
+                self.i18n = I18nCatalog::new(language);
+                return persist_language_task(language);
+            }
+            Message::LanguagePersisted(_result) => {}
             Message::MenuToggled(menu) => self.open_menu = toggle_menu(self.open_menu, menu),
             Message::MenuHovered(menu) => self.open_menu = hover_menu(self.open_menu, menu),
             Message::MenuAction(action) => {
@@ -1040,6 +1058,8 @@ impl FlokinApp {
             self.left_visible,
             self.right_visible,
             self.mode,
+            &self.i18n,
+            self.language,
         )
     }
 
@@ -1812,6 +1832,48 @@ fn history_storage_path() -> std::path::PathBuf {
     app_data_dir().join("history.sqlite3")
 }
 
+fn settings_storage_path() -> std::path::PathBuf {
+    settings::settings_path(&app_data_dir())
+}
+
+#[cfg(not(test))]
+fn initial_theme() -> AppTheme {
+    theme_from_settings_path(&settings_storage_path())
+}
+
+fn theme_from_settings_path(path: &std::path::Path) -> AppTheme {
+    settings::load_theme(path).unwrap_or(AppTheme::Dark)
+}
+
+#[cfg(not(test))]
+fn initial_language() -> AppLanguage {
+    language_from_settings_path(&settings_storage_path())
+}
+
+fn language_from_settings_path(path: &std::path::Path) -> AppLanguage {
+    match settings::load_language(path) {
+        settings::LanguageLoad::Language(language) => language,
+        settings::LanguageLoad::MissingLanguage => AppLanguage::PortugueseBrazil,
+        settings::LanguageLoad::MissingSettings | settings::LanguageLoad::Invalid => {
+            AppLanguage::from_os_locale(sys_locale::get_locale().as_deref())
+        }
+    }
+}
+
+fn persist_theme_task(theme: AppTheme) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_theme(&settings_storage_path(), theme) },
+        Message::ThemePersisted,
+    )
+}
+
+fn persist_language_task(language: AppLanguage) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_language(&settings_storage_path(), language) },
+        Message::LanguagePersisted,
+    )
+}
+
 fn app_data_dir() -> std::path::PathBuf {
     if let Some(value) = std::env::var_os("FLOKINMD_APP_DATA") {
         return std::path::PathBuf::from(value);
@@ -1945,11 +2007,12 @@ mod tests {
     };
 
     use super::{
-        create_schema_file_if_absent, hover_menu, keyboard_message, toggle_menu, FlokinApp,
+        create_schema_file_if_absent, hover_menu, keyboard_message, theme_from_settings_path,
+        toggle_menu, FlokinApp,
     };
     use crate::{
         message::{AppMode, MenuId, Message, SplitterKind},
-        services::file_watcher::WatcherMessage,
+        services::{file_watcher::WatcherMessage, settings},
         theme::AppTheme,
     };
 
@@ -2326,6 +2389,15 @@ mod tests {
 
         let _ = app.update(Message::ThemeToggled);
         assert_eq!(app.theme, AppTheme::Dark);
+    }
+
+    #[test]
+    fn saved_theme_is_used_for_startup_theme() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        settings::save_theme(&path, AppTheme::Light).unwrap();
+
+        assert_eq!(theme_from_settings_path(&path), AppTheme::Light);
     }
 
     #[test]

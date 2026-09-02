@@ -225,11 +225,10 @@ fn graph_icon_button<'a>(
 
     iced::widget::tooltip(
         control,
-        container(text(tooltip).size(theme::typography::LABEL))
-            .padding([4.0, 7.0])
-            .style(theme::overlay_panel),
+        widgets::tooltip_text(tooltip),
         iced::widget::tooltip::Position::Bottom,
     )
+    .style(theme::tooltip)
     .into()
 }
 
