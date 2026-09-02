@@ -419,6 +419,24 @@ pub fn tooltip(theme: &Theme) -> container::Style {
     overlay_panel(theme)
 }
 
+pub fn search_overlay_panel(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        text_color: Some(palette.text),
+        background: Some(Background::Color(palette.surface_elevated)),
+        border: border(palette.border_strong, 1.0, radius::LG),
+        shadow: Shadow {
+            color: Color {
+                a: 0.36,
+                ..Color::BLACK
+            },
+            offset: iced::Vector::new(0.0, 14.0),
+            blur_radius: 30.0,
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn sql_completion_popup(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container::Style {

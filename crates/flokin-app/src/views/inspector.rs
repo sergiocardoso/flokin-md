@@ -3,7 +3,9 @@ use flokin_core::{
     InspectorRelationStatus, InspectorValue, ShellModel,
 };
 use iced::widget::{
-    button, column, container, row, scrollable, text,
+    button, column, container, row, scrollable,
+    scrollable::{Direction, Scrollbar},
+    text,
     text::{LineHeight, Wrapping},
 };
 use iced::{Alignment, Element, Length};
@@ -28,7 +30,7 @@ fn empty_state(title: String, description: String, width: f32) -> Element<'stati
             ]
             .spacing(theme::spacing::SM),
         ]
-        .spacing(theme::spacing::LG),
+        .spacing(theme::spacing::MD),
     ))
     .width(width)
     .height(Length::Fill)
@@ -42,7 +44,7 @@ fn document_inspector(
     width: f32,
 ) -> Element<'static, Message> {
     let mut content =
-        column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::XL);
+        column![section_header("PROPRIEDADES", theme::Icon::Settings)].spacing(theme::spacing::MD);
 
     for field in inspector.properties {
         content = content.push(field_row(field));
@@ -73,7 +75,7 @@ fn document_inspector(
             .push(subtle_divider())
             .push(section_header("TAGS", theme::Icon::Tag));
 
-        let mut tags = column![].spacing(theme::spacing::SM);
+        let mut tags = column![].spacing(theme::spacing::XS);
         for tag in inspector.tags {
             tags = tags.push(chip(tag));
         }
@@ -98,7 +100,9 @@ fn document_inspector(
         content = content.push(field_row(field));
     }
 
-    container(scrollable(content))
+    container(scrollable(content).direction(Direction::Vertical(
+        Scrollbar::default().width(4).scroller_width(4).spacing(8),
+    )))
         .width(width)
         .height(Length::Fill)
         .padding(theme::spacing::XL)
@@ -108,7 +112,7 @@ fn document_inspector(
 
 fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Message> {
     let mut content =
-        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::LG);
+        column![section_header("ISSUE", theme::Icon::Health)].spacing(theme::spacing::MD);
 
     content = content
         .push(health_field(
@@ -182,7 +186,9 @@ fn health_issue_inspector(issue: HealthIssue, width: f32) -> Element<'static, Me
         );
     }
 
-    container(scrollable(content))
+    container(scrollable(content).direction(Direction::Vertical(
+        Scrollbar::default().width(4).scroller_width(4).spacing(8),
+    )))
         .width(width)
         .height(Length::Fill)
         .padding(theme::spacing::XL)
@@ -303,7 +309,7 @@ fn relation_row(relation: InspectorRelation, outgoing: bool) -> Element<'static,
 
     container(details)
         .width(Length::Fill)
-        .padding([8.0, 0.0])
+        .padding([4.0, 0.0])
         .into()
 }
 
@@ -349,7 +355,7 @@ fn field_row(field: InspectorField) -> Element<'static, Message> {
         .spacing(theme::spacing::XXS),
     )
     .width(Length::Fill)
-    .padding([8.0, 0.0])
+    .padding([4.0, 0.0])
     .into()
 }
 

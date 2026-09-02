@@ -506,7 +506,7 @@ fn time_label(timestamp: i64) -> String {
 }
 
 fn timestamp_label(timestamp: i64, i18n: &I18nCatalog) -> String {
-    let utc = DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now());
+    let utc = DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
     i18n.format_datetime(utc)
 }
 

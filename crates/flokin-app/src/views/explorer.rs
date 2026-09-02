@@ -68,7 +68,7 @@ pub fn view<'a>(
             .font(theme::mono())
             .style(theme::text_muted),
     ]
-    .spacing(theme::spacing::MD);
+    .spacing(theme::spacing::SM);
 
     let tree = tree(model, app_theme, i18n);
 
@@ -84,7 +84,7 @@ pub fn view<'a>(
                 .height(Length::Fill),
             filters
         ]
-        .spacing(theme::spacing::XL),
+        .spacing(theme::spacing::LG),
     )
     .width(width)
     .height(Length::Fill)
@@ -280,7 +280,7 @@ fn tree<'a>(
                 scan_summary(*documents, *errors, *warnings, i18n),
                 widgets::section_title(i18n.tr("explorer-files"))
             ]
-            .spacing(theme::spacing::SM);
+            .spacing(theme::spacing::XS);
             for node in &model.explorer {
                 tree = tree.push(tree_node(
                     node,
@@ -289,10 +289,10 @@ fn tree<'a>(
                     app_theme,
                 ));
             }
-            tree = tree.push(container("").height(theme::spacing::MD));
+            tree = tree.push(container("").height(theme::spacing::SM));
             tree = tree.push(widgets::section_title(i18n.tr("explorer-data")));
             tree = tree.push(sql_explorer_row(model.sql_explorer.open));
-            tree = tree.push(container("").height(theme::spacing::MD));
+            tree = tree.push(container("").height(theme::spacing::SM));
             tree = tree.push(widgets::section_title(i18n.tr("explorer-collections")));
             for collection in &model.collections {
                 tree = tree.push(collection_row(
@@ -307,22 +307,27 @@ fn tree<'a>(
 
 fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
     button(
-        row![
-            widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
-            text("SQL Explorer")
-                .size(theme::typography::BODY)
-                .width(Length::Fill)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                }),
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
+                text("SQL Explorer")
+                    .size(theme::typography::BODY)
+                    .width(Length::Fill)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    }),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(30)
+    .height(28)
     .padding([0.0, theme::spacing::SM])
     .style(if selected {
         theme::button_tree_selected
@@ -404,28 +409,33 @@ fn tree_node<'a>(
     };
 
     let item = button(
-        row![
-            container("").width((depth as f32) * 14.0),
-            chevron,
-            icon,
-            text(node.name.as_str())
-                .size(theme::typography::BODY)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                })
-        ]
-        .spacing(theme::spacing::XS)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                container("").width((depth as f32) * 14.0),
+                chevron,
+                icon,
+                text(node.name.as_str())
+                    .size(theme::typography::BODY)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    })
+            ]
+            .spacing(theme::spacing::XS)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(34)
+    .height(30)
     .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::ExplorerNodeToggled(node.id));
 
-    let mut children = column![item].spacing(theme::spacing::XXS);
+    let mut children = column![item].spacing(0);
     if node.expanded {
         for child in &node.children {
             children = children.push(tree_node(
@@ -478,26 +488,31 @@ fn collection_row<'a>(
     };
 
     button(
-        row![
-            widgets::icon(theme::Icon::Database, theme::icons::TREE, false),
-            text(collection.display_name.as_str())
-                .size(theme::typography::BODY)
-                .width(Length::Fill)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                }),
-            text(collection.document_count.to_string())
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted),
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                widgets::icon(theme::Icon::Database, theme::icons::TREE, false),
+                text(collection.display_name.as_str())
+                    .size(theme::typography::BODY)
+                    .width(Length::Fill)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    }),
+                text(collection.document_count.to_string())
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(34)
+    .height(30)
     .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::CollectionSelected(collection.id.clone()))

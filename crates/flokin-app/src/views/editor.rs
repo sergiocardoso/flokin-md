@@ -12,7 +12,7 @@ use iced::widget::{
     text::{LineHeight, Wrapping},
     text_editor, text_input,
 };
-use iced::{keyboard, keyboard::Key, Alignment, Element, Length, Padding};
+use iced::{alignment, keyboard, keyboard::Key, Alignment, Element, Length, Padding};
 
 use crate::{
     i18n::I18nCatalog,
@@ -78,15 +78,19 @@ fn editor_tab<'a>(model: &'a ShellModel, tab: &'a EditorTab) -> Element<'a, Mess
 
     row![
         button(
-            row![text(format!("{label}{dirty}"))
-                .size(theme::typography::BODY)
-                .line_height(LineHeight::Relative(1.0))
-                .style(if active {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                }),]
-            .align_y(Alignment::Center)
+            container(
+                text(format!("{label}{dirty}"))
+                    .size(theme::typography::BODY)
+                    .line_height(LineHeight::Relative(1.0))
+                    .style(if active {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    }),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
         )
         .height(theme::sizes::TAB_BUTTON_HEIGHT)
         .padding([0.0, theme::spacing::LG])
@@ -2089,7 +2093,13 @@ fn editor_view_mode_button<'a>(
     mode: EditorViewMode,
     active: EditorViewMode,
 ) -> Element<'a, Message> {
-    button(widgets::button_label(label))
+    button(
+        container(widgets::button_label(label))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
         .width(86)
         .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT - 4.0)
         .padding([0.0, theme::spacing::MD])
@@ -2103,12 +2113,18 @@ fn editor_view_mode_button<'a>(
 }
 
 fn save_button<'a>(tab: &'a EditorTab, i18n: &'a I18nCatalog) -> Element<'a, Message> {
-    let control = button(widgets::icon_text(
-        theme::Icon::Save,
-        i18n.tr("action-save"),
-        theme::icons::TOOLBAR,
-        !tab.dirty,
-    ))
+    let control = button(
+        container(widgets::icon_text(
+            theme::Icon::Save,
+            i18n.tr("action-save"),
+            theme::icons::TOOLBAR,
+            !tab.dirty,
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center),
+    )
     .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
     .padding([0.0, 13.0])
     .style(if tab.dirty {

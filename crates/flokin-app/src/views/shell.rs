@@ -907,7 +907,7 @@ fn search_overlay<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'
         .max_width(theme::sizes::SEARCH_OVERLAY_WIDTH)
         .max_height(theme::sizes::SEARCH_OVERLAY_HEIGHT)
         .padding(theme::spacing::MD)
-        .style(theme::overlay_panel),
+        .style(theme::search_overlay_panel),
     )
     .on_press(Message::SearchOpened);
 
@@ -935,18 +935,27 @@ fn search_result_row<'a>(
         theme::table_row
     };
 
-    let mut content = column![
+    let title = row![
+        widgets::icon(theme::Icon::FileText, theme::icons::TREE, selected),
         text(result.title.as_str())
             .size(theme::typography::BODY)
             .style(if selected {
                 theme::text_accent
             } else {
                 theme::text_normal
-            }),
+            })
+            .width(Length::Fill),
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    let mut content = column![
+        title,
         text(result.relative_path.display().to_string())
             .font(theme::mono())
             .size(theme::typography::LABEL)
-            .style(theme::text_muted),
+            .style(theme::text_muted)
+            .width(Length::Fill),
     ]
     .spacing(theme::spacing::XXS);
 
@@ -960,7 +969,8 @@ fn search_result_row<'a>(
 
     button(
         container(content)
-            .padding([7.0, theme::spacing::MD])
+            .width(Length::Fill)
+            .padding([10.0, theme::spacing::MD])
             .style(row_style),
     )
     .width(Length::Fill)
@@ -1035,7 +1045,9 @@ fn activity_button(
 ) -> Element<'static, Message> {
     let control = button(
         container(widgets::icon(icon, theme::icons::ACTIVITY, selected))
+            .width(Length::Fill)
             .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
             .align_y(alignment::Vertical::Center),
     )
     .width(theme::sizes::ACTIVITY_BUTTON_SIZE)
