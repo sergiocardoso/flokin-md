@@ -56,7 +56,7 @@ pub fn view<'a>(
         let mut content = row![activity_bar(mode, i18n), panel_gutter()].height(Length::Fill);
         if left_visible {
             content = content
-                .push(views::explorer::sql_schema_view(model, schema_width))
+                .push(views::explorer::sql_schema_view(model, schema_width, i18n))
                 .push(splitter(SplitterKind::SqlSchema, false));
         }
         content = content.push(workspace(
@@ -95,7 +95,7 @@ pub fn view<'a>(
         content
     } else if mode == AppMode::Health {
         let mut content = row![activity_bar(mode, i18n), panel_gutter()].height(Length::Fill);
-        content = content.push(views::health::view(model));
+            content = content.push(views::health::view(model, i18n));
         if right_visible {
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
@@ -106,7 +106,7 @@ pub fn view<'a>(
         row![
             activity_bar(mode, i18n),
             panel_gutter(),
-            views::history::view(model)
+            views::history::view(model, i18n)
         ]
         .height(Length::Fill)
     } else {
@@ -114,11 +114,11 @@ pub fn view<'a>(
         if left_visible {
             if mode == AppMode::Data {
                 content = content
-                    .push(views::explorer::data_view(model, left_width))
+                    .push(views::explorer::data_view(model, left_width, i18n))
                     .push(splitter(SplitterKind::LeftSidebar, false));
             } else {
                 content = content
-                    .push(views::explorer::view(model, app_theme, left_width))
+                    .push(views::explorer::view(model, app_theme, left_width, i18n))
                     .push(splitter(SplitterKind::LeftSidebar, false));
             }
         }
@@ -144,7 +144,7 @@ pub fn view<'a>(
     let shell = column![
         top_shell(model, app_theme, left_visible, right_visible, open_menu, i18n),
         content_frame(content),
-        views::status_bar::view(model),
+        views::status_bar::view(model, i18n),
     ]
     .width(Length::Fill)
     .height(Length::Fill);

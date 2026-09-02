@@ -63,6 +63,61 @@ search-results =
     }
 search-results-limited = { $count }+ results
 
+# Explorer
+explorer-title = EXPLORER
+explorer-open = Open
+explorer-reindex = Reindex
+explorer-no-workspace = No folder open
+explorer-scanning = Scanning documents...
+explorer-scan-failed = Failed to scan workspace
+explorer-no-markdown = No Markdown files found.
+explorer-files = FILES
+explorer-data = DATA
+explorer-collections = COLLECTIONS
+explorer-filters = FILTERS
+explorer-filters-empty = Available after indexing
+explorer-documents-found =
+    { $count ->
+        [one] 1 document found
+       *[other] { $count } documents found
+    }
+explorer-access-errors =
+    { $count ->
+        [one] 1 item could not be accessed
+       *[other] { $count } items could not be accessed
+    }
+explorer-warnings =
+    { $count ->
+        [one] 1 warning
+       *[other] { $count } warnings
+    }
+sql-schema-empty = No Collection available.
+sql-schema-building = Building schema...
+sql-schema-open-folder = Open a folder to generate the schema.
+
+# Status Bar
+status-no-workspace = No folder open
+status-scanning = Scanning documents...
+status-updating = Updating...
+status-scan-failed = Failed to scan workspace
+status-workspace-watched = Workspace monitored
+status-read-only = Read only
+status-documents =
+    { $count ->
+        [one] 1 document
+       *[other] { $count } documents
+    }
+status-collections =
+    { $count ->
+        [one] 1 collection
+       *[other] { $count } collections
+    }
+status-warnings =
+    { $count ->
+        [one] 1 warning
+       *[other] { $count } warnings
+    }
+
 # Settings
 settings-section-interface = INTERFACE
 settings-language = Language
@@ -111,3 +166,63 @@ error-schema-generate = Could not generate the schema: { $error }
 error-stale-preview = The workspace changed since the preview was generated. Review the changes again.
 error-save-file = Could not save { $path }: { $error }
 error-history-clear-no-workspace = Open a workspace to clear history.
+
+# History
+history-title = History
+history-description = Bulk Edit, SQL Update, and Undo operations recorded locally.
+history-no-workspace-title = Open a workspace to view history.
+history-no-workspace-subtitle = History is local and isolated by workspace.
+history-empty-title = No changes recorded yet.
+history-empty-subtitle = Bulk Edit and SQL Update operations will appear here.
+history-select-title = Select an operation.
+history-select-subtitle = Details will appear here.
+history-clear = Clear history
+history-clear-confirm-title = Clear history
+history-clear-confirm-description = This will remove operation history for this workspace. Markdown files will not be changed.
+history-today = Today
+history-yesterday = Yesterday
+history-source-bulk = Bulk Edit
+history-source-sql = SQL Update
+history-source-undo = Undo
+history-undo-available = undo available
+history-undo-unavailable = undo unavailable
+history-undone = undone
+history-undo-button = Undo change
+history-original-operation = Original operation: { $id }
+history-full-content-recorded = Full content recorded.
+history-full-content-restore = Full content will be restored.
+undo-review-title = Review undo
+undo-files-restore =
+    { $count ->
+        [one] 1 file will be restored
+       *[other] { $count } files will be restored
+    }
+undo-apply =
+    { $count ->
+        [one] Undo 1 change
+       *[other] Undo { $count } changes
+    }
+
+# Health
+health-title = Database Health
+health-total-documents =
+    { $count ->
+        [one] 1 document
+       *[other] { $count } documents
+    }
+health-errors = Errors
+health-warnings = Warnings
+health-healthy = Healthy
+health-filter-all = All
+health-filter-errors = Errors
+health-filter-warnings = Warnings
+health-filter-placeholder = Filter issues...
+health-schema-absent = Explicit schema is not configured.
+health-schema-inferred = The database is using only inferred structure.
+health-schema-invalid = There is a problem in flokin.schema.yaml.
+health-no-issues = No issues found.
+health-severity = SEVERITY
+health-category = CATEGORY
+health-document = DOCUMENT
+health-property = PROPERTY
+health-problem = PROBLEM

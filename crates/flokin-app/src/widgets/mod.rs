@@ -109,8 +109,8 @@ fn icon_slot_with_style(
     .into()
 }
 
-pub fn button_label<'a>(label: &'a str) -> Element<'a, Message> {
-    text(label)
+pub fn button_label<'a>(label: impl Into<String>) -> Element<'a, Message> {
+    text(label.into())
         .size(theme::typography::BODY)
         .line_height(LineHeight::Relative(1.0))
         .wrapping(Wrapping::None)
@@ -119,7 +119,7 @@ pub fn button_label<'a>(label: &'a str) -> Element<'a, Message> {
 
 pub fn icon_text<'a>(
     icon_id: Icon,
-    label: &'a str,
+    label: impl Into<String>,
     icon_size: f32,
     accent: bool,
 ) -> Element<'a, Message> {

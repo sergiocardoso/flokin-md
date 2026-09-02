@@ -10,19 +10,25 @@ use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
     file_icons,
+    i18n::I18nCatalog,
     message::Message,
     theme::{self, AppTheme},
     widgets,
 };
 
-pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, Message> {
+pub fn view<'a>(
+    model: &'a ShellModel,
+    app_theme: AppTheme,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let workspace = model.workspace_display();
     let header = column![
         row![
             button(
                 container(widgets::icon_text(
                     theme::Icon::Folder,
-                    "Abrir",
+                    i18n.tr("explorer-open"),
                     theme::icons::TOOLBAR,
                     false,
                 ))
@@ -36,7 +42,7 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
             button(
                 container(widgets::icon_text(
                     theme::Icon::Refresh,
-                    "Reindexar",
+                    i18n.tr("explorer-reindex"),
                     theme::icons::TOOLBAR,
                     false,
                 ))
@@ -50,7 +56,7 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
         ]
         .spacing(theme::spacing::SM)
         .align_y(Alignment::Center),
-        widgets::section_title("EXPLORER"),
+        widgets::section_title(i18n.tr("explorer-title")),
         row![
             widgets::icon(theme::Icon::Database, theme::icons::META, true),
             text(workspace.name).size(theme::typography::TITLE)
@@ -64,9 +70,9 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
     ]
     .spacing(theme::spacing::MD);
 
-    let tree = tree(model, app_theme);
+    let tree = tree(model, app_theme, i18n);
 
-    let filters = filters();
+    let filters = filters(i18n);
 
     container(
         column![
@@ -87,17 +93,21 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
     .into()
 }
 
-pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+pub fn sql_schema_view<'a>(
+    model: &'a ShellModel,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let body: Element<'_, Message> = match model.sql_explorer.catalog.as_ref() {
         Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model),
-        Some(_) => column![text("Nenhuma Collection disponível.")
+        Some(_) => column![text(i18n.tr("sql-schema-empty"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),]
         .into(),
         None => column![text(if model.sql_explorer.running {
-            "Construindo schema..."
+            i18n.tr("sql-schema-building")
         } else {
-            "Abra uma pasta para gerar o schema."
+            i18n.tr("sql-schema-open-folder")
         })
         .size(theme::typography::BODY)
         .style(theme::text_muted),]
@@ -131,9 +141,13 @@ pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+pub fn data_view<'a>(
+    model: &'a ShellModel,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let mut collections =
-        column![widgets::section_title("COLLECTIONS")].spacing(theme::spacing::XS);
+        column![widgets::section_title(i18n.tr("explorer-collections"))].spacing(theme::spacing::XS);
     for collection in &model.collections {
         collections = collections.push(collection_row(
             collection,
@@ -145,7 +159,7 @@ pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
         column![
             row![
                 widgets::icon(theme::Icon::Database, theme::icons::META, true),
-                text("DADOS").size(theme::typography::TITLE),
+                text(i18n.tr("activity-data")).size(theme::typography::TITLE),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
@@ -233,15 +247,19 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
     content.into()
 }
 
-fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Message> {
+fn tree<'a>(
+    model: &'a ShellModel,
+    app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
+) -> iced::widget::Column<'a, Message> {
     if model.current_workspace.is_none() {
-        return no_workspace();
+        return no_workspace(i18n);
     }
 
     match &model.scan_state {
         ScanState::Idle => column![],
-        ScanState::Scanning => scan_message("Analisando documentos..."),
-        ScanState::Failed(_) => scan_message("Falha ao analisar workspace"),
+        ScanState::Scanning => scan_message(i18n.tr("explorer-scanning")),
+        ScanState::Failed(_) => scan_message(i18n.tr("explorer-scan-failed")),
         ScanState::Completed {
             documents,
             errors,
@@ -255,12 +273,12 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
             ..
         } => {
             if *documents == 0 {
-                return scan_message("Nenhum arquivo Markdown encontrado.");
+                return scan_message(i18n.tr("explorer-no-markdown"));
             }
 
             let mut tree = column![
-                scan_summary(*documents, *errors, *warnings),
-                widgets::section_title("FILES")
+                scan_summary(*documents, *errors, *warnings, i18n),
+                widgets::section_title(i18n.tr("explorer-files"))
             ]
             .spacing(theme::spacing::SM);
             for node in &model.explorer {
@@ -272,10 +290,10 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
                 ));
             }
             tree = tree.push(container("").height(theme::spacing::MD));
-            tree = tree.push(widgets::section_title("DATA"));
+            tree = tree.push(widgets::section_title(i18n.tr("explorer-data")));
             tree = tree.push(sql_explorer_row(model.sql_explorer.open));
             tree = tree.push(container("").height(theme::spacing::MD));
-            tree = tree.push(widgets::section_title("COLLECTIONS"));
+            tree = tree.push(widgets::section_title(i18n.tr("explorer-collections")));
             for collection in &model.collections {
                 tree = tree.push(collection_row(
                     collection,
@@ -315,7 +333,7 @@ fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn scan_message<'a>(message: &'a str) -> iced::widget::Column<'a, Message> {
+fn scan_message<'a>(message: String) -> iced::widget::Column<'a, Message> {
     column![container(
         row![
             widgets::icon(theme::Icon::Folder, theme::icons::TREE, false),
@@ -330,13 +348,20 @@ fn scan_message<'a>(message: &'a str) -> iced::widget::Column<'a, Message> {
     .spacing(theme::spacing::XXS)
 }
 
-fn scan_summary(documents: usize, errors: usize, warnings: usize) -> Element<'static, Message> {
-    let mut message = format!("{documents} documentos encontrados");
+fn scan_summary<'a>(
+    documents: usize,
+    errors: usize,
+    warnings: usize,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut message = i18n.tr_with("explorer-documents-found", &[("count", documents.into())]);
     if errors > 0 {
-        message.push_str(&format!(", {errors} itens não puderam ser acessados"));
+        message.push_str(", ");
+        message.push_str(&i18n.tr_with("explorer-access-errors", &[("count", errors.into())]));
     }
     if warnings > 0 {
-        message.push_str(&format!(", {warnings} warnings"));
+        message.push_str(", ");
+        message.push_str(&i18n.tr_with("explorer-warnings", &[("count", warnings.into())]));
     }
 
     container(
@@ -479,16 +504,16 @@ fn collection_row<'a>(
     .into()
 }
 
-fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
+fn no_workspace<'a>(i18n: &'a I18nCatalog) -> iced::widget::Column<'a, Message> {
     column![
-        text("Nenhuma pasta aberta")
+        text(i18n.tr("explorer-no-workspace"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),
         button(
             container(
                 row![
                     widgets::icon_inverse(theme::Icon::Folder, theme::icons::TOOLBAR),
-                    text("Abrir pasta").size(theme::typography::BODY),
+                    text(i18n.tr("menu-open-folder")).size(theme::typography::BODY),
                 ]
                 .spacing(theme::spacing::SM)
                 .align_y(Alignment::Center),
@@ -504,10 +529,10 @@ fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
     .spacing(theme::spacing::MD)
 }
 
-fn filters<'a>() -> Element<'a, Message> {
+fn filters<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let list = column![
-        widgets::section_title("FILTROS"),
-        text("Disponíveis após indexação")
+        widgets::section_title(i18n.tr("explorer-filters")),
+        text(i18n.tr("explorer-filters-empty"))
             .size(theme::typography::BODY)
             .style(theme::text_muted)
     ]

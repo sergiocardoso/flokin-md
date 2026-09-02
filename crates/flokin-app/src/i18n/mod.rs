@@ -20,10 +20,6 @@ impl I18nCatalog {
         }
     }
 
-    pub const fn language(&self) -> AppLanguage {
-        self.language
-    }
-
     pub fn tr(&self, key: &str) -> String {
         self.tr_with(key, &[])
     }
@@ -32,7 +28,8 @@ impl I18nCatalog {
         match (self.language, key) {
             (AppLanguage::PortugueseBrazil, "search-placeholder") => "Buscar documentos...",
             (AppLanguage::English, "search-placeholder") => "Search documents...",
-            (_, "search-placeholder") => "Search documents...",
+            (AppLanguage::PortugueseBrazil, "health-filter-placeholder") => "Filtrar issues...",
+            (AppLanguage::English, "health-filter-placeholder") => "Filter issues...",
             _ => {
                 #[cfg(debug_assertions)]
                 eprintln!("Missing static translation key: {key}");
