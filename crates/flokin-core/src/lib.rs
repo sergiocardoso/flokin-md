@@ -1,4 +1,5 @@
 mod bulk_edit;
+mod context;
 mod graph;
 mod health;
 mod history;
@@ -18,6 +19,10 @@ pub use bulk_edit::{
     BulkEditApplyError, BulkEditChangeStatus, BulkEditFileChange, BulkEditOperation, BulkEditPlan,
     BulkEditResult, BulkEditSelection, BulkEditSummary, BulkEditValue, FrontmatterPatchOutcome,
     FrontmatterPropertyChange,
+};
+pub use context::{
+    build_context_projection, classify_context_document, ContextArtifact, ContextProjection,
+    ContextSection,
 };
 pub use graph::{
     clamp_graph_zoom, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,

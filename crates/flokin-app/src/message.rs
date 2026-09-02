@@ -1,9 +1,9 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
-    GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog, SqlError,
-    SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
+    BulkEditOperationKind, BulkEditValueType, CollectionPanel, ContextSection, EditorViewMode,
+    ExplorerNodeId, GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog,
+    SqlError, SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -34,6 +34,7 @@ pub enum MenuAction {
     ToggleRightSidebar,
     Explorer,
     Data,
+    Context,
     Graph,
     Health,
     SqlExplorer,
@@ -48,12 +49,12 @@ pub enum MenuAction {
 pub enum AppMode {
     Files,
     Data,
+    Context,
     Graph,
     Health,
     Sql,
     Settings,
     History,
-    About,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +113,10 @@ pub enum Message {
     BulkApplyRequested,
     BulkApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
     MarkdownSelected(PathBuf),
+    ContextSectionSelected(ContextSection),
+    ContextArtifactSelected(PathBuf),
+    ContextOpenInEditor(PathBuf),
+    ContextShowInGraph(PathBuf),
     GraphFitRequested,
     GraphFocusSelected,
     GraphZoomIn,

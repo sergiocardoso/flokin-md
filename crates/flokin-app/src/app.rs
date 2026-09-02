@@ -23,7 +23,7 @@ use iced::{
 use crate::{
     i18n::{AppLanguage, I18nCatalog},
     message::{AppMode, MenuAction, Message, SplitterKind},
-    services::{file_dialog, file_watcher, settings},
+    services::{external_links, file_dialog, file_watcher, settings},
     theme::{self, AppTheme},
     views,
     views::graph::GraphViewState,
@@ -41,7 +41,6 @@ pub struct FlokinApp {
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
     empty_markdown_editor: text_editor::Content,
     markdown_previews: HashMap<PathBuf, MarkdownPreviewCache>,
-    about_markdown: Vec<markdown::Item>,
     graph: GraphViewState,
     workspace_update_running: bool,
     pending_workspace_events: Vec<WorkspaceEvent>,
@@ -53,7 +52,7 @@ pub struct FlokinApp {
     pending_reindex: bool,
     workspace_generation: u64,
     open_menu: Option<crate::message::MenuId>,
-    mode_before_about: Option<AppMode>,
+    about_dialog_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<String>,
     left_width: f32,
@@ -104,7 +103,6 @@ impl FlokinApp {
             markdown_editors: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
             markdown_previews: HashMap::new(),
-            about_markdown: about_markdown_items(&I18nCatalog::new(language)),
             graph: GraphViewState::default(),
             workspace_update_running: false,
             pending_workspace_events: Vec::new(),
@@ -116,7 +114,7 @@ impl FlokinApp {
             pending_reindex: false,
             workspace_generation: 0,
             open_menu: None,
-            mode_before_about: None,
+            about_dialog_open: false,
             schema_create_dialog_open: false,
             schema_create_error: None,
             left_width: crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH,
@@ -150,9 +148,6 @@ impl FlokinApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AppModeSelected(mode) => {
-                if mode != AppMode::About {
-                    self.mode_before_about = None;
-                }
                 self.mode = mode;
                 if mode == AppMode::Graph {
                     self.sync_graph_projection(true);
@@ -160,10 +155,10 @@ impl FlokinApp {
                 self.model.select_activity(match mode {
                     AppMode::Sql => flokin_core::Activity::Terminal,
                     AppMode::Settings => flokin_core::Activity::Settings,
+                    AppMode::Context => flokin_core::Activity::Context,
                     AppMode::Graph => flokin_core::Activity::Relations,
                     AppMode::Health => flokin_core::Activity::Health,
                     AppMode::History => flokin_core::Activity::History,
-                    AppMode::About => self.model.active_activity,
                     AppMode::Files | AppMode::Data => flokin_core::Activity::Explorer,
                 });
                 if mode == AppMode::Sql {
@@ -462,6 +457,23 @@ impl FlokinApp {
             },
             Message::MarkdownSelected(path) => {
                 self.open_or_activate_document(path);
+            }
+            Message::ContextSectionSelected(section) => {
+                self.model.select_context_section(section);
+            }
+            Message::ContextArtifactSelected(path) => {
+                self.model.select_context_artifact(path);
+            }
+            Message::ContextOpenInEditor(path) => {
+                self.open_or_activate_document(path);
+            }
+            Message::ContextShowInGraph(path) => {
+                if self.model.select_document_without_opening(path) {
+                    self.mode = AppMode::Graph;
+                    self.model.select_activity(flokin_core::Activity::Relations);
+                    self.sync_graph_projection(false);
+                    self.focus_selected_graph_node();
+                }
             }
             Message::GraphFitRequested => {
                 self.fit_graph();
@@ -898,6 +910,7 @@ impl FlokinApp {
             Message::KeyboardEvent(event) => {
                 if let Some(message) = keyboard_message(
                     event,
+                    self.about_dialog_open,
                     self.model.search.open,
                     self.open_menu.is_some(),
                     self.model.bulk_edit.editor_open,
@@ -921,7 +934,6 @@ impl FlokinApp {
             Message::LanguageSelected(language) => {
                 self.language = language;
                 self.i18n = I18nCatalog::new(language);
-                self.about_markdown = about_markdown_items(&self.i18n);
                 return persist_language_task(language);
             }
             Message::LanguagePersisted(_result) => {}
@@ -948,6 +960,9 @@ impl FlokinApp {
                     MenuAction::Data => {
                         return self.update(Message::AppModeSelected(AppMode::Data))
                     }
+                    MenuAction::Context => {
+                        return self.update(Message::AppModeSelected(AppMode::Context))
+                    }
                     MenuAction::Graph => {
                         return self.update(Message::AppModeSelected(AppMode::Graph))
                     }
@@ -966,17 +981,20 @@ impl FlokinApp {
                     MenuAction::Search => return self.update(Message::SearchOpened),
                     MenuAction::ExecuteSql => return self.update(Message::SqlExecute),
                     MenuAction::About => {
-                        if self.mode != AppMode::About {
-                            self.mode_before_about = Some(self.mode);
-                        }
-                        return self.update(Message::AppModeSelected(AppMode::About));
+                        self.about_dialog_open = true;
                     }
                 }
             }
             Message::MenuClosed => self.open_menu = None,
+            Message::AboutContactOpened(link) => {
+                return Task::perform(
+                    async move { external_links::open_about_contact(link) },
+                    Message::AboutContactOpenCompleted,
+                );
+            }
+            Message::AboutContactOpenCompleted(_result) => {}
             Message::AboutClosed => {
-                let mode = self.mode_before_about.take().unwrap_or(AppMode::Files);
-                return self.update(Message::AppModeSelected(mode));
+                self.about_dialog_open = false;
             }
             Message::SplitterPressed(kind, _position) => {
                 let value = match kind {
@@ -1074,14 +1092,13 @@ impl FlokinApp {
             &self.sql_editor,
             markdown_editor,
             self.active_markdown_preview_items(),
-            &self.about_markdown,
             &self.graph,
             self.left_width,
             self.inspector_width,
             self.schema_width,
             self.sql_editor_height,
             self.open_menu,
-            false,
+            self.about_dialog_open,
             self.schema_create_dialog_open,
             self.schema_create_error.as_deref(),
             self.left_visible,
@@ -1835,10 +1852,6 @@ fn persist_last_workspace_task(path: PathBuf) -> Task<Message> {
     )
 }
 
-fn about_markdown_items(i18n: &I18nCatalog) -> Vec<markdown::Item> {
-    markdown::parse(&i18n.tr("about-body-markdown")).collect()
-}
-
 fn clear_last_workspace_task() -> Task<Message> {
     Task::perform(
         async move { settings::clear_last_workspace_path(&settings_storage_path()) },
@@ -1902,6 +1915,7 @@ fn debounce_search_task(target: Instant) -> Task<Message> {
 
 fn keyboard_message(
     event: keyboard::Event,
+    about_open: bool,
     search_open: bool,
     menu_open: bool,
     bulk_open: bool,
@@ -1916,6 +1930,10 @@ fn keyboard_message(
     else {
         return None;
     };
+
+    if about_open {
+        return matches!(key, Key::Named(Named::Escape)).then_some(Message::AboutClosed);
+    }
 
     if menu_open && matches!(key, Key::Named(Named::Escape)) {
         return Some(Message::MenuClosed);
@@ -1962,8 +1980,8 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 #[cfg(test)]
 mod tests {
     use flokin_core::{
-        scan_workspace, workspace_update_from_events, Activity, ScanResult, ScanState, SqlError,
-        SqlExplorerMode, WorkspaceEvent,
+        build_context_projection, scan_workspace, workspace_update_from_events, Activity,
+        ContextSection, ScanResult, ScanState, SqlError, SqlExplorerMode, WorkspaceEvent,
     };
     use iced::{
         keyboard::{
@@ -1984,6 +2002,7 @@ mod tests {
         restored_workspace_from_settings_path, theme_from_settings_path, toggle_menu,
         validate_workspace_path, FlokinApp,
     };
+    use crate::services::external_links::AboutContactLink;
     use crate::{
         i18n::AppLanguage,
         message::{AppMode, MenuAction, MenuId, Message, SplitterKind},
@@ -2518,8 +2537,8 @@ mod tests {
 
         let _ = app.update(Message::MenuAction(MenuAction::About));
 
-        assert_eq!(app.mode, AppMode::About);
-        assert_eq!(app.mode_before_about, Some(AppMode::Files));
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
         assert_eq!(app.model.current_workspace, None);
     }
 
@@ -2535,13 +2554,60 @@ mod tests {
 
         let _ = app.update(Message::MenuAction(MenuAction::About));
 
-        assert_eq!(app.mode, AppMode::About);
-        assert_eq!(app.mode_before_about, Some(AppMode::Files));
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
         assert_eq!(
             app.model.current_workspace,
             Some(workspace.path().to_path_buf())
         );
         assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn about_language_switch_preserves_workspace_dirty_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn about_contact_action_does_not_reset_workspace_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        let task = app.update(Message::AboutContactOpened(AboutContactLink::Website));
+
+        drop(task);
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
         assert!(app.model.editor.tab(&path).unwrap().dirty);
     }
 
@@ -2556,7 +2622,7 @@ mod tests {
         let _ = app.update(Message::AboutClosed);
 
         assert_eq!(app.mode, AppMode::Sql);
-        assert_eq!(app.mode_before_about, None);
+        assert!(!app.about_dialog_open);
         assert_eq!(
             app.model.current_workspace,
             Some(workspace.path().to_path_buf())
@@ -2891,6 +2957,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
 
         assert_eq!(message, Some(Message::SearchOpened));
@@ -2908,9 +2975,12 @@ mod tests {
             repeat: false,
         };
 
-        assert_eq!(keyboard_message(event.clone(), false, false, false), None);
         assert_eq!(
-            keyboard_message(event, true, false, false),
+            keyboard_message(event.clone(), false, false, false, false),
+            None
+        );
+        assert_eq!(
+            keyboard_message(event, false, true, false, false),
             Some(Message::SearchNext)
         );
     }
@@ -2928,12 +2998,30 @@ mod tests {
         };
 
         assert_eq!(
-            keyboard_message(event.clone(), false, true, false),
+            keyboard_message(event.clone(), false, false, true, false),
             Some(Message::MenuClosed)
         );
         assert_eq!(
-            keyboard_message(event, false, false, true),
+            keyboard_message(event, false, false, false, true),
             Some(Message::BulkEditCanceled)
+        );
+    }
+
+    #[test]
+    fn escape_closes_about_dialog_before_global_shortcuts() {
+        let event = Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            modified_key: Key::Named(Named::Escape),
+            physical_key: Physical::Code(Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        };
+
+        assert_eq!(
+            keyboard_message(event, true, true, true, true),
+            Some(Message::AboutClosed)
         );
     }
 
@@ -3061,6 +3149,107 @@ mod tests {
             app.markdown_editors.get(&path).unwrap().text(),
             "---\ntitle: CARF Daily\n---\n# Daily\n"
         );
+    }
+
+    #[test]
+    fn context_mode_is_reachable_from_activity_and_menu() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        assert_eq!(app.mode, AppMode::Context);
+        assert_eq!(app.model.active_activity, Activity::Context);
+
+        let _ = app.update(Message::MenuAction(MenuAction::Graph));
+        let _ = app.update(Message::MenuAction(MenuAction::Context));
+        assert_eq!(app.mode, AppMode::Context);
+        assert_eq!(app.model.active_activity, Activity::Context);
+    }
+
+    #[test]
+    fn context_section_and_artifact_selection_update_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::ContextSectionSelected(ContextSection::Skills));
+        assert_eq!(app.model.context_section, ContextSection::Skills);
+        assert_eq!(app.model.selected_context_artifact, None);
+
+        let _ = app.update(Message::ContextArtifactSelected(path.clone()));
+        assert_eq!(app.model.selected_context_artifact, Some(path));
+    }
+
+    #[test]
+    fn context_open_in_editor_reuses_document_flow() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "skills/deploy/SKILL.md",
+            "---\ntitle: Deploy\n---\n# Deploy\n",
+        );
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        let _ = app.update(Message::ContextOpenInEditor(path.clone()));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.markdown_editors.contains_key(&path));
+    }
+
+    #[test]
+    fn context_show_in_graph_selects_document_without_opening_editor() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        let _ = app.update(Message::ContextShowInGraph(path.clone()));
+
+        assert_eq!(app.mode, AppMode::Graph);
+        assert_eq!(app.model.selected_document_path, Some(path));
+        assert!(app.model.editor.tabs.is_empty());
+    }
+
+    #[test]
+    fn context_projection_uses_refreshed_store_without_writes() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let first_path = workspace.path().join("skills/deploy/SKILL.md");
+        let before = fs::read_to_string(&first_path).unwrap();
+
+        let first = build_context_projection(&app.model.documents, &app.model.relation_index);
+        assert_eq!(first.count_for_section(ContextSection::Skills), 1);
+        let _ = app.update(Message::ContextArtifactSelected(first_path.clone()));
+        assert_eq!(
+            app.model.selected_context_artifact,
+            Some(first_path.clone())
+        );
+
+        fs::remove_file(&first_path).unwrap();
+        workspace.write("skills/release/SKILL.md", "---\ntitle: Release\n---\n");
+        app.model.workspace_update_completed(
+            workspace_update_from_events(
+                workspace.path(),
+                &[
+                    WorkspaceEvent::Remove(first_path.clone()),
+                    WorkspaceEvent::Upsert(workspace.path().join("skills/release/SKILL.md")),
+                ],
+            )
+            .unwrap(),
+        );
+
+        let second = build_context_projection(&app.model.documents, &app.model.relation_index);
+        assert_eq!(second.count_for_section(ContextSection::Skills), 1);
+        assert_eq!(app.model.selected_context_artifact, None);
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("skills/release/SKILL.md")).unwrap(),
+            "---\ntitle: Release\n---\n"
+        );
+        assert_eq!(before, "---\ntitle: Deploy\n---\n");
     }
 
     #[test]

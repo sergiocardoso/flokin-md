@@ -29,10 +29,7 @@ mod tests {
 
     #[test]
     fn about_contact_urls_are_centralized_and_exact() {
-        assert_eq!(
-            AboutContactLink::LinkedIn.target(),
-            AUTHOR_LINKEDIN_URL
-        );
+        assert_eq!(AboutContactLink::LinkedIn.target(), AUTHOR_LINKEDIN_URL);
         assert_eq!(
             AUTHOR_LINKEDIN_URL,
             "https://www.linkedin.com/in/sergiocardososp/"

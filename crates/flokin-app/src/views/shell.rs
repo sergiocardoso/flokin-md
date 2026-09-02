@@ -33,7 +33,7 @@ pub fn view<'a>(
     schema_width: f32,
     sql_editor_height: f32,
     open_menu: Option<MenuId>,
-    _about_open: bool,
+    about_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<&'a str>,
     left_visible: bool,
@@ -50,13 +50,12 @@ pub fn view<'a>(
             mode,
             i18n,
             language,
+            about_open,
             workspace_restore_notice,
         );
     }
 
-    let content = if mode == AppMode::About {
-        row![views::about::view(app_theme, i18n)].height(Length::Fill)
-    } else if mode == AppMode::Settings {
+    let content = if mode == AppMode::Settings {
         row![
             activity_bar(mode, i18n),
             panel_gutter(),
@@ -83,6 +82,20 @@ pub fn view<'a>(
             content = content
                 .push(splitter(SplitterKind::Inspector, false))
                 .push(views::inspector::view(model, inspector_width));
+        }
+        content
+    } else if mode == AppMode::Context {
+        let mut content = row![activity_bar(mode, i18n), panel_gutter()].height(Length::Fill);
+        if left_visible {
+            content = content
+                .push(views::context::sidebar(model, left_width, i18n))
+                .push(splitter(SplitterKind::LeftSidebar, false));
+        }
+        content = content.push(views::context::view(model, i18n));
+        if right_visible {
+            content = content
+                .push(splitter(SplitterKind::Inspector, false))
+                .push(views::context::inspector(model, inspector_width, i18n));
         }
         content
     } else if mode == AppMode::Graph {
@@ -179,7 +192,7 @@ pub fn view<'a>(
         shell
     };
 
-    if let Some(dialog) = model.editor.dialog.as_ref() {
+    let shell = if let Some(dialog) = model.editor.dialog.as_ref() {
         stack![shell, editor_dialog_overlay(dialog, model, i18n)].into()
     } else if schema_create_dialog_open {
         stack![
@@ -187,6 +200,12 @@ pub fn view<'a>(
             schema_create_dialog_overlay(model, schema_create_error, i18n)
         ]
         .into()
+    } else {
+        shell
+    };
+
+    if about_open {
+        stack![shell, views::about::dialog_overlay(app_theme, i18n)].into()
     } else {
         shell
     }
@@ -198,11 +217,10 @@ fn no_workspace_shell<'a>(
     mode: AppMode,
     i18n: &'a I18nCatalog,
     language: AppLanguage,
+    about_open: bool,
     workspace_restore_notice: Option<&'a str>,
 ) -> Element<'a, Message> {
-    let content = if mode == AppMode::About {
-        views::about::view(app_theme, i18n)
-    } else if mode == AppMode::Settings {
+    let content = if mode == AppMode::Settings {
         views::settings::view(app_theme, language, i18n, true, true, false)
     } else {
         views::welcome::view(app_theme, i18n, workspace_restore_notice)
@@ -221,7 +239,11 @@ fn no_workspace_shell<'a>(
         shell.into()
     };
 
-    shell
+    if about_open {
+        stack![shell, views::about::dialog_overlay(app_theme, i18n)].into()
+    } else {
+        shell
+    }
 }
 
 fn welcome_top_shell<'a>(
@@ -661,6 +683,7 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
         MenuId::Navigate => vec![
             (i18n.tr("menu-files"), None, MenuAction::Explorer),
             (i18n.tr("menu-data"), None, MenuAction::Data),
+            (i18n.tr("menu-context"), None, MenuAction::Context),
             (i18n.tr("menu-graph"), None, MenuAction::Graph),
             (i18n.tr("menu-health"), None, MenuAction::Health),
             (i18n.tr("menu-sql-explorer"), None, MenuAction::SqlExplorer),
@@ -1138,6 +1161,11 @@ fn activity_bar<'a>(mode: AppMode, i18n: &'a I18nCatalog) -> Element<'a, Message
             AppMode::Data,
             theme::Icon::Database,
             i18n.tr("activity-data"),
+        ),
+        (
+            AppMode::Context,
+            theme::Icon::Split,
+            i18n.tr("activity-context"),
         ),
         (
             AppMode::Graph,

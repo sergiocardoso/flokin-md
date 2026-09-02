@@ -462,7 +462,7 @@ fn semantic_theme_icon(kind: SemanticKind) -> theme::Icon {
     match kind {
         SemanticKind::Agent | SemanticKind::AgentInstructions => theme::Icon::Agent,
         SemanticKind::Skill => theme::Icon::Puzzle,
-        SemanticKind::Spec => theme::Icon::ScrollCheck,
+        SemanticKind::Spec | SemanticKind::Ice => theme::Icon::ScrollCheck,
         SemanticKind::Context => theme::Icon::Split,
         SemanticKind::Prompt => theme::Icon::Prompt,
         SemanticKind::Rules => theme::Icon::ScrollCheck,

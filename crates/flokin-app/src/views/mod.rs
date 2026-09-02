@@ -1,4 +1,5 @@
 pub mod about;
+pub mod context;
 pub mod data_grid;
 pub mod editor;
 pub mod explorer;

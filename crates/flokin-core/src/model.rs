@@ -8,15 +8,16 @@ use std::{
 use crate::{
     build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
-    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, HistoryState,
-    MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus, ScanError,
-    ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection, SqlCatalog,
-    SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
+    Collection, ContextSection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue,
+    HistoryState, MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus,
+    ScanError, ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection,
+    SqlCatalog, SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
     Explorer,
+    Context,
     Relations,
     Links,
     Tags,
@@ -29,8 +30,9 @@ pub enum Activity {
 }
 
 impl Activity {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Explorer,
+        Self::Context,
         Self::Relations,
         Self::Links,
         Self::Tags,
@@ -45,6 +47,7 @@ impl Activity {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Explorer => "Explorer",
+            Self::Context => "Context",
             Self::Relations => "Relations",
             Self::Links => "Links",
             Self::Tags => "Tags",
@@ -84,6 +87,7 @@ pub enum SemanticKind {
     AgentInstructions,
     Skill,
     Spec,
+    Ice,
     Context,
     Prompt,
     Rules,
@@ -162,6 +166,7 @@ fn classify_semantic_folder(name: &str, children: &[ExplorerNode]) -> Option<Sem
         "agent" | "agents" => Some(SemanticKind::Agent),
         "skill" | "skills" => Some(SemanticKind::Skill),
         "spec" | "specs" | "sdd" => Some(SemanticKind::Spec),
+        "ice" => Some(SemanticKind::Ice),
         "context" | "contexts" => Some(SemanticKind::Context),
         "prompt" | "prompts" => Some(SemanticKind::Prompt),
         "rules" | "instructions" => Some(SemanticKind::Rules),
@@ -185,7 +190,8 @@ fn classify_semantic_file(name: &str) -> Option<SemanticKind> {
     let normalized = normalized_entry_name(name);
     match normalized.as_str() {
         "skill.md" => Some(SemanticKind::Skill),
-        "spec.md" => Some(SemanticKind::Spec),
+        "spec.md" | "sdd_template.md" => Some(SemanticKind::Spec),
+        "ice.md" | "ice_template.md" => Some(SemanticKind::Ice),
         "context.md" => Some(SemanticKind::Context),
         "prompt.md" => Some(SemanticKind::Prompt),
         "rules.md" | "instructions.md" => Some(SemanticKind::Rules),
@@ -193,6 +199,12 @@ fn classify_semantic_file(name: &str) -> Option<SemanticKind> {
         "mcp.json" => Some(SemanticKind::Mcp),
         "agents.md" => Some(SemanticKind::AgentInstructions),
         _ if normalized.ends_with(".spec.md") => Some(SemanticKind::Spec),
+        _ if normalized.ends_with(".ice.md") => Some(SemanticKind::Ice),
+        _ if normalized.starts_with("sdd-")
+            && (normalized.ends_with(".md") || normalized.ends_with(".markdown")) =>
+        {
+            Some(SemanticKind::Spec)
+        }
         _ => None,
     }
 }
@@ -418,6 +430,8 @@ pub struct ShellModel {
     pub health_filter: HealthFilter,
     pub health_query: String,
     pub selected_health_issue_id: Option<String>,
+    pub context_section: ContextSection,
+    pub selected_context_artifact: Option<PathBuf>,
     pub workspace_errors: Vec<ScanError>,
     pub selected_schema_field: Option<(String, String)>,
     pub collection_panel: CollectionPanel,
@@ -557,6 +571,8 @@ impl ShellModel {
         self.health_filter = HealthFilter::All;
         self.health_query.clear();
         self.selected_health_issue_id = None;
+        self.context_section = ContextSection::Overview;
+        self.selected_context_artifact = None;
         self.workspace_errors.clear();
         self.selected_schema_field = None;
         self.collection_panel = CollectionPanel::Data;
@@ -577,6 +593,21 @@ impl ShellModel {
 
     pub fn select_activity(&mut self, activity: Activity) {
         self.active_activity = activity;
+    }
+
+    pub fn select_context_section(&mut self, section: ContextSection) {
+        self.context_section = section;
+        self.selected_context_artifact = None;
+    }
+
+    pub fn select_context_artifact(&mut self, path: PathBuf) -> bool {
+        if self.documents.iter().any(|document| document.path == path) {
+            self.selected_context_artifact = Some(path);
+            true
+        } else {
+            self.sync_context_selection_with_documents();
+            false
+        }
     }
 
     pub fn history_loaded(&mut self, result: Result<Vec<MutationHistoryEntry>, String>) {
@@ -742,6 +773,14 @@ impl ShellModel {
             true
         } else {
             false
+        }
+    }
+
+    fn sync_context_selection_with_documents(&mut self) {
+        if let Some(path) = self.selected_context_artifact.as_ref() {
+            if !self.documents.iter().any(|document| &document.path == path) {
+                self.selected_context_artifact = None;
+            }
         }
     }
 
@@ -1292,6 +1331,7 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_context_selection_with_documents();
         if let Some(selected_collection) = self.selected_collection.as_ref() {
             if !self
                 .collections
@@ -1414,6 +1454,7 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_context_selection_with_documents();
         self.retain_bulk_selection_in_current_collection();
 
         let expanded_paths = expanded_folder_paths(&self.explorer);
@@ -2868,6 +2909,10 @@ mod tests {
             Some(SemanticKind::Spec)
         );
         assert_eq!(
+            classify_semantic_entry("ice", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Ice)
+        );
+        assert_eq!(
             classify_semantic_entry("context", ExplorerNodeKind::Folder, &[]),
             Some(SemanticKind::Context)
         );
@@ -2909,6 +2954,11 @@ mod tests {
             ("SKILL.md", SemanticKind::Skill),
             ("SPEC.md", SemanticKind::Spec),
             ("foo.spec.md", SemanticKind::Spec),
+            ("SDD_TEMPLATE.md", SemanticKind::Spec),
+            ("SDD-0001-auth.md", SemanticKind::Spec),
+            ("ICE.md", SemanticKind::Ice),
+            ("ICE_TEMPLATE.md", SemanticKind::Ice),
+            ("foo.ice.md", SemanticKind::Ice),
             ("CONTEXT.md", SemanticKind::Context),
             ("PROMPT.md", SemanticKind::Prompt),
             ("MEMORY.md", SemanticKind::Memory),

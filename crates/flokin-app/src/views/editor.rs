@@ -1,9 +1,9 @@
 use flokin_core::{
     BulkEditChangeStatus, BulkEditOperationKind, BulkEditStep, BulkEditValueType, CollectionPanel,
-    CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind,
-    EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel,
-    SortDirection, SqlColumnType, SqlExplorerMode, SqlQueryResult, SqlValue, SqlWritePlan,
-    TableCell, TableColumn, TableModel, TableValueType,
+    CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind, EditorViewMode,
+    ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel, SortDirection,
+    SqlColumnType, SqlExplorerMode, SqlQueryResult, SqlValue, SqlWritePlan, TableCell, TableColumn,
+    TableModel, TableValueType,
 };
 use iced::widget::{
     button, column, container, markdown, mouse_area, pick_list, row, scrollable,
@@ -762,11 +762,9 @@ fn collection_header<'a>(
 ) -> Element<'a, Message> {
     container(
         row![
-            column![
-                text(format!("{} documentos", document_count))
-                    .size(theme::typography::BODY)
-                    .style(theme::text_muted),
-            ]
+            column![text(format!("{} documentos", document_count))
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),]
             .spacing(theme::spacing::XS)
             .width(Length::Fill),
             collection_panel_switch(model),

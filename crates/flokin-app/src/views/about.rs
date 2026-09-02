@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text};
 use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
@@ -10,8 +10,102 @@ use crate::{
     widgets,
 };
 
-pub fn view<'a>(app_theme: AppTheme, i18n: &'a I18nCatalog) -> Element<'a, Message> {
-    let content = column![
+const DIALOG_MAX_WIDTH: f32 = 780.0;
+const DIALOG_MARGIN: f32 = 24.0;
+const DIALOG_MAX_HEIGHT_RATIO: f32 = 0.82;
+const DIALOG_HEADER_HEIGHT: f32 = 58.0;
+const DIALOG_FOOTER_HEIGHT: f32 = 62.0;
+
+pub fn dialog_overlay<'a>(app_theme: AppTheme, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    iced::widget::responsive(move |size| {
+        let dialog_width = (size.width - DIALOG_MARGIN * 2.0).clamp(320.0, DIALOG_MAX_WIDTH);
+        let dialog_height =
+            (size.height * DIALOG_MAX_HEIGHT_RATIO).min(size.height - DIALOG_MARGIN * 2.0);
+
+        opaque(
+            stack![
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(theme::overlay_backdrop)
+                )
+                .on_press(Message::AboutClosed),
+                container(dialog(app_theme, i18n, dialog_width, dialog_height))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(alignment::Horizontal::Center)
+                    .align_y(alignment::Vertical::Center),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn dialog<'a>(
+    app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
+    width: f32,
+    height: f32,
+) -> Element<'a, Message> {
+    container(
+        column![
+            dialog_header(i18n),
+            container(scrollable(about_content(app_theme, i18n)))
+                .height(Length::Fill)
+                .padding([theme::spacing::MD, theme::spacing::XL]),
+            dialog_footer(i18n),
+        ]
+        .height(Length::Fill),
+    )
+    .width(width)
+    .height(height.max(360.0))
+    .style(theme::overlay_panel)
+    .into()
+}
+
+fn dialog_header<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    container(
+        row![
+            text(i18n.tr("menu-about"))
+                .size(theme::typography::BODY)
+                .style(theme::text_normal)
+                .width(Length::Fill),
+            button(widgets::icon(theme::Icon::X, theme::icons::TOOLBAR, false))
+                .width(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+                .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+                .padding(0)
+                .style(theme::button_toolbar)
+                .on_press(Message::AboutClosed),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+    )
+    .height(DIALOG_HEADER_HEIGHT)
+    .padding([0.0, theme::spacing::XL])
+    .into()
+}
+
+fn dialog_footer<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    container(
+        row![button(text(i18n.tr("action-close")))
+            .padding([7.0, 14.0])
+            .style(theme::button_toolbar)
+            .on_press(Message::AboutClosed)]
+        .align_y(Alignment::Center),
+    )
+    .height(DIALOG_FOOTER_HEIGHT)
+    .padding([theme::spacing::SM, theme::spacing::XL])
+    .align_x(alignment::Horizontal::Right)
+    .into()
+}
+
+fn about_content<'a>(app_theme: AppTheme, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    column![
         header(app_theme, i18n),
         divider(),
         section(
@@ -28,35 +122,17 @@ pub fn view<'a>(app_theme: AppTheme, i18n: &'a I18nCatalog) -> Element<'a, Messa
         creator_section(i18n),
         divider(),
         footer(i18n),
-        row![button(text(i18n.tr("action-close")))
-            .style(theme::button_toolbar)
-            .on_press(Message::AboutClosed)]
-        .align_y(Alignment::Center)
     ]
     .spacing(theme::spacing::LG)
-    .max_width(760);
-
-    container(scrollable(
-        container(content)
-            .width(Length::Fill)
-            .padding([theme::spacing::XXL, theme::spacing::XL])
-            .align_x(alignment::Horizontal::Center),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(alignment::Horizontal::Center)
     .into()
 }
 
 fn header<'a>(app_theme: AppTheme, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     column![
         brand::welcome_lockup(app_theme),
-        text(i18n.tr_with(
-            "about-version",
-            &[("version", env!("CARGO_PKG_VERSION").into())]
-        ))
-        .size(theme::typography::LABEL)
-        .style(theme::text_muted),
+        text(i18n.tr_with("about-version", &[("version", app_version().into())]))
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
         text(i18n.tr("about-tagline"))
             .size(theme::typography::TITLE)
             .style(theme::text_normal)
@@ -147,11 +223,15 @@ fn footer<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
             text(i18n.tr("about-open-source"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
-            text("·").size(theme::typography::LABEL).style(theme::text_muted),
+            text("·")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
             text(i18n.tr("about-built-with"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
-            text("·").size(theme::typography::LABEL).style(theme::text_muted),
+            text("·")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
             text(i18n.tr("about-flokin-project-short"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
@@ -195,7 +275,11 @@ fn highlight<'a>(value: String) -> Element<'a, Message> {
 }
 
 fn divider<'a>() -> Element<'a, Message> {
-    container("").height(1).width(Length::Fill).style(theme::divider).into()
+    container("")
+        .height(1)
+        .width(Length::Fill)
+        .style(theme::divider)
+        .into()
 }
 
 pub const fn app_version() -> &'static str {

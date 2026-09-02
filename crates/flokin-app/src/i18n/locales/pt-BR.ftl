@@ -25,6 +25,7 @@ menu-toggle-theme = Alternar tema
 menu-left-sidebar = Barra lateral esquerda
 menu-right-sidebar = Barra lateral direita
 menu-files = Arquivos
+menu-context = Contexto
 menu-graph = Grafo
 menu-health = Saúde do banco
 menu-sql-explorer = SQL Explorer
@@ -39,6 +40,7 @@ menu-about = Sobre o FlokinMD
 # Activity
 activity-files = Arquivos
 activity-data = Dados
+activity-context = Contexto
 activity-graph = Grafo
 activity-health = Saúde do banco
 activity-sql = SQL Explorer
@@ -54,23 +56,33 @@ tooltip-show-right-sidebar = Mostrar barra lateral direita
 tooltip-toggle-theme = Alternar tema
 about-version = Versão { $version }
 about-tagline = Um banco de dados local-first para seus arquivos Markdown.
-about-body-markdown =
-    FlokinMD é um projeto open source criado para transformar pastas Markdown em espaços de dados estruturados, sem tirar do usuário a propriedade dos seus arquivos.
-
-    Markdown continua sendo a fonte de verdade.
-
-    Criado por Sérgio Cardoso.
-
-    Um projeto Flokin.
-
-    Construído com Rust + Iced.
 about-description = FlokinMD é um projeto open source criado para transformar pastas Markdown em espaços de dados estruturados, sem tirar do usuário a propriedade dos seus arquivos.
 about-source-truth = Markdown continua sendo a fonte de verdade.
 about-open-source = Projeto open source
 about-created-by = Criado por Sérgio Cardoso.
-about-flokin-project = Um projeto Flokin.
+about-motivation-title = Por que o FlokinMD existe
+about-motivation-paragraph-1 = Markdown deixou de ser apenas documentação.
+about-motivation-paragraph-2 =
+    Com IA, agentes, SDD, skills e workflows orientados a contexto, arquivos .md passaram a funcionar cada vez mais como memória e infraestrutura de projetos.
+about-motivation-paragraph-3 =
+    Specs, instruções, prompts, decisões, contextos e conhecimento operacional estão vivendo em Markdown.
+about-motivation-paragraph-4 =
+    O FlokinMD nasceu para tornar essa base fácil de consultar, editar, visualizar e, principalmente, entender como os documentos se relacionam.
+about-context-highlight = Markdown virou infraestrutura de contexto.
+about-creator-title = Sobre o criador
+about-creator-role = Software Engineer · Criador do FlokinMD
+about-creator-paragraph-1 =
+    Criei o FlokinMD a partir de uma necessidade que comecei a sentir no meu próprio trabalho com software, agentes e IA: quanto mais contexto passava a viver em Markdown, mais difícil ficava enxergar essa base como um sistema.
+about-creator-paragraph-2 =
+    Queria uma ferramenta rápida e direta para abrir uma pasta, consultar, editar, visualizar e entender os relacionamentos entre os documentos — sem precisar adotar uma suíte completa ou migrar meus arquivos para outro formato.
+about-flokin-project = FlokinMD é um projeto open source da Flokin.
+about-flokin-project-short = Um projeto Flokin.
 about-built-with = Construído com Rust + Iced.
-about-principle = "Markdown is the database."
+about-linkedin = LinkedIn
+about-website = Site
+about-email = Email
+about-manifesto = Markdown is the database.
+about-principle = Markdown is the database.
 
 # Search
 search-type-to-search = Digite para buscar documentos.
@@ -99,6 +111,7 @@ semantic-agent = Agente
 semantic-agent-instructions = Instruções de agente
 semantic-skill = Skill
 semantic-spec = Spec
+semantic-ice = ICE
 semantic-context = Contexto
 semantic-prompt = Prompt
 semantic-rules = Regras
@@ -291,6 +304,55 @@ graph-zoom-in = Aumentar zoom
 graph-zoom-reset = Resetar zoom
 graph-focus-selected = Centralizar selecionado
 graph-fit = Ajustar à tela
+
+# Context
+context-title = Contexto
+context-sidebar-title = CONTEXTO
+context-overview = Visão geral
+context-agents = Agentes
+context-skills = Skills
+context-specs = SDD / Specs
+context-ice = ICE
+context-contexts = Contextos
+context-prompts = Prompts
+context-rules = Regras / Instruções
+context-memory = Memória
+context-mcp = MCP
+context-artifact-count =
+    { $count ->
+        [one] 1 artefato
+       *[other] { $count } artefatos
+    }
+context-artifacts = ARTEFATOS
+context-name = Nome
+context-kind = Tipo
+context-path = Path
+context-relations = Relações
+context-referenced-by = Referenciado por
+context-references = Referencia
+context-unconnected = Sem relações
+context-unconnected-count =
+    { $count ->
+        [one] 1 artefato
+       *[other] { $count } artefatos
+    }
+context-inspector-title = CONTEXTO
+context-select-artifact = Selecione um artefato para ver detalhes.
+context-open-editor = Abrir no editor
+context-show-graph = Mostrar no grafo
+context-metadata = Metadados
+context-unresolved = não resolvido
+context-ambiguous = ambíguo
+context-empty = Nenhum artefato de contexto encontrado neste workspace.
+context-no-agents = Nenhum agente encontrado neste workspace.
+context-no-skills = Nenhuma Skill encontrada neste workspace.
+context-no-specs = Nenhuma Spec encontrada neste workspace.
+context-no-ice = Nenhum ICE encontrado neste workspace.
+context-no-contexts = Nenhum contexto encontrado neste workspace.
+context-no-prompts = Nenhum prompt encontrado neste workspace.
+context-no-rules = Nenhuma regra ou instrução encontrada neste workspace.
+context-no-memory = Nenhuma memória encontrada neste workspace.
+context-no-mcp = Nenhum MCP encontrado neste workspace.
 
 # Welcome
 welcome-title = Abra uma pasta Markdown para começar
