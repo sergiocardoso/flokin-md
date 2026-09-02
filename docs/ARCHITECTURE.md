@@ -155,6 +155,13 @@ immutable plan, per-file change status, validation, focused YAML patching, and
 staged batch application. The Iced layer owns only interaction state and
 rendering.
 
+Selection is keyed by the document's absolute path and is independent from
+`selected_document_path`, which continues to drive the Inspector. Sorting a
+collection therefore changes row order without changing the selected files.
+The operation parser validates scalar syntax before a plan is created; an
+explicit schema validates declared types and required removals, while an
+undeclared field produces a preview warning.
+
 Preview is mandatory. A bulk operation never writes files directly from a row
 selection click; the app first builds a `BulkEditPlan` with per-file
 `Changed`, `NoChange`, `Blocked`, or `Unsupported` status and a focused diff.
@@ -175,16 +182,86 @@ Dirty editor tabs and tabs with external conflicts block the affected files in
 preview. If any file is blocked or unsupported, Apply is disabled for the whole
 batch. Clean open tabs are updated later by the normal watcher path.
 
-Multi-file writes use best-effort staged safety: preflight all changed files,
-write staged temporary files, replace files, and attempt rollback for already
-replaced files if a later replacement fails. Successful operations do not leave
-persistent backups. This is not persistent History/Undo; MDB-018 remains the
-future durable recovery feature.
+Multi-file writes use best-effort staged safety: reread and fingerprint every
+changed file, validate readability/writability for the whole batch, write all
+temporary files, then replace files. If a later replacement fails, temporary
+files are removed and already replaced files are restored from the captured
+originals. Successful operations do not leave persistent backups. This is not
+persistent History/Undo; MDB-018 remains the future durable recovery feature.
+
+Changing the workspace, collection, selection, or operation invalidates the
+stored plan. Watcher events touching a previewed path mark it stale, and apply
+rechecks the filesystem even when no watcher event was observed, so a preview
+cannot silently write over a newer Markdown source.
 
 After a successful batch, the app enqueues normal workspace events for changed
 paths. DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search,
 and SQL converge through the existing Document Store pipeline instead of being
 manually patched from the bulk editor.
+
+## Mutation History And Safe Undo
+
+MDB-018 adds durable local history for successful Markdown mutations produced by
+Bulk Edit, SQL Update, and Undo.
+
+```text
+Mutation preview
+      ↓
+Safe writer
+      ↓
+Filesystem success
+      ↓
+History persistence
+```
+
+History is internal app metadata, not document source of truth. It is stored in
+a versioned local SQLite database under the platform app-data location
+(`FLOKINMD_APP_DATA/history.sqlite3` when that override is set, otherwise the
+OS app-data directory). The database is outside user Markdown workspaces and is
+never mixed into Collections. It is local only and can contain previous Markdown
+file contents because each entry stores complete before/after content for
+changed files.
+
+Each entry has a persistent id, canonical workspace identity, UTC Unix
+timestamp, source (`BulkEdit`, `SqlUpdate`, or `Undo`), summary, optional SQL
+statement or original undo target, and per-file changes with relative path,
+before fingerprint, after fingerprint, before content, after content, and
+property-level historical diffs. Retention keeps the latest 100 operations per
+workspace. Clearing history deletes only metadata for the current workspace; it
+does not touch Markdown files.
+
+Undo is modeled as a new explicit mutation, not as rollback. Rollback remains an
+internal best-effort protection for a failed write. Undo starts from a selected
+history entry and builds an `UndoPlan` only after validating that the entry
+belongs to the current workspace, is not itself an Undo entry, every file still
+exists, no affected editor tab is dirty or in external conflict, and the current
+file fingerprint still matches the recorded after fingerprint. If any file is
+missing, dirty, conflicted, or stale, the entire Undo is blocked; this milestone
+does not merge or recreate renamed/deleted files.
+
+```text
+History Entry
+      ↓
+UndoPlan
+      ↓
+Preview
+      ↓
+Preflight
+      ↓
+Safe writer
+      ↓
+Filesystem
+      ↓
+Watcher
+      ↓
+Document Store + projections
+```
+
+The Undo plan reuses the existing `BulkEditPlan` and staged safe writer. It
+restores the complete recorded before content for existing files only. A
+successful Undo writes Markdown, records its own History entry for auditability,
+and then lets the watcher rebuild Document Store, Schema, Health, Relations,
+Graph, Search, and SQL projection from the filesystem.
 
 ## Markdown Editor And Tabs
 
@@ -241,7 +318,7 @@ The current backend is a deterministic O(n) in-memory scan with simple scoring a
 
 ## SQL Projection And Explorer
 
-MDB-009 adds a disposable SQLite projection in `flokin-core` and a read-only SQL Explorer in `flokin-app`.
+MDB-009 adds a disposable SQLite projection in `flokin-core` and a SQL Explorer in `flokin-app`.
 
 ```text
 Markdown files
@@ -254,7 +331,45 @@ Markdown files remain the source of truth. SQLite is an in-memory derived projec
 
 The projection maps each real Collection to a deterministic SQL table, normalizes and safely quotes SQL identifiers, resolves table/column collisions deterministically, adds standard `title`, `_path`, and `_file_name` columns, and preserves scalar types where practical. Arrays and objects are stored as valid JSON text for this milestone.
 
-MDB-009 accepts only read-only single-statement SQL. The core validates execution with SQLite statement read-only checks and fails closed for write attempts or multiple statements. The UI executes queries outside rendering, displays result metadata and friendly SQL errors, and limits rendered rows.
+Consulta mode accepts only read-only single-statement SQL. The core validates execution with SQLite statement read-only checks and fails closed for write attempts or multiple statements. `UPDATE` in Consulta mode is rejected with an explicit message requiring Atualizacao mode. The UI executes queries outside rendering, displays result metadata and friendly SQL errors, and limits rendered rows.
+
+MDB-017 adds SQL Write Preview for `UPDATE` only. `INSERT`, `DELETE`, `ALTER`, `CREATE`, and `DROP` remain deferred because they imply file creation, deletion, or structure changes. The write path is:
+
+```text
+SQL text
+   ↓
+SQL parser
+   ↓
+Validate UPDATE subset
+   ↓
+Disposable SQLite simulation
+   ↓
+Before/After diff by _path
+   ↓
+SqlWritePlan / BulkEditPlan
+   ↓
+Markdown Preview
+   ↓
+Existing Preflight
+   ↓
+Existing Staged Safe Writer
+   ↓
+Filesystem
+   ↓
+Watcher
+   ↓
+Document Store
+   ↓
+Rebuilt SQLite projection
+```
+
+`flokin-core` uses `sqlparser-rs` to structurally validate that Atualizacao mode receives exactly one `UPDATE` statement and to identify the target Collection table and modified columns. The target table must be one of the real normalized Collection tables from `SqlCatalog`; helper columns such as `_path` and `_file_name`, and structural `title`, are not writable.
+
+SQLite remains only a calculator. The app builds a fresh in-memory projection for preview, captures matching rows by `_path`, executes the `UPDATE` inside a savepoint, reads final values for the matched `_path`s, and always rolls the savepoint back. The live projection used by SQL results is not modified during preview.
+
+The resulting `SqlWritePlan` maps rows back to real Documents only through `_path`, converts final scalar values to Markdown frontmatter values, and then stores a `BulkEditPlan` using the existing multi-file safe writer. Multiple `SET` columns for the same document are patched into one final file content and staged once. Supported write values are String, Integer, Float, Boolean, Null, and explicit Relation wikilinks; Array/Object and unsafe Mixed fields are blocked. `NULL` is serialized as a present `null` property, not as removal.
+
+Preview is mandatory. Ctrl+Enter in Atualizacao mode creates the preview and never writes files. Apply reuses the existing dirty-tab, external-conflict, fingerprint, staging, commit, and rollback checks from Bulk Edit. Watcher events mark previews stale and successful writes reenter the normal filesystem watcher pipeline; DataGrid, SchemaCatalog, Database Health, RelationIndex, Graph, Search, and SQL projection converge from Markdown instead of being manually patched.
 
 After watcher updates, manual reindex, or workspace changes, the SQL projection is rebuilt from the current in-memory Document Store. A full rebuild is intentionally acceptable in MDB-009 because it prioritizes correctness and keeps the architecture simple; the projection boundary can be optimized incrementally later without changing Markdown as the source of truth.
 

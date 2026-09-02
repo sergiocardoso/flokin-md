@@ -1,4 +1,5 @@
 mod app;
+mod brand;
 mod file_icons;
 mod message;
 mod services;

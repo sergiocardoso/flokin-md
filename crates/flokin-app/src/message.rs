@@ -2,7 +2,8 @@ use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
     BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
-    GraphNodeId, HealthFilter, ScanResult, SqlCatalog, SqlError, SqlQueryResult, WorkspaceUpdate,
+    GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog, SqlError,
+    SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -36,6 +37,7 @@ pub enum MenuAction {
     Settings,
     Search,
     ExecuteSql,
+    History,
     About,
 }
 
@@ -47,6 +49,7 @@ pub enum AppMode {
     Health,
     Sql,
     Settings,
+    History,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +93,8 @@ pub enum Message {
     BulkSelectionCleared,
     BulkEditOpened,
     BulkEditCanceled,
+    BulkEditBackToConfigure,
+    BulkNewPropertyRequested,
     BulkOperationSelected(BulkEditOperationKind),
     BulkPropertySelected(String),
     BulkNewPropertyChanged(String),
@@ -97,9 +102,8 @@ pub enum Message {
     BulkValueChanged(String),
     BulkBoolValueSelected(bool),
     BulkPreviewRequested,
-    BulkPreviewRegenerate,
     BulkApplyRequested,
-    BulkApplyCompleted(Result<(Vec<PathBuf>, usize), String>),
+    BulkApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
     MarkdownSelected(PathBuf),
     GraphFitRequested,
     GraphFocusSelected,
@@ -134,6 +138,7 @@ pub enum Message {
     EditorExternalReload,
     EditorExternalKeep,
     WindowCloseRequested(window::Id),
+    WindowFocused(bool),
     SearchOpened,
     SearchClosed,
     SearchQueryChanged(String),
@@ -151,9 +156,25 @@ pub enum Message {
     SqlCompletionAccepted,
     SqlCompletionSelected(usize),
     SqlCompletionClosed,
+    SqlModeSelected(SqlExplorerMode),
     SqlExecute,
     SqlProjectionCompleted(u64, PathBuf, Result<SqlCatalog, SqlError>),
     SqlQueryCompleted(Result<SqlQueryResult, SqlError>),
+    SqlUpdatePreviewCompleted(Result<SqlWritePlan, SqlError>),
+    SqlUpdateBackToEditor,
+    SqlUpdatePreviewCanceled,
+    SqlUpdateApplyRequested,
+    SqlUpdateApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
+    HistoryLoaded(PathBuf, Result<Vec<MutationHistoryEntry>, String>),
+    HistoryEntrySelected(String),
+    HistoryUndoRequested,
+    HistoryUndoPreviewCanceled,
+    HistoryUndoApplyRequested,
+    HistoryUndoApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
+    HistoryClearRequested,
+    HistoryClearCanceled,
+    HistoryClearConfirmed,
+    HistoryClearCompleted(Result<(), String>),
     KeyboardEvent(keyboard::Event),
     ThemeToggled,
     ThemeSelected(bool),

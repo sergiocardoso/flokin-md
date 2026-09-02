@@ -1,12 +1,12 @@
 use flokin_core::{
-    BulkEditChangeStatus, BulkEditOperationKind, BulkEditValueType, Collection, CollectionPanel,
-    CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind, EditorViewMode,
-    ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel, SortDirection,
-    SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlQueryResult, SqlValue, TableCell,
-    TableColumn, TableModel, TableValueType,
+    BulkEditChangeStatus, BulkEditOperationKind, BulkEditStep, BulkEditValueType, Collection,
+    CollectionPanel, CollectionSchema, EditorExternalConflict, EditorTab, EditorTabKind,
+    EditorViewMode, ExplicitSchemaState, SchemaField, SchemaSource, SchemaType, ShellModel,
+    SortDirection, SqlColumnType, SqlCompletionItem, SqlCompletionKind, SqlExplorerMode,
+    SqlQueryResult, SqlValue, SqlWritePlan, TableCell, TableColumn, TableModel, TableValueType,
 };
 use iced::widget::{
-    button, column, container, markdown, mouse_area, row, scrollable,
+    button, column, container, markdown, mouse_area, pick_list, row, scrollable,
     scrollable::{Direction, Scrollbar},
     stack, text,
     text::{LineHeight, Wrapping},
@@ -197,18 +197,32 @@ fn sql_explorer_view<'a>(
     sql_completion_open: bool,
     sql_editor_height: f32,
 ) -> Element<'a, Message> {
+    let update_mode = model.sql_explorer.mode == SqlExplorerMode::Update;
+    let action_label = if model.sql_explorer.running {
+        if update_mode {
+            "Revisando..."
+        } else {
+            "Executando..."
+        }
+    } else if update_mode {
+        "Revisar atualização"
+    } else {
+        "Executar"
+    };
     let header = row![
         text("Query 1")
             .size(theme::typography::TITLE)
             .style(theme::text_normal),
+        sql_mode_button("Consulta", SqlExplorerMode::Query, model.sql_explorer.mode),
+        sql_mode_button(
+            "Atualização",
+            SqlExplorerMode::Update,
+            model.sql_explorer.mode
+        ),
         iced::widget::Space::new().width(Length::Fill),
         button(widgets::icon_text(
             theme::Icon::Terminal,
-            if model.sql_explorer.running {
-                "Executando..."
-            } else {
-                "Executar"
-            },
+            action_label,
             theme::icons::TOOLBAR,
             false
         ))
@@ -223,10 +237,20 @@ fn sql_explorer_view<'a>(
     ]
     .spacing(theme::spacing::SM)
     .align_y(Alignment::Center);
+    let context_text = if update_mode {
+        "SQL Updates são convertidos em alterações Markdown e sempre exigem preview."
+    } else {
+        "Modo Consulta é read-only."
+    };
+    let placeholder = if update_mode {
+        "UPDATE projects\nSET status = 'archived'\nWHERE status = 'active';"
+    } else {
+        "SELECT *\nFROM projects\nLIMIT 100;"
+    };
 
     let editor_widget = container(
         text_editor(sql_editor)
-            .placeholder("SELECT *\nFROM projects\nLIMIT 100;")
+            .placeholder(placeholder)
             .on_action(Message::SqlEditorAction)
             .key_binding(move |press| sql_editor_key_binding(press, sql_completion_open))
             .font(theme::mono())
@@ -261,6 +285,9 @@ fn sql_explorer_view<'a>(
     .on_press(Message::SplitterPressed(SplitterKind::SqlEditor, 0.0))
     .interaction(iced::mouse::Interaction::ResizingVertically);
     let body = column![
+        text(context_text)
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
         editor,
         editor_splitter,
         container(results).height(Length::Fill)
@@ -274,6 +301,23 @@ fn sql_explorer_view<'a>(
         .height(Length::Fill)
         .padding(theme::spacing::MD)
         .style(theme::document_surface)
+        .into()
+}
+
+fn sql_mode_button(
+    label: &'static str,
+    mode: SqlExplorerMode,
+    current: SqlExplorerMode,
+) -> Element<'static, Message> {
+    button(text(label).size(theme::typography::LABEL))
+        .height(28)
+        .padding([0.0, theme::spacing::MD])
+        .style(if current == mode {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        })
+        .on_press(Message::SqlModeSelected(mode))
         .into()
 }
 
@@ -379,7 +423,16 @@ fn sql_completion_row<'a>(
 
 fn sql_results(model: &ShellModel) -> Element<'_, Message> {
     let metadata = if model.sql_explorer.running {
-        String::from("Executando...")
+        if model.sql_explorer.mode == SqlExplorerMode::Update {
+            String::from("Revisando atualização...")
+        } else {
+            String::from("Executando...")
+        }
+    } else if let Some(plan) = model.sql_explorer.write_plan.as_ref() {
+        format!(
+            "{} documentos correspondem • {} serão alterados",
+            plan.matched_rows, plan.affected_rows
+        )
     } else if let Some(result) = model.sql_explorer.result.as_ref() {
         let mut text = format!(
             "{} rows • {} ms",
@@ -422,13 +475,29 @@ fn sql_results(model: &ShellModel) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(theme::elevated)
         .into()
+    } else if let Some(plan) = model.sql_explorer.write_plan.as_ref() {
+        sql_update_preview(model, plan)
     } else if let Some(result) = model.sql_explorer.result.as_ref() {
         result_grid(result)
+    } else if let Some(result) = model.sql_explorer.last_result.as_ref() {
+        container(
+            text(result.as_str())
+                .size(theme::typography::BODY)
+                .style(theme::text_accent),
+        )
+        .padding(theme::spacing::MD)
+        .width(Length::Fill)
+        .style(theme::elevated)
+        .into()
     } else {
         container(
-            text("Execute uma consulta SELECT para ver o grid.")
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
+            text(if model.sql_explorer.mode == SqlExplorerMode::Update {
+                "Revise uma atualização UPDATE para ver o preview."
+            } else {
+                "Execute uma consulta SELECT para ver o grid."
+            })
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
         )
         .padding(theme::spacing::MD)
         .width(Length::Fill)
@@ -440,6 +509,163 @@ fn sql_results(model: &ShellModel) -> Element<'_, Message> {
         .spacing(theme::spacing::SM)
         .height(Length::Fill)
         .into()
+}
+
+fn sql_update_preview<'a>(model: &'a ShellModel, plan: &'a SqlWritePlan) -> Element<'a, Message> {
+    let summary = plan.mutation_plan.summary();
+    let mut list = column![].spacing(theme::spacing::SM);
+    if plan.matched_rows == 0 {
+        list = list.push(
+            text("Nenhum documento corresponde a esta atualização.")
+                .size(theme::typography::BODY)
+                .style(theme::text_muted),
+        );
+    } else if plan.affected_rows == 0 {
+        list = list.push(
+            text(format!(
+                "{} documentos correspondem, mas nenhuma alteração é necessária.",
+                plan.matched_rows
+            ))
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+        );
+    }
+    for warning in &plan.warnings {
+        list = list.push(
+            text(warning.as_str())
+                .size(theme::typography::BODY)
+                .style(theme::text_warning),
+        );
+    }
+    for change in &plan.mutation_plan.changes {
+        let status = match change.status {
+            BulkEditChangeStatus::Changed => "Alterado",
+            BulkEditChangeStatus::NoChange => "Sem alteração",
+            BulkEditChangeStatus::Blocked => "Bloqueado",
+            BulkEditChangeStatus::Unsupported => "Não suportado",
+        };
+        let mut item = column![row![
+            text(change.relative_path.display().to_string())
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_normal)
+                .width(Length::Fill),
+            text(status)
+                .size(theme::typography::LABEL)
+                .style(match change.status {
+                    BulkEditChangeStatus::Changed => theme::text_accent,
+                    BulkEditChangeStatus::NoChange => theme::text_muted,
+                    BulkEditChangeStatus::Blocked | BulkEditChangeStatus::Unsupported => {
+                        theme::text_warning
+                    }
+                }),
+        ]
+        .align_y(Alignment::Center)]
+        .spacing(theme::spacing::XXS);
+        for property_change in &change.property_changes {
+            if let Some(before) = property_change.before.as_ref() {
+                item = item.push(
+                    text(format!("- {before}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_warning),
+                );
+            }
+            if let Some(after) = property_change.after.as_ref() {
+                item = item.push(
+                    text(format!("+ {after}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_accent),
+                );
+            }
+        }
+        if let Some(reason) = change.reason.as_ref() {
+            item = item.push(
+                text(reason.as_str())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            );
+        }
+        list = list.push(
+            container(item)
+                .padding(theme::spacing::SM)
+                .style(theme::surface),
+        );
+    }
+    let count = summary.changed;
+    let label = if count == 1 {
+        String::from("Aplicar 1 alteração")
+    } else {
+        format!("Aplicar {count} alterações")
+    };
+    let apply = button(text(label).size(theme::typography::LABEL))
+        .height(34)
+        .padding([0.0, theme::spacing::MD])
+        .style(
+            if plan.mutation_plan.can_apply() && !model.sql_explorer.stale {
+                theme::button_selected
+            } else {
+                theme::button_toolbar
+            },
+        );
+    let apply = if plan.mutation_plan.can_apply() && !model.sql_explorer.stale {
+        apply.on_press(Message::SqlUpdateApplyRequested)
+    } else {
+        apply
+    };
+    let stale_message: Element<'_, Message> = if model.sql_explorer.stale {
+        text("O workspace mudou desde a geração do preview.")
+            .size(theme::typography::BODY)
+            .style(theme::text_warning)
+            .into()
+    } else {
+        container("").height(0).into()
+    };
+    let footer = row![
+        button(text("Voltar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::SqlUpdateBackToEditor),
+        button(text("Cancelar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::SqlUpdatePreviewCanceled),
+        container("").width(Length::Fill),
+        apply,
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    column![
+        text("Revisar atualização")
+            .size(theme::typography::TITLE)
+            .style(theme::text_accent),
+        text(plan.sql.as_str())
+            .font(theme::mono())
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        row![
+            text(format!("{} documentos correspondem", plan.matched_rows))
+                .size(theme::typography::LABEL),
+            text(format!("{} serão alterados", summary.changed)).size(theme::typography::LABEL),
+            text(format!("{} sem alteração", summary.no_change)).size(theme::typography::LABEL),
+            text(format!(
+                "{} bloqueados",
+                summary.blocked + summary.unsupported
+            ))
+            .size(theme::typography::LABEL),
+        ]
+        .spacing(theme::spacing::MD),
+        stale_message,
+        scrollable(list).height(Length::Fill),
+        footer,
+    ]
+    .spacing(theme::spacing::MD)
+    .height(Length::Fill)
+    .into()
 }
 
 fn result_grid(result: &SqlQueryResult) -> Element<'_, Message> {
@@ -1253,68 +1479,87 @@ fn checkbox_label(selected: bool) -> &'static str {
 }
 
 fn bulk_edit_overlay(model: &ShellModel) -> Element<'_, Message> {
-    let mut panel = column![
-        row![
+    let review = model.bulk_edit.step == BulkEditStep::Review;
+    let header = row![
+        column![
             text("Editar em massa")
                 .size(theme::typography::TITLE)
-                .style(theme::text_accent)
-                .width(Length::Fill),
-            button(widgets::icon(theme::Icon::X, theme::icons::TOOLBAR, false))
-                .width(30)
-                .height(30)
-                .padding(0)
+                .style(theme::text_accent),
+            text(format!(
+                "{} documentos selecionados",
+                model.bulk_edit.selected_paths.len()
+            ))
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
+        ]
+        .spacing(theme::spacing::XXS)
+        .width(Length::Fill),
+        button(widgets::icon(theme::Icon::X, theme::icons::TOOLBAR, false))
+            .width(30)
+            .height(30)
+            .padding(0)
+            .style(theme::button_toolbar)
+            .on_press(Message::BulkEditCanceled),
+    ]
+    .align_y(Alignment::Center);
+
+    let steps = row![
+        step_label("1. Configurar", !review),
+        text("→")
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        step_label("2. Revisar", review),
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center);
+
+    let content: Element<'_, Message> = if review {
+        let plan = model.bulk_edit.plan.as_ref();
+        if let Some(plan) = plan {
+            bulk_preview(model, plan)
+        } else {
+            text("Preview indisponível. Volte e revise a configuração.")
+                .style(theme::text_warning)
+                .into()
+        }
+    } else {
+        bulk_configure_content(model)
+    };
+
+    let footer = if review {
+        bulk_review_footer(model)
+    } else {
+        row![
+            button(text("Cancelar").size(theme::typography::LABEL))
+                .height(34)
+                .padding([0.0, theme::spacing::MD])
                 .style(theme::button_toolbar)
                 .on_press(Message::BulkEditCanceled),
+            button(text("Revisar alterações").size(theme::typography::LABEL))
+                .height(34)
+                .padding([0.0, theme::spacing::MD])
+                .style(theme::button_selected)
+                .on_press(Message::BulkPreviewRequested),
         ]
-        .align_y(Alignment::Center),
-        text(format!(
-            "{} documentos selecionados",
-            model.bulk_edit.selected_paths.len()
-        ))
-        .size(theme::typography::BODY)
-        .style(theme::text_muted),
-        bulk_operation_controls(model),
-        bulk_property_controls(model),
-    ]
-    .spacing(theme::spacing::MD);
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center)
+        .into()
+    };
 
-    if model.bulk_edit.operation_kind == BulkEditOperationKind::Set {
-        panel = panel.push(bulk_value_controls(model));
-    }
-
-    if let Some(error) = model.bulk_edit.error.as_deref() {
-        panel = panel.push(
-            text(error)
-                .size(theme::typography::BODY)
-                .style(theme::text_error),
-        );
-    }
-    if let Some(result) = model.bulk_edit.last_result.as_deref() {
-        panel = panel.push(
-            text(result)
-                .size(theme::typography::BODY)
-                .style(theme::text_success),
-        );
-    }
-
-    panel = if let Some(plan) = model.bulk_edit.plan.as_ref() {
-        panel.push(bulk_preview(model, plan))
+    let panel = column![header, steps, content, footer]
+        .spacing(theme::spacing::MD)
+        .align_x(iced::Alignment::Start);
+    let panel = if review {
+        container(panel)
+            .width(820)
+            .height(620)
+            .padding(theme::spacing::XL)
+            .style(theme::overlay_panel)
     } else {
-        panel.push(
-            row![
-                button(text("Cancelar").size(theme::typography::LABEL))
-                    .height(30)
-                    .padding([0.0, theme::spacing::MD])
-                    .style(theme::button_toolbar)
-                    .on_press(Message::BulkEditCanceled),
-                button(text("Gerar preview").size(theme::typography::LABEL))
-                    .height(30)
-                    .padding([0.0, theme::spacing::MD])
-                    .style(theme::button_selected)
-                    .on_press(Message::BulkPreviewRequested),
-            ]
-            .spacing(theme::spacing::SM),
-        )
+        container(panel)
+            .width(700)
+            .padding(theme::spacing::XL)
+            .style(theme::overlay_panel)
     };
 
     stack![
@@ -1326,10 +1571,8 @@ fn bulk_edit_overlay(model: &ShellModel) -> Element<'_, Message> {
         )
         .on_press(Message::BulkEditCanceled),
         container(panel)
-            .width(760)
-            .max_height(620)
-            .padding(theme::spacing::XL)
-            .style(theme::overlay_panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill),
     ]
@@ -1338,10 +1581,85 @@ fn bulk_edit_overlay(model: &ShellModel) -> Element<'_, Message> {
     .into()
 }
 
+fn step_label(label: &'static str, active: bool) -> Element<'static, Message> {
+    container(text(label).size(theme::typography::LABEL))
+        .padding([theme::spacing::XS, theme::spacing::SM])
+        .style(if active {
+            theme::table_row_selected
+        } else {
+            theme::surface
+        })
+        .into()
+}
+
+fn bulk_configure_content(model: &ShellModel) -> Element<'_, Message> {
+    let mut content = column![
+        text("Operação")
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
+        bulk_operation_controls(model),
+        bulk_property_controls(model),
+    ]
+    .spacing(theme::spacing::SM);
+    if model.bulk_edit.operation_kind == BulkEditOperationKind::Set {
+        content = content.push(bulk_value_controls(model));
+    }
+    if let Some(error) = model.bulk_edit.error.as_deref() {
+        content = content.push(
+            text(error)
+                .size(theme::typography::BODY)
+                .style(theme::text_error),
+        );
+    }
+    content.into()
+}
+
+fn bulk_review_footer(model: &ShellModel) -> Element<'_, Message> {
+    let Some(plan) = model.bulk_edit.plan.as_ref() else {
+        return row![].into();
+    };
+    let count = plan.summary().changed;
+    let label = if count == 1 {
+        "Aplicar 1 alteração".to_owned()
+    } else {
+        format!("Aplicar {count} alterações")
+    };
+    let apply = button(text(label).size(theme::typography::LABEL))
+        .height(34)
+        .padding([0.0, theme::spacing::MD])
+        .style(if plan.can_apply() && !model.bulk_edit.stale {
+            theme::button_selected
+        } else {
+            theme::button_toolbar
+        });
+    let apply = if plan.can_apply() && !model.bulk_edit.stale {
+        apply.on_press(Message::BulkApplyRequested)
+    } else {
+        apply
+    };
+    row![
+        button(text("Voltar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::BulkEditBackToConfigure),
+        button(text("Cancelar").size(theme::typography::LABEL))
+            .height(34)
+            .padding([0.0, theme::spacing::MD])
+            .style(theme::button_toolbar)
+            .on_press(Message::BulkEditCanceled),
+        container("").width(Length::Fill),
+        apply,
+    ]
+    .spacing(theme::spacing::SM)
+    .align_y(Alignment::Center)
+    .into()
+}
+
 fn bulk_operation_controls(model: &ShellModel) -> Element<'_, Message> {
     row![
-        bulk_operation_button("Set property", BulkEditOperationKind::Set, model),
-        bulk_operation_button("Remove property", BulkEditOperationKind::Remove, model),
+        bulk_operation_button("Definir propriedade", BulkEditOperationKind::Set, model),
+        bulk_operation_button("Remover propriedade", BulkEditOperationKind::Remove, model),
     ]
     .spacing(theme::spacing::XS)
     .into()
@@ -1365,67 +1683,74 @@ fn bulk_operation_button(
 }
 
 fn bulk_property_controls(model: &ShellModel) -> Element<'_, Message> {
-    let mut options = row![]
-        .spacing(theme::spacing::XS)
-        .align_y(Alignment::Center);
-    for property in model.bulk_property_options().into_iter().take(8) {
-        let selected =
-            model.bulk_edit.property == property && model.bulk_edit.new_property.is_empty();
-        options = options.push(
-            button(text(property.clone()).size(theme::typography::LABEL))
-                .height(26)
-                .padding([0.0, theme::spacing::SM])
-                .style(if selected {
-                    theme::button_selected
-                } else {
-                    theme::button_toolbar
-                })
-                .on_press(Message::BulkPropertySelected(property)),
-        );
-    }
+    let mut options = model.bulk_property_options();
+    options.push(String::from("+ Nova propriedade..."));
+    let selected =
+        if model.bulk_edit.new_property.is_empty() && !model.bulk_edit.property.is_empty() {
+            Some(model.bulk_edit.property.clone())
+        } else {
+            None
+        };
+    let picker = pick_list(options, selected, |choice: String| {
+        if choice == "+ Nova propriedade..." {
+            Message::BulkNewPropertyRequested
+        } else {
+            Message::BulkPropertySelected(choice)
+        }
+    })
+    .placeholder("Escolha uma propriedade")
+    .width(Length::Fill);
 
-    column![
-        text("Propriedade")
-            .size(theme::typography::LABEL)
-            .style(theme::text_muted),
-        options,
-        text_input("Nova propriedade...", &model.bulk_edit.new_property)
-            .padding(theme::spacing::SM)
-            .size(theme::typography::BODY)
-            .style(theme::input)
-            .on_input(Message::BulkNewPropertyChanged),
-    ]
-    .spacing(theme::spacing::XS)
-    .into()
+    if !model.bulk_edit.new_property.is_empty() || model.bulk_edit.property.is_empty() {
+        column![
+            text("Propriedade")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            picker,
+            text("Nome da propriedade")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            text_input("ex.: reviewed", &model.bulk_edit.new_property)
+                .padding(theme::spacing::SM)
+                .size(theme::typography::BODY)
+                .style(theme::input)
+                .on_input(Message::BulkNewPropertyChanged),
+        ]
+        .spacing(theme::spacing::XS)
+        .into()
+    } else {
+        column![
+            text("Propriedade")
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
+            picker,
+        ]
+        .spacing(theme::spacing::XS)
+        .into()
+    }
 }
 
 fn bulk_value_controls(model: &ShellModel) -> Element<'_, Message> {
-    let types = [
-        ("String", BulkEditValueType::String),
-        ("Integer", BulkEditValueType::Integer),
-        ("Float", BulkEditValueType::Float),
-        ("Boolean", BulkEditValueType::Boolean),
-        ("Null", BulkEditValueType::Null),
-        ("Relation", BulkEditValueType::Relation),
-    ];
-    let mut type_row = row![].spacing(theme::spacing::XS);
-    for (label, value_type) in types {
-        type_row = type_row.push(
-            button(text(label).size(theme::typography::LABEL))
-                .height(26)
-                .padding([0.0, theme::spacing::SM])
-                .style(if model.bulk_edit.value_type == value_type {
-                    theme::button_selected
-                } else {
-                    theme::button_toolbar
-                })
-                .on_press(Message::BulkValueTypeSelected(value_type)),
-        );
-    }
+    let types = ["Texto", "Inteiro", "Decimal", "Booleano", "Nulo", "Relação"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let selected = Some(bulk_value_type_label(model.bulk_edit.value_type).to_owned());
+    let type_picker = pick_list(types, selected, |choice: String| {
+        Message::BulkValueTypeSelected(match choice.as_str() {
+            "Inteiro" => BulkEditValueType::Integer,
+            "Decimal" => BulkEditValueType::Float,
+            "Booleano" => BulkEditValueType::Boolean,
+            "Nulo" => BulkEditValueType::Null,
+            "Relação" => BulkEditValueType::Relation,
+            _ => BulkEditValueType::String,
+        })
+    })
+    .width(Length::Fill);
 
     let input: Element<'_, Message> = match model.bulk_edit.value_type {
         BulkEditValueType::Boolean => row![
-            button(text("true").size(theme::typography::LABEL))
+            button(text("Verdadeiro").size(theme::typography::LABEL))
                 .height(28)
                 .padding([0.0, theme::spacing::MD])
                 .style(if model.bulk_edit.bool_value {
@@ -1434,7 +1759,7 @@ fn bulk_value_controls(model: &ShellModel) -> Element<'_, Message> {
                     theme::button_toolbar
                 })
                 .on_press(Message::BulkBoolValueSelected(true)),
-            button(text("false").size(theme::typography::LABEL))
+            button(text("Falso").size(theme::typography::LABEL))
                 .height(28)
                 .padding([0.0, theme::spacing::MD])
                 .style(if !model.bulk_edit.bool_value {
@@ -1446,11 +1771,11 @@ fn bulk_value_controls(model: &ShellModel) -> Element<'_, Message> {
         ]
         .spacing(theme::spacing::XS)
         .into(),
-        BulkEditValueType::Null => text("Valor final: null")
+        BulkEditValueType::Null => text("Valor: null")
             .size(theme::typography::BODY)
             .style(theme::text_muted)
             .into(),
-        BulkEditValueType::Relation => text_input("CARF", &model.bulk_edit.value)
+        BulkEditValueType::Relation => text_input("Destino", &model.bulk_edit.value)
             .padding(theme::spacing::SM)
             .size(theme::typography::BODY)
             .style(theme::input)
@@ -1465,14 +1790,34 @@ fn bulk_value_controls(model: &ShellModel) -> Element<'_, Message> {
     };
 
     column![
-        text("Tipo e valor")
+        text("Tipo")
             .size(theme::typography::LABEL)
             .style(theme::text_muted),
-        type_row,
+        type_picker,
+        text(
+            if model.bulk_edit.value_type == BulkEditValueType::Relation {
+                "Destino"
+            } else {
+                "Valor"
+            }
+        )
+        .size(theme::typography::LABEL)
+        .style(theme::text_muted),
         input,
     ]
     .spacing(theme::spacing::XS)
     .into()
+}
+
+fn bulk_value_type_label(value_type: BulkEditValueType) -> &'static str {
+    match value_type {
+        BulkEditValueType::String => "Texto",
+        BulkEditValueType::Integer => "Inteiro",
+        BulkEditValueType::Float => "Decimal",
+        BulkEditValueType::Boolean => "Booleano",
+        BulkEditValueType::Null => "Nulo",
+        BulkEditValueType::Relation => "Relação",
+    }
 }
 
 fn bulk_preview<'a>(
@@ -1483,10 +1828,10 @@ fn bulk_preview<'a>(
     let mut list = column![].spacing(theme::spacing::SM);
     for change in &plan.changes {
         let status = match change.status {
-            BulkEditChangeStatus::Changed => "Changed",
-            BulkEditChangeStatus::NoChange => "No change",
-            BulkEditChangeStatus::Blocked => "Blocked",
-            BulkEditChangeStatus::Unsupported => "Unsupported",
+            BulkEditChangeStatus::Changed => "Alterado",
+            BulkEditChangeStatus::NoChange => "Sem alteração",
+            BulkEditChangeStatus::Blocked => "Bloqueado",
+            BulkEditChangeStatus::Unsupported => "Não suportado",
         };
         let mut item = column![row![
             text(change.relative_path.display().to_string())
@@ -1506,21 +1851,42 @@ fn bulk_preview<'a>(
         ]
         .align_y(Alignment::Center)]
         .spacing(theme::spacing::XXS);
-        if let Some(before) = change.before.as_ref() {
-            item = item.push(
-                text(format!("- {before}"))
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_warning),
-            );
-        }
-        if let Some(after) = change.after.as_ref() {
-            item = item.push(
-                text(format!("+ {after}"))
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_accent),
-            );
+        if change.property_changes.is_empty() {
+            if let Some(before) = change.before.as_ref() {
+                item = item.push(
+                    text(format!("- {before}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_warning),
+                );
+            }
+            if let Some(after) = change.after.as_ref() {
+                item = item.push(
+                    text(format!("+ {after}"))
+                        .font(theme::mono())
+                        .size(theme::typography::LABEL)
+                        .style(theme::text_accent),
+                );
+            }
+        } else {
+            for property_change in &change.property_changes {
+                if let Some(before) = property_change.before.as_ref() {
+                    item = item.push(
+                        text(format!("- {before}"))
+                            .font(theme::mono())
+                            .size(theme::typography::LABEL)
+                            .style(theme::text_warning),
+                    );
+                }
+                if let Some(after) = property_change.after.as_ref() {
+                    item = item.push(
+                        text(format!("+ {after}"))
+                            .font(theme::mono())
+                            .size(theme::typography::LABEL)
+                            .style(theme::text_accent),
+                    );
+                }
+            }
         }
         if let Some(reason) = change.reason.as_ref() {
             item = item.push(
@@ -1544,25 +1910,19 @@ fn bulk_preview<'a>(
         );
     }
 
-    let apply_label = format!("Aplicar {} alterações", summary.changed);
-    let apply = button(text(apply_label).size(theme::typography::LABEL))
-        .height(30)
-        .padding([0.0, theme::spacing::MD])
-        .style(if plan.can_apply() && !model.bulk_edit.stale {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        });
-    let apply = if plan.can_apply() && !model.bulk_edit.stale {
-        apply.on_press(Message::BulkApplyRequested)
-    } else {
-        apply
-    };
-
     let stale_message: Element<'_, Message> = if model.bulk_edit.stale {
         text("O workspace mudou desde a geração do preview.")
             .size(theme::typography::BODY)
             .style(theme::text_warning)
+            .into()
+    } else {
+        container("").height(0).into()
+    };
+    let error_message: Element<'_, Message> = if let Some(error) = model.bulk_edit.error.as_deref()
+    {
+        text(error)
+            .size(theme::typography::BODY)
+            .style(theme::text_error)
             .into()
     } else {
         container("").height(0).into()
@@ -1573,32 +1933,22 @@ fn bulk_preview<'a>(
             .size(theme::typography::TITLE)
             .style(theme::text_accent),
         row![
-            text(format!("Selected {}", summary.selected)).size(theme::typography::LABEL),
-            text(format!("Will change {}", summary.changed)).size(theme::typography::LABEL),
-            text(format!("No change {}", summary.no_change)).size(theme::typography::LABEL),
-            text(format!("Blocked {}", summary.blocked + summary.unsupported))
-                .size(theme::typography::LABEL),
+            text(format!("{} selecionados", summary.selected)).size(theme::typography::LABEL),
+            text(format!("{} serão alterados", summary.changed)).size(theme::typography::LABEL),
+            text(format!("{} sem alteração", summary.no_change)).size(theme::typography::LABEL),
+            text(format!(
+                "{} bloqueados",
+                summary.blocked + summary.unsupported
+            ))
+            .size(theme::typography::LABEL),
         ]
         .spacing(theme::spacing::MD),
         stale_message,
-        scrollable(list).height(260),
-        row![
-            button(text("Cancelar").size(theme::typography::LABEL))
-                .height(30)
-                .padding([0.0, theme::spacing::MD])
-                .style(theme::button_toolbar)
-                .on_press(Message::BulkEditCanceled),
-            button(text("Gerar novo preview").size(theme::typography::LABEL))
-                .height(30)
-                .padding([0.0, theme::spacing::MD])
-                .style(theme::button_toolbar)
-                .on_press(Message::BulkPreviewRegenerate),
-            apply,
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        error_message,
+        scrollable(list).height(Length::Fill),
     ]
     .spacing(theme::spacing::MD)
+    .height(Length::Fill)
     .into()
 }
 

@@ -8,10 +8,10 @@ use std::{
 use crate::{
     build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
-    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, PropertyValue,
-    Relation, RelationIndex, RelationStatus, ScanError, ScanResult, SchemaCatalog, SchemaType,
-    SearchQuery, SearchState, SortDirection, SqlCatalog, SqlError, SqlQueryResult, TableSort,
-    WorkspaceUpdate,
+    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, HistoryState,
+    MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus, ScanError,
+    ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection, SqlCatalog,
+    SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,10 +136,21 @@ pub struct FilterCount {
 pub struct SqlExplorerState {
     pub open: bool,
     pub query: String,
+    pub mode: SqlExplorerMode,
     pub catalog: Option<SqlCatalog>,
     pub result: Option<SqlQueryResult>,
+    pub write_plan: Option<SqlWritePlan>,
     pub error: Option<String>,
+    pub last_result: Option<String>,
     pub running: bool,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SqlExplorerMode {
+    #[default]
+    Query,
+    Update,
 }
 
 impl SqlExplorerState {
@@ -147,10 +158,14 @@ impl SqlExplorerState {
         Self {
             open: false,
             query: String::new(),
+            mode: SqlExplorerMode::Query,
             catalog: None,
             result: None,
+            write_plan: None,
             error: None,
+            last_result: None,
             running: false,
+            stale: false,
         }
     }
 }
@@ -334,6 +349,7 @@ pub struct ShellModel {
     pub bulk_edit: BulkEditState,
     pub editor: EditorState,
     pub sql_explorer: SqlExplorerState,
+    pub history: HistoryState,
     pub collapsed_sql_tables: BTreeSet<String>,
     pub filters: Vec<FilterCount>,
 }
@@ -357,6 +373,7 @@ pub enum CollectionPanel {
 pub struct BulkEditState {
     pub selected_paths: BTreeSet<PathBuf>,
     pub editor_open: bool,
+    pub step: BulkEditStep,
     pub operation_kind: BulkEditOperationKind,
     pub property: String,
     pub new_property: String,
@@ -367,6 +384,13 @@ pub struct BulkEditState {
     pub error: Option<String>,
     pub last_result: Option<String>,
     pub stale: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BulkEditStep {
+    #[default]
+    Configure,
+    Review,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -392,6 +416,7 @@ impl Default for BulkEditState {
         Self {
             selected_paths: BTreeSet::new(),
             editor_open: false,
+            step: BulkEditStep::Configure,
             operation_kind: BulkEditOperationKind::Set,
             property: String::new(),
             new_property: String::new(),
@@ -454,6 +479,7 @@ impl ShellModel {
             self.sql_explorer.result = None;
             self.sql_explorer.error = None;
             self.sql_explorer.running = false;
+            self.history = HistoryState::default();
             self.collapsed_sql_tables.clear();
             self.scan_state = ScanState::Scanning;
         }
@@ -468,6 +494,111 @@ impl ShellModel {
 
     pub fn select_activity(&mut self, activity: Activity) {
         self.active_activity = activity;
+    }
+
+    pub fn history_loaded(&mut self, result: Result<Vec<MutationHistoryEntry>, String>) {
+        match result {
+            Ok(entries) => {
+                self.history.entries = entries;
+                if let Some(selected) = self.history.selected_entry_id.as_ref() {
+                    if !self
+                        .history
+                        .entries
+                        .iter()
+                        .any(|entry| &entry.id == selected)
+                    {
+                        self.history.selected_entry_id = None;
+                    }
+                }
+                if self.history.selected_entry_id.is_none() {
+                    self.history.selected_entry_id =
+                        self.history.entries.first().map(|entry| entry.id.clone());
+                }
+                self.history.error = None;
+                self.history.undo_plan = None;
+                self.history.clear_confirm = false;
+            }
+            Err(error) => {
+                self.history.entries.clear();
+                self.history.selected_entry_id = None;
+                self.history.error = Some(error);
+                self.history.undo_plan = None;
+            }
+        }
+    }
+
+    pub fn select_history_entry(&mut self, id: String) -> bool {
+        if self.history.entries.iter().any(|entry| entry.id == id) {
+            self.history.selected_entry_id = Some(id);
+            self.history.undo_plan = None;
+            self.history.error = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn selected_history_entry(&self) -> Option<&MutationHistoryEntry> {
+        self.history.selected_entry()
+    }
+
+    pub fn undo_preview_completed(&mut self, result: Result<BulkEditPlan, String>) {
+        match result {
+            Ok(plan) => {
+                self.history.undo_plan = Some(plan);
+                self.history.error = None;
+                self.history.last_result = None;
+            }
+            Err(error) => {
+                self.history.undo_plan = None;
+                self.history.error = Some(error);
+            }
+        }
+    }
+
+    pub fn cancel_undo_preview(&mut self) {
+        self.history.undo_plan = None;
+        self.history.error = None;
+    }
+
+    pub fn undo_apply_completed(&mut self, result: Result<usize, String>) {
+        match result {
+            Ok(count) => {
+                self.history.undo_plan = None;
+                self.history.error = None;
+                self.history.last_result = Some(if count == 1 {
+                    String::from("1 arquivo restaurado.")
+                } else {
+                    format!("{count} arquivos restaurados.")
+                });
+            }
+            Err(error) => {
+                self.history.error = Some(error);
+            }
+        }
+    }
+
+    pub fn request_clear_history(&mut self) {
+        self.history.clear_confirm = true;
+        self.history.error = None;
+    }
+
+    pub fn cancel_clear_history(&mut self) {
+        self.history.clear_confirm = false;
+    }
+
+    pub fn clear_history_completed(&mut self, result: Result<(), String>) {
+        self.history.clear_confirm = false;
+        match result {
+            Ok(()) => {
+                self.history.entries.clear();
+                self.history.selected_entry_id = None;
+                self.history.undo_plan = None;
+                self.history.error = None;
+                self.history.last_result = Some(String::from("Histórico do workspace limpo."));
+            }
+            Err(error) => self.history.error = Some(error),
+        }
     }
 
     pub fn toggle_explorer_node(&mut self, id: ExplorerNodeId) -> bool {
@@ -625,6 +756,7 @@ impl ShellModel {
                 .unwrap_or_default();
         }
         self.bulk_edit.editor_open = true;
+        self.bulk_edit.step = BulkEditStep::Configure;
         self.bulk_edit.plan = None;
         self.bulk_edit.error = None;
         self.bulk_edit.last_result = None;
@@ -634,6 +766,7 @@ impl ShellModel {
 
     pub fn close_bulk_edit(&mut self) {
         self.bulk_edit.editor_open = false;
+        self.bulk_edit.step = BulkEditStep::Configure;
         self.bulk_edit.plan = None;
         self.bulk_edit.error = None;
         self.bulk_edit.stale = false;
@@ -700,6 +833,7 @@ impl ShellModel {
         ) {
             Ok(plan) => {
                 self.bulk_edit.plan = Some(plan);
+                self.bulk_edit.step = BulkEditStep::Review;
                 self.bulk_edit.error = None;
                 self.bulk_edit.stale = false;
                 true
@@ -710,6 +844,13 @@ impl ShellModel {
                 false
             }
         }
+    }
+
+    pub fn return_to_bulk_configuration(&mut self) {
+        self.bulk_edit.step = BulkEditStep::Configure;
+        self.bulk_edit.plan = None;
+        self.bulk_edit.error = None;
+        self.bulk_edit.stale = false;
     }
 
     pub fn bulk_apply_completed(&mut self, result: Result<usize, String>) {
@@ -740,6 +881,15 @@ impl ShellModel {
             .any(|change| changed_paths.iter().any(|path| path == &change.path))
         {
             self.bulk_edit.stale = true;
+        }
+    }
+
+    pub fn mark_sql_preview_stale_for_paths(&mut self, changed_paths: &[PathBuf]) {
+        if self.sql_explorer.write_plan.is_none() {
+            return;
+        };
+        if !changed_paths.is_empty() {
+            self.sql_explorer.stale = true;
         }
     }
 
@@ -912,7 +1062,23 @@ impl ShellModel {
     }
 
     pub fn update_sql_query(&mut self, query: String) {
-        self.sql_explorer.query = query;
+        if self.sql_explorer.query != query {
+            self.sql_explorer.query = query;
+            self.sql_explorer.write_plan = None;
+            self.sql_explorer.stale = false;
+            self.sql_explorer.last_result = None;
+        }
+    }
+
+    pub fn set_sql_mode(&mut self, mode: SqlExplorerMode) {
+        if self.sql_explorer.mode != mode {
+            self.sql_explorer.mode = mode;
+            self.sql_explorer.result = None;
+            self.sql_explorer.write_plan = None;
+            self.sql_explorer.error = None;
+            self.sql_explorer.last_result = None;
+            self.sql_explorer.stale = false;
+        }
     }
 
     pub fn toggle_sql_schema_table(&mut self, table_name: String) {
@@ -924,6 +1090,10 @@ impl ShellModel {
     pub fn sql_execution_started(&mut self) {
         self.sql_explorer.running = true;
         self.sql_explorer.error = None;
+        self.sql_explorer.result = None;
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.last_result = None;
+        self.sql_explorer.stale = false;
     }
 
     pub fn sql_execution_completed(&mut self, result: Result<SqlQueryResult, SqlError>) {
@@ -932,10 +1102,50 @@ impl ShellModel {
             Ok(result) => {
                 self.sql_explorer.result = Some(result);
                 self.sql_explorer.error = None;
+                self.sql_explorer.write_plan = None;
             }
             Err(error) => {
                 self.sql_explorer.error = Some(error.message);
                 self.sql_explorer.result = None;
+                self.sql_explorer.write_plan = None;
+            }
+        }
+    }
+
+    pub fn sql_update_preview_completed(&mut self, result: Result<SqlWritePlan, SqlError>) {
+        self.sql_explorer.running = false;
+        match result {
+            Ok(plan) => {
+                self.sql_explorer.write_plan = Some(plan);
+                self.sql_explorer.result = None;
+                self.sql_explorer.error = None;
+                self.sql_explorer.last_result = None;
+                self.sql_explorer.stale = false;
+            }
+            Err(error) => {
+                self.sql_explorer.error = Some(error.message);
+                self.sql_explorer.write_plan = None;
+                self.sql_explorer.result = None;
+            }
+        }
+    }
+
+    pub fn sql_update_apply_completed(&mut self, result: Result<usize, String>) {
+        self.sql_explorer.running = false;
+        match result {
+            Ok(count) => {
+                self.sql_explorer.last_result = Some(if count == 1 {
+                    String::from("1 documento atualizado.")
+                } else {
+                    format!("{count} documentos atualizados.")
+                });
+                self.sql_explorer.write_plan = None;
+                self.sql_explorer.error = None;
+                self.sql_explorer.stale = false;
+            }
+            Err(error) => {
+                self.sql_explorer.error = Some(error);
+                self.sql_explorer.stale = true;
             }
         }
     }
@@ -953,6 +1163,8 @@ impl ShellModel {
                 self.sql_explorer.error = Some(error.message);
             }
         }
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.stale = false;
     }
 
     pub fn toggle_collection_sort(&mut self, column_id: String) {
@@ -986,6 +1198,8 @@ impl ShellModel {
         self.rebuild_health();
         self.sync_editor_tabs_with_documents();
         self.sync_schema_editor_tab_with_file(&result.root);
+        self.sql_explorer.write_plan = None;
+        self.sql_explorer.stale = false;
         if let Some(selected_document_path) = self.selected_document_path.as_ref() {
             if !self
                 .documents
@@ -2423,8 +2637,8 @@ mod tests {
     };
 
     use super::{
-        workspace_display, Activity, EditorTabKind, EditorViewMode, ExplorerNode, ExplorerNodeId,
-        InspectorModel, InspectorValue, ScanState,
+        workspace_display, Activity, BulkEditStep, EditorTabKind, EditorViewMode, ExplorerNode,
+        ExplorerNodeId, InspectorModel, InspectorValue, ScanState,
     };
 
     #[test]
@@ -5045,6 +5259,21 @@ mod tests {
             .find(|field| field.label == label)
             .unwrap()
             .value
+    }
+
+    #[test]
+    fn bulk_edit_review_back_returns_to_configuration_without_writing() {
+        let mut shell = mock_shell();
+        shell.bulk_edit.editor_open = true;
+        shell.bulk_edit.step = BulkEditStep::Review;
+        shell.bulk_edit.value = String::from("archived");
+
+        shell.return_to_bulk_configuration();
+
+        assert_eq!(shell.bulk_edit.step, BulkEditStep::Configure);
+        assert!(shell.bulk_edit.plan.is_none());
+        assert_eq!(shell.bulk_edit.value, "archived");
+        assert!(shell.bulk_edit.editor_open);
     }
 
     fn string(value: &str) -> PropertyValue {
