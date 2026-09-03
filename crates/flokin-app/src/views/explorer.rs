@@ -1,40 +1,65 @@
 use flokin_core::{
-    Collection, ExplorerNode, ExplorerNodeKind, ScanState, ShellModel, SqlCatalog, SqlTable,
+    Collection, ExplorerNode, ExplorerNodeKind, ScanState, SemanticKind, ShellModel, SqlCatalog,
+    SqlColumnType, SqlTable,
 };
 use iced::widget::{
     button, column, container, row, scrollable,
     scrollable::{Direction, Scrollbar},
-    text,
+    text, tooltip,
 };
 use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
     file_icons,
+    i18n::I18nCatalog,
     message::Message,
     theme::{self, AppTheme},
     widgets,
 };
 
-pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, Message> {
+pub fn view<'a>(
+    model: &'a ShellModel,
+    app_theme: AppTheme,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let workspace = model.workspace_display();
+    let tree_toggle_label = if model.explorer_tree_has_expanded_dirs() {
+        i18n.tr("explorer-collapse-all")
+    } else {
+        i18n.tr("explorer-expand-all")
+    };
+    let tree_toggle_icon = if model.explorer_tree_has_expanded_dirs() {
+        theme::Icon::ChevronsUp
+    } else {
+        theme::Icon::ChevronsDown
+    };
     let header = column![
         row![
-            button(widgets::icon_text(
-                theme::Icon::Folder,
-                "Abrir",
-                theme::icons::TOOLBAR,
-                false
-            ))
+            button(
+                container(widgets::icon_text(
+                    theme::Icon::Folder,
+                    i18n.tr("explorer-open"),
+                    theme::icons::TOOLBAR,
+                    false,
+                ))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center),
+            )
             .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
             .padding([0.0, 12.0])
             .style(theme::button_accent_outline)
             .on_press(Message::OpenFolder),
-            button(widgets::icon_text(
-                theme::Icon::Refresh,
-                "Reindexar",
-                theme::icons::TOOLBAR,
-                false
-            ))
+            button(
+                container(widgets::icon_text(
+                    theme::Icon::Refresh,
+                    i18n.tr("explorer-reindex"),
+                    theme::icons::TOOLBAR,
+                    false,
+                ))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center),
+            )
             .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
             .padding([0.0, 12.0])
             .style(theme::button_toolbar)
@@ -42,7 +67,21 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
         ]
         .spacing(theme::spacing::SM)
         .align_y(Alignment::Center),
-        widgets::section_title("EXPLORER"),
+        row![
+            explorer_header_icon_button(
+                theme::Icon::FilePlus,
+                i18n.tr("explorer-new-file"),
+                Message::NewMarkdownFileRequested,
+            ),
+            explorer_header_icon_button(
+                tree_toggle_icon,
+                tree_toggle_label,
+                Message::ExplorerTreeExpandCollapseToggled,
+            ),
+        ]
+        .spacing(theme::spacing::SM)
+        .align_y(Alignment::Center),
+        widgets::section_title(i18n.tr("explorer-title")),
         row![
             widgets::icon(theme::Icon::Database, theme::icons::META, true),
             text(workspace.name).size(theme::typography::TITLE)
@@ -54,11 +93,11 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
             .font(theme::mono())
             .style(theme::text_muted),
     ]
-    .spacing(theme::spacing::MD);
+    .spacing(theme::spacing::SM);
 
-    let tree = tree(model, app_theme);
+    let tree = tree(model, app_theme, i18n);
 
-    let filters = filters();
+    let filters = filters(i18n);
 
     container(
         column![
@@ -70,7 +109,7 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
                 .height(Length::Fill),
             filters
         ]
-        .spacing(theme::spacing::XL),
+        .spacing(theme::spacing::LG),
     )
     .width(width)
     .height(Length::Fill)
@@ -79,17 +118,21 @@ pub fn view(model: &ShellModel, app_theme: AppTheme, width: f32) -> Element<'_, 
     .into()
 }
 
-pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
+pub fn sql_schema_view<'a>(
+    model: &'a ShellModel,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let body: Element<'_, Message> = match model.sql_explorer.catalog.as_ref() {
-        Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model),
-        Some(_) => column![text("Nenhuma Collection disponível.")
+        Some(catalog) if !catalog.tables.is_empty() => sql_schema(catalog, model, i18n),
+        Some(_) => column![text(i18n.tr("sql-schema-empty"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),]
         .into(),
         None => column![text(if model.sql_explorer.running {
-            "Construindo schema..."
+            i18n.tr("sql-schema-building")
         } else {
-            "Abra uma pasta para gerar o schema."
+            i18n.tr("sql-schema-open-folder")
         })
         .size(theme::typography::BODY)
         .style(theme::text_muted),]
@@ -100,13 +143,13 @@ pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
         column![
             row![
                 widgets::icon(theme::Icon::Database, theme::icons::META, true),
-                text("DATABASE")
+                text(i18n.tr("explorer-database"))
                     .size(theme::typography::TITLE)
                     .style(theme::text_normal),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
-            text("SQLite :memory:")
+            text(i18n.tr("status-sqlite-memory"))
                 .font(theme::mono())
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
@@ -123,9 +166,13 @@ pub fn sql_schema_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
-    let mut collections =
-        column![widgets::section_title("COLLECTIONS")].spacing(theme::spacing::XS);
+pub fn data_view<'a>(
+    model: &'a ShellModel,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut collections = column![widgets::section_title(i18n.tr("explorer-collections"))]
+        .spacing(theme::spacing::XS);
     for collection in &model.collections {
         collections = collections.push(collection_row(
             collection,
@@ -137,7 +184,7 @@ pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
         column![
             row![
                 widgets::icon(theme::Icon::Database, theme::icons::META, true),
-                text("DADOS").size(theme::typography::TITLE),
+                text(i18n.tr("activity-data")).size(theme::typography::TITLE),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
@@ -152,18 +199,27 @@ pub fn data_view(model: &ShellModel, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-fn sql_schema<'a>(catalog: &'a SqlCatalog, model: &'a ShellModel) -> Element<'a, Message> {
+fn sql_schema<'a>(
+    catalog: &'a SqlCatalog,
+    model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let mut tables = column![].spacing(theme::spacing::SM);
     for table in &catalog.tables {
         tables = tables.push(sql_schema_table(
             table,
             !model.collapsed_sql_tables.contains(&table.name),
+            i18n,
         ));
     }
     tables.into()
 }
 
-fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
+fn sql_schema_table<'a>(
+    table: &'a SqlTable,
+    expanded: bool,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let chevron = if expanded {
         theme::Icon::ChevronDown
     } else {
@@ -182,7 +238,10 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             row![
                 container("").width(theme::icons::TREE),
-                text(format!("SQL: {}", table.name))
+                text(i18n.tr_with(
+                    "sql-schema-table-name",
+                    &[("table", table.name.as_str().into())]
+                ))
                     .font(theme::mono())
                     .size(theme::typography::LABEL)
                     .style(theme::text_muted),
@@ -209,7 +268,7 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
                         .width(Length::Fill)
                         .style(theme::text_normal),
                     container(
-                        text(column.value_type.label())
+                        text(sql_column_type_label(column.value_type, i18n))
                             .font(theme::mono())
                             .size(theme::typography::LABEL)
                             .style(theme::text_muted),
@@ -225,15 +284,30 @@ fn sql_schema_table(table: &SqlTable, expanded: bool) -> Element<'_, Message> {
     content.into()
 }
 
-fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Message> {
+fn sql_column_type_label(value_type: SqlColumnType, i18n: &I18nCatalog) -> String {
+    match value_type {
+        SqlColumnType::Text => i18n.tr("sql-column-type-text"),
+        SqlColumnType::Integer => i18n.tr("sql-column-type-integer"),
+        SqlColumnType::Real => i18n.tr("sql-column-type-real"),
+        SqlColumnType::Boolean => i18n.tr("sql-column-type-boolean"),
+        SqlColumnType::Json => i18n.tr("sql-column-type-json"),
+        SqlColumnType::Null => i18n.tr("sql-column-type-null"),
+    }
+}
+
+fn tree<'a>(
+    model: &'a ShellModel,
+    app_theme: AppTheme,
+    i18n: &'a I18nCatalog,
+) -> iced::widget::Column<'a, Message> {
     if model.current_workspace.is_none() {
-        return no_workspace();
+        return no_workspace(i18n);
     }
 
     match &model.scan_state {
         ScanState::Idle => column![],
-        ScanState::Scanning => scan_message("Analisando documentos..."),
-        ScanState::Failed(_) => scan_message("Falha ao analisar workspace"),
+        ScanState::Scanning => scan_message(i18n.tr("explorer-scanning")),
+        ScanState::Failed(_) => scan_message(i18n.tr("explorer-scan-failed")),
         ScanState::Completed {
             documents,
             errors,
@@ -247,14 +321,14 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
             ..
         } => {
             if *documents == 0 {
-                return scan_message("Nenhum arquivo Markdown encontrado.");
+                return scan_message(i18n.tr("explorer-no-markdown"));
             }
 
             let mut tree = column![
-                scan_summary(*documents, *errors, *warnings),
-                widgets::section_title("FILES")
+                scan_summary(*documents, *errors, *warnings, i18n),
+                widgets::section_title(i18n.tr("explorer-files"))
             ]
-            .spacing(theme::spacing::SM);
+            .spacing(theme::spacing::XS);
             for node in &model.explorer {
                 tree = tree.push(tree_node(
                     node,
@@ -263,11 +337,11 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
                     app_theme,
                 ));
             }
-            tree = tree.push(container("").height(theme::spacing::MD));
-            tree = tree.push(widgets::section_title("DATA"));
-            tree = tree.push(sql_explorer_row(model.sql_explorer.open));
-            tree = tree.push(container("").height(theme::spacing::MD));
-            tree = tree.push(widgets::section_title("COLLECTIONS"));
+            tree = tree.push(container("").height(theme::spacing::SM));
+            tree = tree.push(widgets::section_title(i18n.tr("explorer-data")));
+            tree = tree.push(sql_explorer_row(model.sql_explorer.open, i18n));
+            tree = tree.push(container("").height(theme::spacing::SM));
+            tree = tree.push(widgets::section_title(i18n.tr("explorer-collections")));
             for collection in &model.collections {
                 tree = tree.push(collection_row(
                     collection,
@@ -279,24 +353,29 @@ fn tree(model: &ShellModel, app_theme: AppTheme) -> iced::widget::Column<'_, Mes
     }
 }
 
-fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
+fn sql_explorer_row<'a>(selected: bool, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     button(
-        row![
-            widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
-            text("SQL Explorer")
-                .size(theme::typography::BODY)
-                .width(Length::Fill)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                }),
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                widgets::icon(theme::Icon::Terminal, theme::icons::TREE, false),
+                text(i18n.tr("menu-sql-explorer"))
+                    .size(theme::typography::BODY)
+                    .width(Length::Fill)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    }),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(30)
+    .height(28)
     .padding([0.0, theme::spacing::SM])
     .style(if selected {
         theme::button_tree_selected
@@ -307,7 +386,7 @@ fn sql_explorer_row<'a>(selected: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn scan_message<'a>(message: &'a str) -> iced::widget::Column<'a, Message> {
+fn scan_message<'a>(message: String) -> iced::widget::Column<'a, Message> {
     column![container(
         row![
             widgets::icon(theme::Icon::Folder, theme::icons::TREE, false),
@@ -322,13 +401,20 @@ fn scan_message<'a>(message: &'a str) -> iced::widget::Column<'a, Message> {
     .spacing(theme::spacing::XXS)
 }
 
-fn scan_summary(documents: usize, errors: usize, warnings: usize) -> Element<'static, Message> {
-    let mut message = format!("{documents} documentos encontrados");
+fn scan_summary<'a>(
+    documents: usize,
+    errors: usize,
+    warnings: usize,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
+    let mut message = i18n.tr_with("explorer-documents-found", &[("count", documents.into())]);
     if errors > 0 {
-        message.push_str(&format!(", {errors} itens não puderam ser acessados"));
+        message.push_str(", ");
+        message.push_str(&i18n.tr_with("explorer-access-errors", &[("count", errors.into())]));
     }
     if warnings > 0 {
-        message.push_str(&format!(", {warnings} warnings"));
+        message.push_str(", ");
+        message.push_str(&i18n.tr_with("explorer-warnings", &[("count", warnings.into())]));
     }
 
     container(
@@ -365,34 +451,42 @@ fn tree_node<'a>(
         container("").width(theme::icons::TREE).into()
     };
 
-    let icon = match node.kind {
-        ExplorerNodeKind::Folder => widgets::icon(theme::Icon::Folder, theme::icons::TREE, false),
-        ExplorerNodeKind::File => file_icon(&node.path, app_theme),
+    let icon = match (node.semantic_kind, node.kind) {
+        (Some(semantic_kind), _) => semantic_icon(semantic_kind),
+        (None, ExplorerNodeKind::Folder) => {
+            widgets::icon(theme::Icon::Folder, theme::icons::TREE, false)
+        }
+        (None, ExplorerNodeKind::File) => file_icon(&node.path, app_theme),
     };
 
     let item = button(
-        row![
-            container("").width((depth as f32) * 14.0),
-            chevron,
-            icon,
-            text(node.name.as_str())
-                .size(theme::typography::BODY)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                })
-        ]
-        .spacing(theme::spacing::XS)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                container("").width((depth as f32) * 14.0),
+                chevron,
+                icon,
+                text(node.name.as_str())
+                    .size(theme::typography::BODY)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    })
+            ]
+            .spacing(theme::spacing::XS)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(34)
+    .height(30)
     .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::ExplorerNodeToggled(node.id));
 
-    let mut children = column![item].spacing(theme::spacing::XXS);
+    let mut children = column![item].spacing(0);
     if node.expanded {
         for child in &node.children {
             children = children.push(tree_node(
@@ -405,6 +499,48 @@ fn tree_node<'a>(
     }
 
     children.into()
+}
+
+fn explorer_header_icon_button<'a>(
+    icon: theme::Icon,
+    label: String,
+    on_press: Message,
+) -> Element<'a, Message> {
+    tooltip(
+        button(
+            container(widgets::icon(icon, theme::icons::TOOLBAR, false))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(alignment::Horizontal::Center)
+                .align_y(alignment::Vertical::Center),
+        )
+        .width(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
+        .padding(0)
+        .style(theme::button_toolbar)
+        .on_press(on_press),
+        widgets::tooltip_text(label),
+        tooltip::Position::Bottom,
+    )
+    .style(theme::tooltip)
+    .into()
+}
+
+fn semantic_icon(kind: SemanticKind) -> Element<'static, Message> {
+    widgets::icon(semantic_theme_icon(kind), theme::icons::TREE, false)
+}
+
+fn semantic_theme_icon(kind: SemanticKind) -> theme::Icon {
+    match kind {
+        SemanticKind::Agent | SemanticKind::AgentInstructions => theme::Icon::Agent,
+        SemanticKind::Skill => theme::Icon::Puzzle,
+        SemanticKind::Spec | SemanticKind::Ice => theme::Icon::ScrollCheck,
+        SemanticKind::Context => theme::Icon::Split,
+        SemanticKind::Prompt => theme::Icon::Prompt,
+        SemanticKind::Rules => theme::Icon::ScrollCheck,
+        SemanticKind::Memory => theme::Icon::Database,
+        SemanticKind::Mcp => theme::Icon::Terminal,
+    }
 }
 
 fn file_icon(path: &std::path::Path, app_theme: AppTheme) -> Element<'static, Message> {
@@ -445,43 +581,54 @@ fn collection_row<'a>(
     };
 
     button(
-        row![
-            widgets::icon(theme::Icon::Database, theme::icons::TREE, false),
-            text(collection.display_name.as_str())
-                .size(theme::typography::BODY)
-                .width(Length::Fill)
-                .style(if selected {
-                    theme::text_accent
-                } else {
-                    theme::text_normal
-                }),
-            text(collection.document_count.to_string())
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted),
-        ]
-        .spacing(theme::spacing::SM)
-        .align_y(Alignment::Center),
+        container(
+            row![
+                widgets::icon(theme::Icon::Database, theme::icons::TREE, false),
+                text(collection.display_name.as_str())
+                    .size(theme::typography::BODY)
+                    .width(Length::Fill)
+                    .style(if selected {
+                        theme::text_accent
+                    } else {
+                        theme::text_normal
+                    }),
+                text(collection.document_count.to_string())
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL)
+                    .style(theme::text_muted),
+            ]
+            .spacing(theme::spacing::SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
     )
     .width(Length::Fill)
-    .height(34)
+    .height(30)
     .padding([0.0, theme::spacing::SM])
     .style(style)
     .on_press(Message::CollectionSelected(collection.id.clone()))
     .into()
 }
 
-fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
+fn no_workspace<'a>(i18n: &'a I18nCatalog) -> iced::widget::Column<'a, Message> {
     column![
-        text("Nenhuma pasta aberta")
+        text(i18n.tr("explorer-no-workspace"))
             .size(theme::typography::BODY)
             .style(theme::text_muted),
-        button(widgets::icon_text(
-            theme::Icon::Folder,
-            "Abrir pasta",
-            theme::icons::TOOLBAR,
-            false
-        ))
+        button(
+            container(
+                row![
+                    widgets::icon_inverse(theme::Icon::Folder, theme::icons::TOOLBAR),
+                    text(i18n.tr("menu-open-folder")).size(theme::typography::BODY),
+                ]
+                .spacing(theme::spacing::SM)
+                .align_y(Alignment::Center),
+            )
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Center),
+        )
         .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
         .padding([0.0, 12.0])
         .style(theme::button_primary)
@@ -490,10 +637,10 @@ fn no_workspace<'a>() -> iced::widget::Column<'a, Message> {
     .spacing(theme::spacing::MD)
 }
 
-fn filters<'a>() -> Element<'a, Message> {
+fn filters<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let list = column![
-        widgets::section_title("FILTROS"),
-        text("Disponíveis após indexação")
+        widgets::section_title(i18n.tr("explorer-filters")),
+        text(i18n.tr("explorer-filters-empty"))
             .size(theme::typography::BODY)
             .style(theme::text_muted)
     ]
@@ -502,4 +649,36 @@ fn filters<'a>() -> Element<'a, Message> {
     container(list)
         .padding([theme::spacing::LG, theme::spacing::XS])
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use flokin_core::SemanticKind;
+
+    use super::semantic_theme_icon;
+    use crate::theme;
+
+    #[test]
+    fn semantic_icons_use_dedicated_theme_icons_before_devicon_fallback() {
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Skill),
+            theme::Icon::Puzzle
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Spec),
+            theme::Icon::ScrollCheck
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Prompt),
+            theme::Icon::Prompt
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::Context),
+            theme::Icon::Split
+        );
+        assert_eq!(
+            semantic_theme_icon(SemanticKind::AgentInstructions),
+            theme::Icon::Agent
+        );
+    }
 }

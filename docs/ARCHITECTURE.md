@@ -375,23 +375,56 @@ After watcher updates, manual reindex, or workspace changes, the SQL projection 
 
 ## SQL Autocomplete
 
-MDB-010 adds contextual SQL autocomplete without introducing an LSP or coupling the core crate to Iced.
+SQL autocomplete is deferred until after v0.1. The v0.1 SQL Editor runtime deliberately behaves as a plain multiline editor: no popup is rendered, no suggestion state is mounted, and normal editing keys such as Enter, Tab, ArrowUp, ArrowDown, and Escape are not captured by completion logic. `Ctrl+Enter` remains the only SQL editor shortcut handled by the app for executing a query or generating an update preview.
 
 ```text
 SqlCatalog
 completion engine
-SQL Editor popup
+post-v0.1 UI
 ```
 
-`flokin-core` owns the completion model and uses `SqlCatalog` as the source of truth for real SQL table names, normalized column names, and column types. The engine performs lightweight context analysis for keywords, tables, columns, aliases, dotted alias access, and a small SQLite function set. It returns replacement ranges and insertion text so the GUI can replace only the current fragment.
-
-`flokin-app` owns editor interaction state: popup visibility, selected suggestion, keyboard navigation, and insertion into the existing Iced text editor. Because watcher updates already rebuild the disposable projection catalog, autocomplete suggestions update from the latest catalog without opening a separate database or rereading Markdown.
+`flokin-core` may retain GUI-independent completion helpers for future work, but `flokin-app` does not connect them to the active editor in v0.1.
 
 ## File Icons
 
 Explorer filetype metadata is resolved through the app-local file icon helper, which wraps `devicons` instead of calling it directly from views. `AppTheme::Dark` maps to `devicons::Theme::Dark`, and `AppTheme::Light` maps to `devicons::Theme::Light`.
 
 `devicons` glyphs require Nerd Fonts. FlokinMD does not bundle a compatible font yet and must not require manual user font setup, so the current renderer uses a stable colored text fallback derived from the resolved file type while preserving the devicons glyph and color in `FileIconInfo`. A future focused change can bundle a compatible icon font and switch the helper to render the glyphs directly.
+
+## Runtime Localization
+
+I18N-001 adds app-level runtime localization in `flokin-app` without coupling the Rust core to Iced or translation resources.
+
+```text
+AppSettings
+AppLanguage
+I18nCatalog
+Views
+```
+
+The language preference is global application configuration, not workspace data. It is stored outside Markdown workspaces in the existing platform app-data settings file (`settings.conf`) next to other app metadata. The settings file is versioned and written via a temporary file followed by rename so theme and language changes survive restart without depending on the current working directory.
+
+Locale resources live under `crates/flokin-app/src/i18n/locales/` and are embedded in the binary with `include_str!`, so Linux, Windows, macOS, and future packaged builds do not need to find locale files from the runtime working directory.
+
+```text
+Settings
+LanguageSelected
+state.language update
+settings persistence
+Iced rerender
+```
+
+Changing language is intentionally cheap. It updates only the app language and active `I18nCatalog`; workspace, tabs, dirty buffers, SQL text, previews, history, graph state, theme, and sidebar sizes are not reset. User-owned data is never translated automatically: Markdown/YAML contents, file names, paths, Collection names, field names, field values, SQL text, SQL identifiers, relation targets, document titles, and the FlokinMD brand remain as authored.
+
+`AppLanguage` currently supports `pt-BR` and `en-US`. On first run without settings, the app maps OS locales beginning with `pt` to Portuguese (Brazil) and all other or unavailable locales to English. Existing settings files without a `language` key migrate to Portuguese (Brazil), preserving the language users saw before localization was introduced.
+
+To add a language:
+
+1. Add a new `AppLanguage` variant with locale id, native display name, and embedded resource.
+2. Add a matching `.ftl` file under `i18n/locales`.
+3. Provide every existing translation key.
+4. Register the language in `AppLanguage::all`.
+5. Run the locale key parity test and app quality checks.
 
 ## Future Direction
 

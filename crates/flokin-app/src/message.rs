@@ -1,9 +1,9 @@
 use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
-    BulkEditOperationKind, BulkEditValueType, CollectionPanel, EditorViewMode, ExplorerNodeId,
-    GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog, SqlError,
-    SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
+    BulkEditOperationKind, BulkEditValueType, CollectionPanel, ContextSection, EditorViewMode,
+    ExplorerNodeId, GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog,
+    SqlError, SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -11,6 +11,8 @@ use iced::{
     window,
 };
 
+use crate::i18n::AppLanguage;
+use crate::services::external_links::AboutContactLink;
 use crate::services::file_watcher::WatcherMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,13 +26,16 @@ pub enum MenuId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
+    NewFile,
     OpenFolder,
+    CloseFolder,
     Reindex,
     ToggleTheme,
     ToggleLeftSidebar,
     ToggleRightSidebar,
     Explorer,
     Data,
+    Context,
     Graph,
     Health,
     SqlExplorer,
@@ -45,11 +50,20 @@ pub enum MenuAction {
 pub enum AppMode {
     Files,
     Data,
+    Context,
     Graph,
     Health,
     Sql,
     Settings,
     History,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewMarkdownFileError {
+    AlreadyExists,
+    InvalidName,
+    NoWorkspace,
+    Io(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,12 +80,21 @@ pub enum Message {
     AppModeSelected(AppMode),
     #[allow(dead_code)]
     ExplorerNodeToggled(ExplorerNodeId),
+    ExplorerTreeExpandCollapseToggled,
+    NewMarkdownFileRequested,
+    NewMarkdownFileNameChanged(String),
+    NewMarkdownFileCanceled,
+    NewMarkdownFileConfirmed,
+    NewMarkdownFileCreated(Result<PathBuf, NewMarkdownFileError>),
     OpenFolder,
+    CloseFolderRequested,
     FolderSelected(Option<PathBuf>),
     ScanCompleted(u64, PathBuf, Result<ScanResult, String>),
     ReindexWorkspace,
     WorkspaceWatcher(WatcherMessage),
     WorkspaceUpdateCompleted(u64, PathBuf, Result<WorkspaceUpdate, String>),
+    LastWorkspacePersisted(Result<(), String>),
+    LastWorkspaceCleared(Result<(), String>),
     CollectionSelected(String),
     CollectionPanelSelected(CollectionPanel),
     SchemaFieldSelected {
@@ -88,6 +111,8 @@ pub enum Message {
     SchemaCreateCompleted(Result<PathBuf, String>),
     SchemaOpenRequested,
     TableHeaderSelected(String),
+    CollectionPagePrevious,
+    CollectionPageNext,
     BulkSelectionToggled(PathBuf),
     BulkSelectAllVisible(bool),
     BulkSelectionCleared,
@@ -105,6 +130,10 @@ pub enum Message {
     BulkApplyRequested,
     BulkApplyCompleted(Result<(Vec<PathBuf>, usize, Option<String>), String>),
     MarkdownSelected(PathBuf),
+    ContextSectionSelected(ContextSection),
+    ContextArtifactSelected(PathBuf),
+    ContextOpenInEditor(PathBuf),
+    ContextShowInGraph(PathBuf),
     GraphFitRequested,
     GraphFocusSelected,
     GraphZoomIn,
@@ -150,12 +179,6 @@ pub enum Message {
     SqlExplorerOpened,
     SqlSchemaTableToggled(String),
     SqlEditorAction(text_editor::Action),
-    SqlCompletionRequested,
-    SqlCompletionNext,
-    SqlCompletionPrevious,
-    SqlCompletionAccepted,
-    SqlCompletionSelected(usize),
-    SqlCompletionClosed,
     SqlModeSelected(SqlExplorerMode),
     SqlExecute,
     SqlProjectionCompleted(u64, PathBuf, Result<SqlCatalog, SqlError>),
@@ -178,10 +201,15 @@ pub enum Message {
     KeyboardEvent(keyboard::Event),
     ThemeToggled,
     ThemeSelected(bool),
+    ThemePersisted(Result<(), String>),
+    LanguageSelected(AppLanguage),
+    LanguagePersisted(Result<(), String>),
     MenuToggled(MenuId),
     MenuHovered(MenuId),
     MenuAction(MenuAction),
     MenuClosed,
+    AboutContactOpened(AboutContactLink),
+    AboutContactOpenCompleted(Result<(), String>),
     AboutClosed,
     SplitterPressed(SplitterKind, f32),
     SplitterMoved(f32, f32),
