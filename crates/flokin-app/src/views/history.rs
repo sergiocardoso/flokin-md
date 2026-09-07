@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local};
 use flokin_core::{
     BulkEditChangeStatus, BulkEditPlan, HistoryFileChange, HistoryState, MutationHistoryEntry,
-    ShellModel,
+    MutationSource, ShellModel,
 };
 use iced::widget::{
     button, column, container, mouse_area, row, scrollable, stack, text,
@@ -10,54 +10,55 @@ use iced::widget::{
 use iced::{alignment, Alignment, Element, Length};
 
 use crate::{
+    i18n::I18nCatalog,
     message::Message,
     theme::{self},
     widgets,
 };
 
-pub fn view(model: &ShellModel) -> Element<'_, Message> {
+pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let page = if model.current_workspace.is_none() {
         centered_empty(
-            "Abra um workspace para ver o histórico.",
-            "O histórico é local e isolado por workspace.",
+            i18n.tr("history-no-workspace-title"),
+            i18n.tr("history-no-workspace-subtitle"),
         )
     } else if let Some(plan) = model.history.undo_plan.as_ref() {
-        undo_preview(model, plan)
+        undo_preview(model, plan, i18n)
     } else {
-        history_page(model)
+        history_page(model, i18n)
     };
 
     if model.history.clear_confirm {
-        stack![page, clear_history_dialog()].into()
+        stack![page, clear_history_dialog(i18n)].into()
     } else {
         page
     }
 }
 
-fn history_page(model: &ShellModel) -> Element<'_, Message> {
+fn history_page<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let header = row![
         column![
-            text("Histórico")
+            text(i18n.tr("history-title"))
                 .size(theme::typography::TITLE)
                 .style(theme::text_accent),
-            text("Operações de Bulk Edit, SQL Update e Undo registradas localmente.")
+            text(i18n.tr("history-description"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         ]
         .spacing(theme::spacing::XXS)
         .width(Length::Fill),
-        clear_button(!model.history.entries.is_empty()),
+        clear_button(!model.history.entries.is_empty(), i18n),
     ]
     .spacing(theme::spacing::MD)
     .align_y(Alignment::Center);
 
     let body = if model.history.entries.is_empty() {
         centered_empty(
-            "Nenhuma alteração registrada ainda.",
-            "Operações de Bulk Edit e SQL Update aparecerão aqui.",
+            i18n.tr("history-empty-title"),
+            i18n.tr("history-empty-subtitle"),
         )
     } else {
-        row![history_list(model), history_detail(model)]
+        row![history_list(model, i18n), history_detail(model, i18n)]
             .spacing(theme::spacing::MD)
             .height(Length::Fill)
             .into()
@@ -89,11 +90,11 @@ fn history_page(model: &ShellModel) -> Element<'_, Message> {
         .into()
 }
 
-fn history_list(model: &ShellModel) -> Element<'_, Message> {
+fn history_list<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let mut rows = column![].spacing(theme::spacing::XS);
     let mut last_day = String::new();
     for entry in &model.history.entries {
-        let day = day_label(entry.created_at_unix);
+        let day = day_label(entry.created_at_unix, i18n);
         if day != last_day {
             rows = rows.push(
                 text(day.clone())
@@ -106,6 +107,7 @@ fn history_list(model: &ShellModel) -> Element<'_, Message> {
             &model.history,
             entry,
             model.history.selected_entry_id.as_deref() == Some(entry.id.as_str()),
+            i18n,
         ));
     }
 
@@ -121,8 +123,9 @@ fn history_row<'a>(
     history: &'a HistoryState,
     entry: &'a MutationHistoryEntry,
     selected: bool,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let status = history.entry_status_label(entry);
+    let status = history_status(history, entry, i18n);
     let sql = entry
         .sql
         .as_ref()
@@ -134,7 +137,7 @@ fn history_row<'a>(
                 .font(theme::mono())
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
-            text(entry.source.label_pt())
+            text(source_label(entry.source, i18n))
                 .size(theme::typography::LABEL)
                 .style(theme::text_accent),
             text(entry.file_count_label())
@@ -174,25 +177,28 @@ fn history_row<'a>(
         .into()
 }
 
-fn history_detail(model: &ShellModel) -> Element<'_, Message> {
+fn history_detail<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let Some(entry) = model.history.selected_entry() else {
-        return centered_empty("Selecione uma operação.", "Os detalhes aparecerão aqui.");
+        return centered_empty(
+            i18n.tr("history-select-title"),
+            i18n.tr("history-select-subtitle"),
+        );
     };
 
     let mut files = column![].spacing(theme::spacing::SM);
     for file in &entry.files {
-        files = files.push(file_diff(file));
+        files = files.push(file_diff(file, i18n));
     }
 
     let mut metadata = column![
-        text(entry.source.label_pt())
+        text(source_label(entry.source, i18n))
             .size(theme::typography::TITLE)
             .style(theme::text_accent),
         text(format!(
             "{} • {} • {}",
-            timestamp_label(entry.created_at_unix),
+            timestamp_label(entry.created_at_unix, i18n),
             entry.file_count_label(),
-            model.history.entry_status_label(entry)
+            history_status(&model.history, entry, i18n)
         ))
         .size(theme::typography::BODY)
         .style(theme::text_muted),
@@ -217,10 +223,13 @@ fn history_detail(model: &ShellModel) -> Element<'_, Message> {
     }
     if let Some(original_id) = entry.original_entry_id.as_ref() {
         metadata = metadata.push(
-            text(format!("Operação original: {original_id}"))
-                .font(theme::mono())
-                .size(theme::typography::LABEL)
-                .style(theme::text_muted),
+            text(i18n.tr_with(
+                "history-original-operation",
+                &[("id", original_id.as_str().into())],
+            ))
+            .font(theme::mono())
+            .size(theme::typography::LABEL)
+            .style(theme::text_muted),
         );
     }
 
@@ -229,7 +238,7 @@ fn history_detail(model: &ShellModel) -> Element<'_, Message> {
             metadata.width(Length::Fill),
             button(widgets::icon_text(
                 theme::Icon::Reset,
-                "Desfazer alteração",
+                i18n.tr("history-undo-button"),
                 theme::icons::TOOLBAR,
                 false,
             ))
@@ -261,7 +270,11 @@ fn history_detail(model: &ShellModel) -> Element<'_, Message> {
     .into()
 }
 
-fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'a, Message> {
+fn undo_preview<'a>(
+    _model: &'a ShellModel,
+    plan: &'a BulkEditPlan,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let summary = plan.summary();
     let mut files = column![].spacing(theme::spacing::SM);
     for change in &plan.changes {
@@ -280,7 +293,7 @@ fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'
         }
         if change.property_changes.is_empty() {
             item = item.push(
-                text("Conteúdo completo será restaurado.")
+                text(i18n.tr("history-full-content-restore"))
                     .size(theme::typography::LABEL)
                     .style(theme::text_muted),
             );
@@ -299,11 +312,7 @@ fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'
         );
     }
 
-    let label = if summary.changed == 1 {
-        String::from("Desfazer 1 alteração")
-    } else {
-        format!("Desfazer {} alterações", summary.changed)
-    };
+    let label = i18n.tr_with("undo-apply", &[("count", summary.changed.into())]);
     let apply = button(text(label).size(theme::typography::LABEL))
         .height(34)
         .padding([0.0, theme::spacing::MD])
@@ -319,7 +328,7 @@ fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'
     };
 
     let footer = row![
-        button(text("Cancelar").size(theme::typography::LABEL))
+        button(text(i18n.tr("action-cancel")).size(theme::typography::LABEL))
             .height(34)
             .padding([0.0, theme::spacing::MD])
             .style(theme::button_toolbar)
@@ -332,10 +341,10 @@ fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'
 
     container(
         column![
-            text("Revisar desfazer")
+            text(i18n.tr("undo-review-title"))
                 .size(theme::typography::TITLE)
                 .style(theme::text_accent),
-            text(format!("{} arquivos serão restaurados", summary.changed))
+            text(i18n.tr_with("undo-files-restore", &[("count", summary.changed.into())]))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
             scrollable(files).height(Length::Fill),
@@ -350,7 +359,7 @@ fn undo_preview<'a>(_model: &'a ShellModel, plan: &'a BulkEditPlan) -> Element<'
     .into()
 }
 
-fn file_diff(file: &HistoryFileChange) -> Element<'_, Message> {
+fn file_diff<'a>(file: &'a HistoryFileChange, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let mut item = column![text(file.relative_path.display().to_string())
         .font(theme::mono())
         .size(theme::typography::LABEL)
@@ -367,7 +376,7 @@ fn file_diff(file: &HistoryFileChange) -> Element<'_, Message> {
     }
     if file.property_changes.is_empty() {
         item = item.push(
-            text("Conteúdo completo registrado.")
+            text(i18n.tr("history-full-content-recorded"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
         );
@@ -394,8 +403,8 @@ fn diff_line<'a>(prefix: &'static str, value: &'a str, removed: bool) -> Element
         .into()
 }
 
-fn clear_button(enabled: bool) -> Element<'static, Message> {
-    let button = button(text("Limpar histórico").size(theme::typography::LABEL))
+fn clear_button<'a>(enabled: bool, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+    let button = button(text(i18n.tr("history-clear")).size(theme::typography::LABEL))
         .height(34)
         .padding([0.0, theme::spacing::MD])
         .style(if enabled {
@@ -410,7 +419,7 @@ fn clear_button(enabled: bool) -> Element<'static, Message> {
     }
 }
 
-fn centered_empty<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
+fn centered_empty<'a>(title: String, subtitle: String) -> Element<'a, Message> {
     container(
         column![
             text(title)
@@ -431,7 +440,7 @@ fn centered_empty<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message>
     .into()
 }
 
-fn clear_history_dialog<'a>() -> Element<'a, Message> {
+fn clear_history_dialog<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     stack![
         mouse_area(
             container("")
@@ -443,19 +452,19 @@ fn clear_history_dialog<'a>() -> Element<'a, Message> {
         container(
             container(
                 column![
-                    text("Limpar histórico")
+                    text(i18n.tr("history-clear-confirm-title"))
                         .size(theme::typography::TITLE)
                         .style(theme::text_accent),
-                    text("Isso removerá o histórico de operações deste workspace. Os arquivos Markdown não serão alterados.")
+                    text(i18n.tr("history-clear-confirm-description"))
                         .size(theme::typography::BODY)
                         .wrapping(Wrapping::Word)
                         .style(theme::text_normal),
                     row![
-                        button(text("Cancelar").size(theme::typography::BODY))
+                        button(text(i18n.tr("action-cancel")).size(theme::typography::BODY))
                             .padding([7.0, 12.0])
                             .style(theme::button_toolbar)
                             .on_press(Message::HistoryClearCanceled),
-                        button(text("Limpar histórico").size(theme::typography::BODY))
+                        button(text(i18n.tr("history-clear")).size(theme::typography::BODY))
                             .padding([7.0, 12.0])
                             .style(theme::button_selected)
                             .on_press(Message::HistoryClearConfirmed),
@@ -479,14 +488,14 @@ fn clear_history_dialog<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn day_label(timestamp: i64) -> String {
+fn day_label(timestamp: i64, i18n: &I18nCatalog) -> String {
     let date = local_time(timestamp);
     let today = Local::now().date_naive();
     let entry_date = date.date_naive();
     if entry_date == today {
-        String::from("Hoje")
+        i18n.tr("history-today")
     } else if entry_date == today.pred_opt().unwrap_or(today) {
-        String::from("Ontem")
+        i18n.tr("history-yesterday")
     } else {
         date.format("%d/%m/%Y").to_string()
     }
@@ -496,8 +505,33 @@ fn time_label(timestamp: i64) -> String {
     local_time(timestamp).format("%H:%M").to_string()
 }
 
-fn timestamp_label(timestamp: i64) -> String {
-    local_time(timestamp).format("%d/%m/%Y %H:%M").to_string()
+fn timestamp_label(timestamp: i64, i18n: &I18nCatalog) -> String {
+    let utc = DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now);
+    i18n.format_datetime(utc)
+}
+
+fn source_label(source: MutationSource, i18n: &I18nCatalog) -> String {
+    match source {
+        MutationSource::BulkEdit => i18n.tr("history-source-bulk"),
+        MutationSource::SqlUpdate => i18n.tr("history-source-sql"),
+        MutationSource::Undo => i18n.tr("history-source-undo"),
+    }
+}
+
+fn history_status(
+    history: &HistoryState,
+    entry: &MutationHistoryEntry,
+    i18n: &I18nCatalog,
+) -> String {
+    if entry.source == MutationSource::Undo {
+        i18n.tr("history-undo-unavailable")
+    } else if history.is_entry_undone(entry) {
+        i18n.tr("history-undone")
+    } else if entry.is_intrinsically_undoable() {
+        i18n.tr("history-undo-available")
+    } else {
+        i18n.tr("history-undo-unavailable")
+    }
 }
 
 fn local_time(timestamp: i64) -> DateTime<Local> {

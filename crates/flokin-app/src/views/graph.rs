@@ -12,12 +12,13 @@ use iced::{
     Theme, Vector,
 };
 
-use crate::{message::Message, theme, widgets};
+use crate::{i18n::I18nCatalog, message::Message, theme, widgets};
 
 const NODE_WIDTH: f32 = theme::sizes::GRAPH_NODE_WIDTH;
 const NODE_HEIGHT: f32 = theme::sizes::GRAPH_NODE_HEIGHT;
-const FIT_PADDING: f32 = 72.0;
-const NODE_PADDING_X: f32 = 13.0;
+const FIT_PADDING: f32 = 56.0;
+const NODE_PADDING_X: f32 = 14.0;
+const NODE_MARKER_RADIUS: f32 = 4.0;
 
 #[derive(Debug, Clone)]
 pub struct GraphViewState {
@@ -43,17 +44,27 @@ impl Default for GraphViewState {
     }
 }
 
-pub fn sidebar(state: &GraphViewState, width: f32) -> Element<'_, Message> {
+pub fn sidebar<'a>(
+    state: &'a GraphViewState,
+    width: f32,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let problems = state.projection.problem_count();
     let mut content = column![
-        widgets::section_title("GRAPH"),
-        graph_metric("Documents", state.projection.document_count()),
-        graph_metric("Relations", state.projection.relation_count()),
+        widgets::section_title(i18n.tr("graph-section")),
+        graph_metric(
+            i18n.tr("graph-documents"),
+            state.projection.document_count()
+        ),
+        graph_metric(
+            i18n.tr("graph-relations"),
+            state.projection.relation_count()
+        ),
     ]
     .spacing(theme::spacing::SM);
 
     if problems > 0 {
-        content = content.push(graph_metric("Problems", problems));
+        content = content.push(graph_metric(i18n.tr("graph-problems"), problems));
     }
 
     let mut collections = state
@@ -92,7 +103,7 @@ pub fn sidebar(state: &GraphViewState, width: f32) -> Element<'_, Message> {
         .into()
 }
 
-fn graph_metric(label: &'static str, value: usize) -> Element<'static, Message> {
+fn graph_metric<'a>(label: String, value: usize) -> Element<'a, Message> {
     row![
         text(label)
             .size(theme::typography::BODY)
@@ -109,23 +120,26 @@ fn graph_metric(label: &'static str, value: usize) -> Element<'static, Message> 
 pub fn view<'a>(
     state: &'a GraphViewState,
     selected_document: Option<&'a std::path::PathBuf>,
+    i18n: &'a I18nCatalog,
 ) -> Element<'a, Message> {
-    let summary = format!(
-        "{} documentos • {} relações",
-        state.projection.document_count(),
-        state.projection.relation_count()
+    let summary = i18n.tr_with(
+        "graph-summary",
+        &[
+            ("documents", state.projection.document_count().into()),
+            ("relations", state.projection.relation_count().into()),
+        ],
     );
     let zoom_label = zoom_label(state.zoom);
 
     let zoom_controls = toolbar_group(row![
         graph_icon_button(
             theme::Icon::Minus,
-            "Diminuir zoom",
+            i18n.tr("graph-zoom-out"),
             Some(Message::GraphZoomOut),
         ),
         graph_icon_button(
             theme::Icon::Plus,
-            "Aumentar zoom",
+            i18n.tr("graph-zoom-in"),
             Some(Message::GraphZoomIn),
         ),
         container(
@@ -141,7 +155,7 @@ pub fn view<'a>(
         .style(theme::graph_zoom_badge),
         graph_icon_button(
             theme::Icon::Reset,
-            "Resetar zoom",
+            i18n.tr("graph-zoom-reset"),
             Some(Message::GraphZoomReset),
         ),
     ]);
@@ -149,18 +163,18 @@ pub fn view<'a>(
     let navigation_controls = toolbar_group(row![
         graph_icon_button(
             theme::Icon::Focus,
-            "Centralizar selecionado",
+            i18n.tr("graph-focus-selected"),
             selected_document.map(|_| Message::GraphFocusSelected),
         ),
         graph_icon_button(
             theme::Icon::Frame,
-            "Enquadrar grafo",
+            i18n.tr("graph-fit"),
             Some(Message::GraphFitRequested),
         ),
     ]);
 
     let toolbar = row![
-        text("Grafo")
+        text(i18n.tr("graph-title"))
             .size(theme::typography::TITLE)
             .style(theme::text_normal),
         text(summary)
@@ -187,6 +201,7 @@ pub fn view<'a>(
         container(toolbar)
             .height(theme::sizes::TOOLBAR_HEIGHT)
             .padding([0.0, theme::spacing::LG])
+            .align_y(alignment::Vertical::Center)
             .style(theme::top_bar),
         container(canvas)
             .width(Length::Fill)
@@ -211,25 +226,30 @@ fn toolbar_group<'a>(content: iced::widget::Row<'a, Message>) -> Element<'a, Mes
 
 fn graph_icon_button<'a>(
     icon: theme::Icon,
-    tooltip: &'static str,
+    tooltip: String,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
-    let mut control = button(widgets::icon(icon, theme::icons::TOOLBAR, false))
-        .width(theme::sizes::GRAPH_TOOLBAR_BUTTON_SIZE)
-        .height(theme::sizes::GRAPH_TOOLBAR_BUTTON_SIZE)
-        .padding(0)
-        .style(theme::button_graph_toolbar);
+    let mut control = button(
+        container(widgets::icon(icon, theme::icons::TOOLBAR, false))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .width(theme::sizes::GRAPH_TOOLBAR_BUTTON_SIZE)
+    .height(theme::sizes::GRAPH_TOOLBAR_BUTTON_SIZE)
+    .padding(0)
+    .style(theme::button_graph_toolbar);
     if let Some(message) = on_press {
         control = control.on_press(message);
     }
 
     iced::widget::tooltip(
         control,
-        container(text(tooltip).size(theme::typography::LABEL))
-            .padding([4.0, 7.0])
-            .style(theme::overlay_panel),
+        widgets::tooltip_text(tooltip),
         iced::widget::tooltip::Position::Bottom,
     )
+    .style(theme::tooltip)
     .into()
 }
 
@@ -360,7 +380,6 @@ impl canvas::Program<Message> for GraphCanvas<'_> {
         let palette = theme::palette(theme);
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), palette.graph_background);
-        draw_grid(&mut frame, palette.graph_canvas_grid);
 
         let hover = cursor
             .position_in(bounds)
@@ -430,22 +449,6 @@ impl GraphCanvas<'_> {
             || hover
                 .as_ref()
                 .is_some_and(|id| &edge.source == id || &edge.target == id)
-    }
-}
-
-fn draw_grid(frame: &mut canvas::Frame, color: Color) {
-    let step = theme::sizes::GRAPH_GRID_STEP;
-    let mut x = step / 2.0;
-    while x <= frame.width() {
-        let mut y = step / 2.0;
-        while y <= frame.height() {
-            frame.fill(
-                &canvas::Path::circle(Point::new(x, y), 0.75),
-                Color { a: 0.38, ..color },
-            );
-            y += step;
-        }
-        x += step;
     }
 }
 
@@ -540,6 +543,14 @@ fn draw_edges(
             path.move_to(start);
             path.quadratic_curve_to(control, end);
         });
+        if active {
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_width(5.0)
+                    .with_color(Color { a: 0.12, ..color }),
+            );
+        }
         frame.stroke(
             &path,
             canvas::Stroke::default()
@@ -661,12 +672,12 @@ fn draw_node(
     let rect = canvas::Path::rounded_rectangle(
         Point::new(position.x, position.y),
         Size::new(NODE_WIDTH, NODE_HEIGHT),
-        border::Radius::from(theme::radius::SM),
+        border::Radius::from(theme::radius::MD),
     );
     let shadow = canvas::Path::rounded_rectangle(
-        Point::new(position.x + 0.0, position.y + 2.0),
+        Point::new(position.x, position.y + 3.0),
         Size::new(NODE_WIDTH, NODE_HEIGHT),
-        border::Radius::from(theme::radius::SM),
+        border::Radius::from(theme::radius::MD),
     );
     frame.fill(&shadow, palette.graph_node_shadow);
     frame.fill(&rect, background);
@@ -675,18 +686,34 @@ fn draw_node(
         canvas::Stroke::default()
             .with_width(
                 if selected || graph.is_selected_or_hovered(&node.id, hover) {
-                    1.6
+                    if selected {
+                        2.2
+                    } else {
+                        1.6
+                    }
                 } else {
                     1.0
                 },
             )
             .with_color(border_color),
     );
+    let marker_color = match node.kind {
+        GraphNodeKind::Document => palette.graph_edge_active,
+        GraphNodeKind::Unresolved => palette.graph_unresolved,
+        GraphNodeKind::Ambiguous => palette.graph_ambiguous,
+    };
+    frame.fill(
+        &canvas::Path::circle(
+            Point::new(position.x + NODE_PADDING_X, position.y + 14.0),
+            NODE_MARKER_RADIUS,
+        ),
+        marker_color,
+    );
     let title = fit_label(&node.title, 22);
     frame.fill_text(canvas::Text {
         content: title,
-        position: Point::new(position.x + NODE_PADDING_X, position.y + 12.0),
-        max_width: NODE_WIDTH - NODE_PADDING_X * 2.0,
+        position: Point::new(position.x + NODE_PADDING_X + 12.0, position.y + 8.0),
+        max_width: NODE_WIDTH - NODE_PADDING_X * 2.0 - 12.0,
         color: palette.text,
         size: Pixels(theme::sizes::GRAPH_NODE_FONT_SIZE as f32),
         font: theme::typography::UI,
@@ -705,7 +732,7 @@ fn draw_node(
         });
     frame.fill_text(canvas::Text {
         content: fit_label(subtitle, 24),
-        position: Point::new(position.x + NODE_PADDING_X, position.y + 38.0),
+        position: Point::new(position.x + NODE_PADDING_X + 12.0, position.y + 40.0),
         max_width: NODE_WIDTH - NODE_PADDING_X * 2.0,
         color: if node.kind == GraphNodeKind::Document {
             palette.text_muted

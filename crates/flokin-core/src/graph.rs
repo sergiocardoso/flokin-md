@@ -5,8 +5,10 @@ use std::{
 
 use crate::{Collection, Document, RelationIndex, RelationStatus};
 
-pub const GRAPH_MIN_ZOOM: f32 = 0.25;
-pub const GRAPH_MAX_ZOOM: f32 = 2.5;
+pub const GRAPH_MIN_ZOOM: f32 = 0.35;
+pub const GRAPH_MAX_ZOOM: f32 = 3.0;
+const LAYOUT_NODE_WIDTH: f32 = 168.0;
+const LAYOUT_NODE_HEIGHT: f32 = 70.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphProjection {
@@ -265,15 +267,33 @@ pub fn initial_graph_layout(projection: &GraphProjection) -> BTreeMap<GraphNodeI
     components.sort_by(|left, right| left.first().cmp(&right.first()));
 
     let mut positions = BTreeMap::new();
-    let node_spacing_x = 220.0;
-    let node_spacing_y = 150.0;
-    let component_gap = 260.0;
+    let node_spacing_x = 178.0;
+    let node_spacing_y = 118.0;
+    let component_gap_x = 112.0;
+    let component_gap_y = 88.0;
+    let target_row_width = ((projection.nodes.len() as f32).sqrt().ceil().max(3.0)
+        * node_spacing_x
+        + LAYOUT_NODE_WIDTH)
+        .max(node_spacing_x * 3.0 + LAYOUT_NODE_WIDTH);
     let mut offset_x = 0.0;
+    let mut offset_y = 0.0;
+    let mut row_height = 0.0;
 
     for component in components {
         let count = component.len();
-        let columns = (count as f32).sqrt().ceil().max(1.0) as usize;
+        let columns = ((count as f32) * 1.35).sqrt().ceil().max(1.0) as usize;
         let rows = count.div_ceil(columns);
+        let used_columns = columns.min(count);
+        let component_width =
+            used_columns.saturating_sub(1) as f32 * node_spacing_x + LAYOUT_NODE_WIDTH;
+        let component_height = rows.saturating_sub(1) as f32 * node_spacing_y + LAYOUT_NODE_HEIGHT;
+
+        if offset_x > 0.0 && offset_x + component_width > target_row_width {
+            offset_x = 0.0;
+            offset_y += row_height + component_gap_y;
+            row_height = 0.0;
+        }
+
         for (index, id) in component.into_iter().enumerate() {
             let col = index % columns;
             let row = index / columns;
@@ -281,14 +301,12 @@ pub fn initial_graph_layout(projection: &GraphProjection) -> BTreeMap<GraphNodeI
                 id,
                 GraphPoint {
                     x: offset_x + col as f32 * node_spacing_x,
-                    y: row as f32 * node_spacing_y,
+                    y: offset_y + row as f32 * node_spacing_y,
                 },
             );
         }
-        offset_x += columns as f32 * node_spacing_x + component_gap;
-        if rows == 0 {
-            offset_x += component_gap;
-        }
+        offset_x += component_width + component_gap_x;
+        row_height = row_height.max(component_height);
     }
 
     positions
@@ -340,8 +358,10 @@ pub fn fit_graph_viewport(
     let graph_height = (bounds.max_y - bounds.min_y).max(1.0);
     let available_width = (viewport_width - padding * 2.0).max(1.0);
     let available_height = (viewport_height - padding * 2.0).max(1.0);
-    let zoom =
-        clamp_graph_zoom((available_width / graph_width).min(available_height / graph_height));
+    let fit_zoom = (available_width / graph_width).min(available_height / graph_height);
+    let readable_min = readable_fit_min_zoom(graph_width, graph_height);
+    let readable_max = readable_fit_max_zoom(graph_width, graph_height);
+    let zoom = clamp_graph_zoom(fit_zoom.clamp(readable_min, readable_max));
     let graph_center_x = (bounds.min_x + bounds.max_x) / 2.0;
     let graph_center_y = (bounds.min_y + bounds.max_y) / 2.0;
 
@@ -355,6 +375,32 @@ pub fn fit_graph_viewport(
 pub fn clamp_graph_zoom(zoom: f32) -> f32 {
     if zoom.is_finite() {
         zoom.clamp(GRAPH_MIN_ZOOM, GRAPH_MAX_ZOOM)
+    } else {
+        1.0
+    }
+}
+
+fn readable_fit_min_zoom(graph_width: f32, graph_height: f32) -> f32 {
+    let long_side = graph_width.max(graph_height);
+    if long_side <= 900.0 {
+        1.0
+    } else if long_side <= 1_500.0 {
+        0.78
+    } else if long_side <= 2_400.0 {
+        0.55
+    } else {
+        GRAPH_MIN_ZOOM
+    }
+}
+
+fn readable_fit_max_zoom(graph_width: f32, graph_height: f32) -> f32 {
+    let long_side = graph_width.max(graph_height);
+    if long_side <= 220.0 {
+        1.65
+    } else if long_side <= 900.0 {
+        1.45
+    } else if long_side <= 1_500.0 {
+        1.2
     } else {
         1.0
     }
@@ -615,6 +661,56 @@ mod tests {
             assert!(viewport.pan_x.is_finite());
             assert!(viewport.pan_y.is_finite());
         }
+    }
+
+    #[test]
+    fn layout_packs_disconnected_components_without_one_long_row() {
+        let graph = projection(
+            (0..12)
+                .map(|index| doc(&format!("{index}.md"), &format!("Doc {index}")))
+                .collect(),
+        );
+
+        let positions = initial_graph_layout(&graph);
+        let bounds = graph_bounds(&positions, 168.0, 70.0).unwrap();
+
+        assert!(bounds.max_x - bounds.min_x < 900.0);
+        assert!(bounds.max_y - bounds.min_y > 180.0);
+    }
+
+    #[test]
+    fn fit_graph_viewport_keeps_small_graph_readable_and_centered() {
+        let bounds = GraphBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 524.0,
+            max_y: 188.0,
+        };
+
+        let viewport = fit_graph_viewport(Some(bounds), 900.0, 600.0, 56.0);
+        let graph_center_x = (bounds.min_x + bounds.max_x) / 2.0;
+        let graph_center_y = (bounds.min_y + bounds.max_y) / 2.0;
+
+        assert!(viewport.zoom >= 1.0);
+        assert!(viewport.zoom <= 1.45);
+        assert!((viewport.pan_x + graph_center_x * viewport.zoom - 450.0).abs() < 0.01);
+        assert!((viewport.pan_y + graph_center_y * viewport.zoom - 300.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn fit_graph_viewport_clamps_large_graph_without_absurd_zoom_out() {
+        let bounds = GraphBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 6_000.0,
+            max_y: 4_000.0,
+        };
+
+        let viewport = fit_graph_viewport(Some(bounds), 900.0, 600.0, 56.0);
+
+        assert_eq!(viewport.zoom, GRAPH_MIN_ZOOM);
+        assert!(viewport.pan_x.is_finite());
+        assert!(viewport.pan_y.is_finite());
     }
 
     #[test]

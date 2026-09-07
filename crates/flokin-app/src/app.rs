@@ -1,17 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    fs::OpenOptions,
+    io,
+    path::{Path, PathBuf, MAIN_SEPARATOR},
     time::{Duration, Instant},
 };
 
 use flokin_core::{
-    apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom, complete_sql,
-    default_query, document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
-    initial_graph_layout, mock_shell, replace_sql_completion, save_markdown_file,
-    sql_history_entry, undo_history_entry, workspace_identity, BulkEditApplyError, BulkEditPlan,
-    GraphNodeId, GraphProjection, MutationHistoryEntry, MutationHistoryStore, ScanError,
-    ShellModel, SqlCompletionItem, SqlExplorerMode, SqlWritePlan, WorkspaceEvent,
-    DEFAULT_SQL_COMPLETION_LIMIT,
+    apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom, default_query,
+    document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
+    initial_graph_layout, mock_shell, save_markdown_file, sql_history_entry, undo_history_entry,
+    workspace_identity, BulkEditApplyError, BulkEditPlan, GraphNodeId, GraphProjection,
+    MutationHistoryEntry, MutationHistoryStore, ScanError, ShellModel, SqlExplorerMode,
+    SqlWritePlan, WorkspaceEvent,
 };
 use iced::{
     advanced::widget::{self as advanced_widget, operate},
@@ -22,8 +23,9 @@ use iced::{
 };
 
 use crate::{
-    message::{AppMode, MenuAction, Message, SplitterKind},
-    services::{file_dialog, file_watcher},
+    i18n::{AppLanguage, I18nCatalog},
+    message::{AppMode, MenuAction, Message, NewMarkdownFileError, SplitterKind},
+    services::{external_links, file_dialog, file_watcher, settings},
     theme::{self, AppTheme},
     views,
     views::graph::GraphViewState,
@@ -33,13 +35,15 @@ use crate::{
 pub struct FlokinApp {
     model: ShellModel,
     theme: AppTheme,
+    language: AppLanguage,
+    i18n: I18nCatalog,
     search_needs_refresh: bool,
     search_debounce_target: Option<Instant>,
     sql_editor: text_editor::Content,
     markdown_editors: HashMap<PathBuf, text_editor::Content>,
+    markdown_editor_scroll_offsets: HashMap<PathBuf, f32>,
     empty_markdown_editor: text_editor::Content,
     markdown_previews: HashMap<PathBuf, MarkdownPreviewCache>,
-    sql_completion: SqlCompletionPopup,
     graph: GraphViewState,
     workspace_update_running: bool,
     pending_workspace_events: Vec<WorkspaceEvent>,
@@ -47,12 +51,17 @@ pub struct FlokinApp {
     pending_window_save: Option<(window::Id, Vec<std::path::PathBuf>)>,
     pending_workspace_switch: Option<std::path::PathBuf>,
     pending_workspace_save: Option<Vec<std::path::PathBuf>>,
+    pending_workspace_close: bool,
     pending_reindex: bool,
+    pending_new_file_open: Option<PathBuf>,
     workspace_generation: u64,
     open_menu: Option<crate::message::MenuId>,
-    about_open: bool,
+    about_dialog_open: bool,
     schema_create_dialog_open: bool,
     schema_create_error: Option<String>,
+    new_file_dialog_open: bool,
+    new_file_name: String,
+    new_file_error: Option<NewMarkdownFileError>,
     left_width: f32,
     inspector_width: f32,
     schema_width: f32,
@@ -62,6 +71,8 @@ pub struct FlokinApp {
     left_visible: bool,
     right_visible: bool,
     mode: AppMode,
+    workspace_restore_notice: Option<String>,
+    collection_page: usize,
 }
 
 fn toggle_menu(
@@ -80,16 +91,27 @@ fn hover_menu(
 
 impl FlokinApp {
     fn new() -> Self {
+        #[cfg(test)]
+        let theme = AppTheme::Dark;
+        #[cfg(not(test))]
+        let theme = initial_theme();
+        #[cfg(test)]
+        let language = AppLanguage::PortugueseBrazil;
+        #[cfg(not(test))]
+        let language = initial_language();
+
         Self {
             model: mock_shell(),
-            theme: AppTheme::Dark,
+            theme,
+            language,
+            i18n: I18nCatalog::new(language),
             search_needs_refresh: false,
             search_debounce_target: None,
             sql_editor: text_editor::Content::new(),
             markdown_editors: HashMap::new(),
+            markdown_editor_scroll_offsets: HashMap::new(),
             empty_markdown_editor: text_editor::Content::new(),
             markdown_previews: HashMap::new(),
-            sql_completion: SqlCompletionPopup::closed(),
             graph: GraphViewState::default(),
             workspace_update_running: false,
             pending_workspace_events: Vec::new(),
@@ -97,12 +119,17 @@ impl FlokinApp {
             pending_window_save: None,
             pending_workspace_switch: None,
             pending_workspace_save: None,
+            pending_workspace_close: false,
             pending_reindex: false,
+            pending_new_file_open: None,
             workspace_generation: 0,
             open_menu: None,
-            about_open: false,
+            about_dialog_open: false,
             schema_create_dialog_open: false,
             schema_create_error: None,
+            new_file_dialog_open: false,
+            new_file_name: String::new(),
+            new_file_error: None,
             left_width: crate::theme::sizes::SIDEBAR_DEFAULT_WIDTH,
             inspector_width: crate::theme::sizes::INSPECTOR_DEFAULT_WIDTH,
             schema_width: crate::theme::sizes::SCHEMA_DEFAULT_WIDTH,
@@ -112,6 +139,23 @@ impl FlokinApp {
             left_visible: true,
             right_visible: true,
             mode: AppMode::Files,
+            workspace_restore_notice: None,
+            collection_page: 0,
+        }
+    }
+
+    fn boot() -> (Self, Task<Message>) {
+        let mut app = Self::new();
+        match restored_workspace_from_settings_path(&settings_storage_path()) {
+            Ok(Some(path)) => {
+                let task = app.switch_workspace(path);
+                (app, task)
+            }
+            Ok(None) => (app, Task::none()),
+            Err(()) => {
+                app.workspace_restore_notice = Some(app.i18n.tr("workspace-previous-unavailable"));
+                (app, Task::none())
+            }
         }
     }
 
@@ -125,6 +169,7 @@ impl FlokinApp {
                 self.model.select_activity(match mode {
                     AppMode::Sql => flokin_core::Activity::Terminal,
                     AppMode::Settings => flokin_core::Activity::Settings,
+                    AppMode::Context => flokin_core::Activity::Context,
                     AppMode::Graph => flokin_core::Activity::Relations,
                     AppMode::Health => flokin_core::Activity::Health,
                     AppMode::History => flokin_core::Activity::History,
@@ -134,7 +179,6 @@ impl FlokinApp {
                     self.model.open_sql_explorer();
                 } else {
                     self.model.sql_explorer.open = false;
-                    self.sql_completion.close();
                     if mode == AppMode::Files {
                         self.restore_active_document_selection();
                     }
@@ -145,11 +189,75 @@ impl FlokinApp {
                     self.finish_document_open_or_activate();
                 }
             }
+            Message::ExplorerTreeExpandCollapseToggled => {
+                self.model.toggle_explorer_tree_expansion();
+            }
+            Message::NewMarkdownFileRequested => {
+                if self.model.current_workspace.is_some() {
+                    self.new_file_dialog_open = true;
+                    self.new_file_name.clear();
+                    self.new_file_error = None;
+                    self.open_menu = None;
+                }
+            }
+            Message::NewMarkdownFileNameChanged(name) => {
+                self.new_file_name = name;
+                self.new_file_error = None;
+            }
+            Message::NewMarkdownFileCanceled => {
+                self.new_file_dialog_open = false;
+                self.new_file_name.clear();
+                self.new_file_error = None;
+            }
+            Message::NewMarkdownFileConfirmed => {
+                let Some(workspace) = self.model.current_workspace.clone() else {
+                    self.new_file_error = Some(NewMarkdownFileError::NoWorkspace);
+                    return Task::none();
+                };
+                let Some(parent) = self.model.new_markdown_file_parent() else {
+                    self.new_file_error = Some(NewMarkdownFileError::NoWorkspace);
+                    return Task::none();
+                };
+                let file_name = match normalize_new_markdown_file_name(&self.new_file_name) {
+                    Ok(file_name) => file_name,
+                    Err(error) => {
+                        self.new_file_error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let candidate = parent.join(&file_name);
+                if candidate.exists() {
+                    self.new_file_error = Some(NewMarkdownFileError::AlreadyExists);
+                    return Task::none();
+                }
+                return create_markdown_file_task(workspace, parent, file_name);
+            }
+            Message::NewMarkdownFileCreated(result) => match result {
+                Ok(path) => {
+                    self.new_file_dialog_open = false;
+                    self.new_file_name.clear();
+                    self.new_file_error = None;
+                    self.pending_new_file_open = Some(path.clone());
+                    if let Some(workspace) = self.model.current_workspace.clone() {
+                        return self.enqueue_workspace_events(
+                            workspace,
+                            vec![WorkspaceEvent::Upsert(path)],
+                        );
+                    }
+                }
+                Err(error) => {
+                    self.new_file_error = Some(error);
+                }
+            },
             Message::OpenFolder => {
+                let title = self.i18n.tr("menu-open-folder");
                 return Task::perform(
-                    async { file_dialog::pick_folder() },
+                    async move { file_dialog::pick_folder(title) },
                     Message::FolderSelected,
                 );
+            }
+            Message::CloseFolderRequested => {
+                return self.close_workspace_requested();
             }
             Message::FolderSelected(path) => {
                 if let Some(path) = path {
@@ -161,6 +269,8 @@ impl FlokinApp {
                     return self.switch_workspace(path);
                 }
             }
+            Message::LastWorkspacePersisted(_result) => {}
+            Message::LastWorkspaceCleared(_result) => {}
             Message::ScanCompleted(generation, path, result) => {
                 if generation == self.workspace_generation
                     && self.model.current_workspace.as_ref() == Some(&path)
@@ -169,12 +279,18 @@ impl FlokinApp {
                         Ok(result) => {
                             self.model.scan_completed(result);
                             self.sync_graph_projection(true);
-                            return rebuild_sql_projection_task(
+                            let focus_new_file = self.open_pending_new_file_if_available();
+                            let sql_task = rebuild_sql_projection_task(
                                 generation,
                                 path,
                                 self.model.documents.clone(),
                                 self.model.collections.clone(),
                             );
+                            return if focus_new_file {
+                                Task::batch([sql_task, focus_active_markdown_editor_task()])
+                            } else {
+                                sql_task
+                            };
                         }
                         Err(message) => self.model.scan_failed(message),
                     }
@@ -218,13 +334,14 @@ impl FlokinApp {
                             self.model.mark_bulk_preview_stale_for_paths(&changed_paths);
                             self.model.mark_sql_preview_stale_for_paths(&changed_paths);
                             self.model.workspace_update_completed(update);
+                            let focus_new_file = self.open_pending_new_file_if_available();
                             self.sync_graph_projection(false);
                             self.sync_markdown_editors_for_paths(&changed_paths);
                             self.sync_markdown_previews_for_paths(&changed_paths);
                             self.cleanup_markdown_editors();
                             self.workspace_update_running = false;
                             self.search_needs_refresh = false;
-                            return Task::batch([
+                            let mut tasks = vec![
                                 rebuild_sql_projection_task(
                                     self.workspace_generation,
                                     path.clone(),
@@ -232,7 +349,11 @@ impl FlokinApp {
                                     self.model.collections.clone(),
                                 ),
                                 self.start_next_workspace_update(path),
-                            ]);
+                            ];
+                            if focus_new_file {
+                                tasks.push(focus_active_markdown_editor_task());
+                            }
+                            return Task::batch(tasks);
                         }
                         Err(message) => {
                             self.workspace_update_running = false;
@@ -246,9 +367,11 @@ impl FlokinApp {
                 }
             }
             Message::CollectionSelected(collection_id) => {
+                self.collection_page = 0;
                 self.model.select_collection(collection_id);
             }
             Message::CollectionPanelSelected(panel) => {
+                self.collection_page = 0;
                 self.model.select_collection_panel(panel);
             }
             Message::SchemaFieldSelected {
@@ -288,21 +411,21 @@ impl FlokinApp {
             }
             Message::SchemaCreateConfirmed => {
                 let Some(workspace) = self.model.current_workspace.clone() else {
-                    self.schema_create_error = Some(String::from("Nenhum workspace aberto."));
+                    self.schema_create_error = Some(self.i18n.tr("error-no-workspace-schema"));
                     return Task::none();
                 };
                 let generated =
                     match flokin_core::generate_explicit_schema(&self.model.schema_catalog) {
                         Ok(generated) => generated,
                         Err(flokin_core::SchemaGenerationError::Empty) => {
-                            self.schema_create_error = Some(String::from(
-                                "Nenhuma Collection disponível para gerar schema.",
-                            ));
+                            self.schema_create_error = Some(self.i18n.tr("error-schema-empty"));
                             return Task::none();
                         }
                         Err(flokin_core::SchemaGenerationError::Serialize(error)) => {
-                            self.schema_create_error =
-                                Some(format!("Não foi possível gerar o schema: {error}"));
+                            self.schema_create_error = Some(self.i18n.tr_with(
+                                "error-schema-generate",
+                                &[("error", error.to_string().into())],
+                            ));
                             return Task::none();
                         }
                     };
@@ -328,7 +451,6 @@ impl FlokinApp {
                 Ok(true) => {
                     self.mode = AppMode::Files;
                     self.model.sql_explorer.open = false;
-                    self.sql_completion.close();
                     self.ensure_markdown_editor_for_active();
                     self.ensure_markdown_preview_for_active();
                 }
@@ -339,7 +461,14 @@ impl FlokinApp {
                 }
             },
             Message::TableHeaderSelected(column_id) => {
+                self.collection_page = 0;
                 self.model.toggle_collection_sort(column_id);
+            }
+            Message::CollectionPagePrevious => {
+                self.collection_page = self.collection_page.saturating_sub(1);
+            }
+            Message::CollectionPageNext => {
+                self.collection_page = self.collection_page.saturating_add(1);
             }
             Message::BulkSelectionToggled(path) => {
                 self.model.toggle_bulk_selection(path);
@@ -386,9 +515,7 @@ impl FlokinApp {
             }
             Message::BulkApplyRequested => {
                 if self.model.bulk_edit.stale {
-                    self.model.bulk_edit.error = Some(String::from(
-                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
-                    ));
+                    self.model.bulk_edit.error = Some(self.i18n.tr("error-stale-preview"));
                     return Task::none();
                 }
                 let Some(plan) = self.model.bulk_edit.plan.clone() else {
@@ -426,6 +553,23 @@ impl FlokinApp {
             Message::MarkdownSelected(path) => {
                 self.open_or_activate_document(path);
             }
+            Message::ContextSectionSelected(section) => {
+                self.model.select_context_section(section);
+            }
+            Message::ContextArtifactSelected(path) => {
+                self.model.select_context_artifact(path);
+            }
+            Message::ContextOpenInEditor(path) => {
+                self.open_or_activate_document(path);
+            }
+            Message::ContextShowInGraph(path) => {
+                if self.model.select_document_without_opening(path) {
+                    self.mode = AppMode::Graph;
+                    self.model.select_activity(flokin_core::Activity::Relations);
+                    self.sync_graph_projection(false);
+                    self.focus_selected_graph_node();
+                }
+            }
             Message::GraphFitRequested => {
                 self.fit_graph();
             }
@@ -433,16 +577,20 @@ impl FlokinApp {
                 self.focus_selected_graph_node();
             }
             Message::GraphZoomIn => {
-                self.zoom_graph_by(0.18);
+                self.zoom_graph_by(0.12);
             }
             Message::GraphZoomOut => {
-                self.zoom_graph_by(-0.18);
+                self.zoom_graph_by(-0.12);
             }
             Message::GraphZoomReset => {
                 self.reset_graph_zoom();
             }
             Message::GraphViewportChanged(width, height) => {
+                let was_unmeasured = self.graph.viewport == Size::ZERO;
                 self.graph.viewport = Size::new(width, height);
+                if was_unmeasured {
+                    self.fit_graph();
+                }
             }
             Message::GraphNodeSelected(node) => {
                 if let GraphNodeId::Document(path) = node {
@@ -482,6 +630,7 @@ impl FlokinApp {
                     return Task::none();
                 };
                 self.ensure_markdown_editor_for_path(&path);
+                self.track_markdown_editor_scroll(&path, &action);
                 if let Some(content) = self.markdown_editors.get_mut(&path) {
                     content.perform(action);
                     self.model.update_active_editor_buffer(content.text());
@@ -528,6 +677,10 @@ impl FlokinApp {
                         {
                             self.pending_workspace_save = None;
                             self.model.editor.dialog = None;
+                            if self.pending_workspace_close {
+                                self.pending_workspace_close = false;
+                                return self.close_workspace();
+                            }
                             if let Some(path) = self.pending_workspace_switch.take() {
                                 return self.switch_workspace(path);
                             }
@@ -558,6 +711,7 @@ impl FlokinApp {
                 self.pending_window_save = None;
                 self.pending_workspace_switch = None;
                 self.pending_workspace_save = None;
+                self.pending_workspace_close = false;
                 self.pending_reindex = false;
             }
             Message::EditorDialogDiscard => {
@@ -566,6 +720,10 @@ impl FlokinApp {
                 self.ensure_markdown_editor_for_active();
                 if let Some(window_id) = self.close_window_after_dialog.take() {
                     return window::close(window_id);
+                }
+                if self.pending_workspace_close {
+                    self.pending_workspace_close = false;
+                    return self.close_workspace();
                 }
                 if let Some(path) = self.pending_workspace_switch.take() {
                     return self.switch_workspace(path);
@@ -581,7 +739,10 @@ impl FlokinApp {
                 let paths = self.model.pending_save_paths();
                 if let Some(window_id) = self.close_window_after_dialog {
                     self.pending_window_save = Some((window_id, paths.clone()));
-                } else if self.pending_workspace_switch.is_some() || self.pending_reindex {
+                } else if self.pending_workspace_close
+                    || self.pending_workspace_switch.is_some()
+                    || self.pending_reindex
+                {
                     self.pending_workspace_save = Some(paths.clone());
                 }
                 return self.save_editor_paths(paths);
@@ -670,33 +831,11 @@ impl FlokinApp {
             Message::SqlEditorAction(action) => {
                 self.sql_editor.perform(action);
                 self.model.update_sql_query(self.sql_editor.text());
-                self.refresh_sql_completion(false);
-            }
-            Message::SqlCompletionRequested => {
-                self.refresh_sql_completion(true);
-            }
-            Message::SqlCompletionNext => {
-                self.sql_completion.select_next();
-            }
-            Message::SqlCompletionPrevious => {
-                self.sql_completion.select_previous();
-            }
-            Message::SqlCompletionAccepted => {
-                self.accept_sql_completion();
-            }
-            Message::SqlCompletionSelected(index) => {
-                self.sql_completion.selected =
-                    index.min(self.sql_completion.items.len().saturating_sub(1));
-                self.accept_sql_completion();
-            }
-            Message::SqlCompletionClosed => {
-                self.sql_completion.close();
             }
             Message::SqlModeSelected(mode) => {
                 self.model.set_sql_mode(mode);
             }
             Message::SqlExecute => {
-                self.sql_completion.close();
                 self.model.update_sql_query(self.sql_editor.text());
                 self.model.sql_execution_started();
                 return match self.model.sql_explorer.mode {
@@ -722,7 +861,6 @@ impl FlokinApp {
                 }
                 let should_fill_query = self.model.sql_explorer.query.is_empty();
                 self.model.sql_projection_completed(result);
-                self.refresh_sql_completion(false);
                 if should_fill_query {
                     if let Some(catalog) = self.model.sql_explorer.catalog.as_ref() {
                         let query =
@@ -750,9 +888,7 @@ impl FlokinApp {
             }
             Message::SqlUpdateApplyRequested => {
                 if self.model.sql_explorer.stale {
-                    self.model.sql_explorer.error = Some(String::from(
-                        "O workspace mudou desde a geração do preview. Revise as alterações novamente.",
-                    ));
+                    self.model.sql_explorer.error = Some(self.i18n.tr("error-stale-preview"));
                     return Task::none();
                 }
                 let Some(plan) = self.model.sql_explorer.write_plan.clone() else {
@@ -857,9 +993,9 @@ impl FlokinApp {
             }
             Message::HistoryClearConfirmed => {
                 let Some(workspace) = self.model.current_workspace.clone() else {
-                    self.model.clear_history_completed(Err(String::from(
-                        "Abra um workspace para limpar o histórico.",
-                    )));
+                    self.model.clear_history_completed(Err(self
+                        .i18n
+                        .tr("error-history-clear-no-workspace")));
                     return Task::none();
                 };
                 return clear_history_task(workspace);
@@ -870,6 +1006,7 @@ impl FlokinApp {
             Message::KeyboardEvent(event) => {
                 if let Some(message) = keyboard_message(
                     event,
+                    self.about_dialog_open,
                     self.model.search.open,
                     self.open_menu.is_some(),
                     self.model.bulk_edit.editor_open,
@@ -879,6 +1016,7 @@ impl FlokinApp {
             }
             Message::ThemeToggled => {
                 self.theme = self.theme.toggled();
+                return persist_theme_task(self.theme);
             }
             Message::ThemeSelected(light) => {
                 self.theme = if light {
@@ -886,13 +1024,25 @@ impl FlokinApp {
                 } else {
                     AppTheme::Dark
                 };
+                return persist_theme_task(self.theme);
             }
+            Message::ThemePersisted(_result) => {}
+            Message::LanguageSelected(language) => {
+                self.language = language;
+                self.i18n = I18nCatalog::new(language);
+                return persist_language_task(language);
+            }
+            Message::LanguagePersisted(_result) => {}
             Message::MenuToggled(menu) => self.open_menu = toggle_menu(self.open_menu, menu),
             Message::MenuHovered(menu) => self.open_menu = hover_menu(self.open_menu, menu),
             Message::MenuAction(action) => {
                 self.open_menu = None;
                 match action {
+                    MenuAction::NewFile => return self.update(Message::NewMarkdownFileRequested),
                     MenuAction::OpenFolder => return self.update(Message::OpenFolder),
+                    MenuAction::CloseFolder => {
+                        return self.update(Message::CloseFolderRequested);
+                    }
                     MenuAction::Reindex => return self.update(Message::ReindexWorkspace),
                     MenuAction::ToggleTheme => return self.update(Message::ThemeToggled),
                     MenuAction::ToggleLeftSidebar => {
@@ -906,6 +1056,9 @@ impl FlokinApp {
                     }
                     MenuAction::Data => {
                         return self.update(Message::AppModeSelected(AppMode::Data))
+                    }
+                    MenuAction::Context => {
+                        return self.update(Message::AppModeSelected(AppMode::Context))
                     }
                     MenuAction::Graph => {
                         return self.update(Message::AppModeSelected(AppMode::Graph))
@@ -924,11 +1077,22 @@ impl FlokinApp {
                     }
                     MenuAction::Search => return self.update(Message::SearchOpened),
                     MenuAction::ExecuteSql => return self.update(Message::SqlExecute),
-                    MenuAction::About => self.about_open = true,
+                    MenuAction::About => {
+                        self.about_dialog_open = true;
+                    }
                 }
             }
             Message::MenuClosed => self.open_menu = None,
-            Message::AboutClosed => self.about_open = false,
+            Message::AboutContactOpened(link) => {
+                return Task::perform(
+                    async move { external_links::open_about_contact(link) },
+                    Message::AboutContactOpenCompleted,
+                );
+            }
+            Message::AboutContactOpenCompleted(_result) => {}
+            Message::AboutClosed => {
+                self.about_dialog_open = false;
+            }
             Message::SplitterPressed(kind, _position) => {
                 let value = match kind {
                     SplitterKind::LeftSidebar => self.left_width,
@@ -1018,28 +1182,41 @@ impl FlokinApp {
             .as_ref()
             .and_then(|path| self.markdown_editors.get(path))
             .unwrap_or(&self.empty_markdown_editor);
+        let markdown_editor_scroll_y = self
+            .model
+            .editor
+            .active_path
+            .as_ref()
+            .and_then(|path| self.markdown_editor_scroll_offsets.get(path))
+            .copied()
+            .unwrap_or(0.0);
 
         views::shell::view(
             &self.model,
             self.theme,
             &self.sql_editor,
             markdown_editor,
+            markdown_editor_scroll_y,
             self.active_markdown_preview_items(),
-            &self.sql_completion.items,
             &self.graph,
-            self.sql_completion.selected,
-            self.sql_completion.open,
             self.left_width,
             self.inspector_width,
             self.schema_width,
             self.sql_editor_height,
+            self.collection_page,
             self.open_menu,
-            self.about_open,
+            self.about_dialog_open,
             self.schema_create_dialog_open,
             self.schema_create_error.as_deref(),
+            self.new_file_dialog_open,
+            self.new_file_name.as_str(),
+            self.new_file_error.as_ref(),
             self.left_visible,
             self.right_visible,
             self.mode,
+            &self.i18n,
+            self.language,
+            self.workspace_restore_notice.as_deref(),
         )
     }
 
@@ -1067,7 +1244,6 @@ impl FlokinApp {
     fn clear_focus_transients(&mut self) {
         self.open_menu = None;
         self.splitter = None;
-        self.sql_completion.close();
         self.model.close_search();
         self.search_needs_refresh = false;
         self.search_debounce_target = None;
@@ -1078,47 +1254,6 @@ impl FlokinApp {
 struct MarkdownPreviewCache {
     source: String,
     items: Vec<markdown::Item>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct SqlCompletionPopup {
-    open: bool,
-    items: Vec<SqlCompletionItem>,
-    selected: usize,
-}
-
-impl SqlCompletionPopup {
-    fn closed() -> Self {
-        Self::default()
-    }
-
-    fn close(&mut self) {
-        self.open = false;
-        self.items.clear();
-        self.selected = 0;
-    }
-
-    fn set_items(&mut self, items: Vec<SqlCompletionItem>) {
-        self.open = !items.is_empty();
-        self.items = items;
-        self.selected = self.selected.min(self.items.len().saturating_sub(1));
-    }
-
-    fn select_next(&mut self) {
-        if !self.items.is_empty() {
-            self.selected = (self.selected + 1) % self.items.len();
-        }
-    }
-
-    fn select_previous(&mut self) {
-        if !self.items.is_empty() {
-            self.selected = if self.selected == 0 {
-                self.items.len() - 1
-            } else {
-                self.selected - 1
-            };
-        }
-    }
 }
 
 impl FlokinApp {
@@ -1143,7 +1278,6 @@ impl FlokinApp {
     fn finish_document_open_or_activate(&mut self) {
         self.mode = AppMode::Files;
         self.model.sql_explorer.open = false;
-        self.sql_completion.close();
         self.ensure_markdown_editor_for_active();
         self.ensure_markdown_preview_for_active();
     }
@@ -1167,31 +1301,94 @@ impl FlokinApp {
     }
 
     fn switch_workspace(&mut self, path: std::path::PathBuf) -> Task<Message> {
+        let Ok(path) = validate_workspace_path(&path) else {
+            self.workspace_restore_notice = Some(self.i18n.tr("workspace-previous-unavailable"));
+            return Task::none();
+        };
+        self.workspace_restore_notice = None;
         self.workspace_generation = self.workspace_generation.wrapping_add(1);
         let generation = self.workspace_generation;
         self.model.workspace_selected(Some(path.clone()));
         self.sql_editor = text_editor::Content::new();
         self.markdown_editors.clear();
+        self.markdown_editor_scroll_offsets.clear();
         self.markdown_previews.clear();
         self.empty_markdown_editor = text_editor::Content::new();
-        self.sql_completion.close();
         self.workspace_update_running = false;
         self.pending_workspace_events.clear();
         self.close_window_after_dialog = None;
         self.pending_window_save = None;
         self.pending_workspace_switch = None;
         self.pending_workspace_save = None;
+        self.pending_workspace_close = false;
         self.pending_reindex = false;
+        self.pending_new_file_open = None;
         self.schema_create_dialog_open = false;
         self.schema_create_error = None;
+        self.new_file_dialog_open = false;
+        self.new_file_name.clear();
+        self.new_file_error = None;
         Task::batch([
+            persist_last_workspace_task(path.clone()),
             scan_workspace_task(generation, path.clone()),
             self.load_history_task(path),
         ])
     }
 
+    fn close_workspace_requested(&mut self) -> Task<Message> {
+        if self.model.current_workspace.is_none() {
+            return Task::none();
+        }
+        if self.model.editor.has_dirty_tabs() {
+            self.pending_workspace_close = true;
+            self.model.request_close_workspace();
+            return Task::none();
+        }
+        self.close_workspace()
+    }
+
+    fn close_workspace(&mut self) -> Task<Message> {
+        self.workspace_generation = self.workspace_generation.wrapping_add(1);
+        self.model.close_workspace();
+        self.sql_editor = text_editor::Content::new();
+        self.markdown_editors.clear();
+        self.markdown_editor_scroll_offsets.clear();
+        self.markdown_previews.clear();
+        self.empty_markdown_editor = text_editor::Content::new();
+        self.graph = GraphViewState::default();
+        self.workspace_update_running = false;
+        self.pending_workspace_events.clear();
+        self.close_window_after_dialog = None;
+        self.pending_window_save = None;
+        self.pending_workspace_switch = None;
+        self.pending_workspace_save = None;
+        self.pending_workspace_close = false;
+        self.pending_reindex = false;
+        self.pending_new_file_open = None;
+        self.schema_create_dialog_open = false;
+        self.schema_create_error = None;
+        self.new_file_dialog_open = false;
+        self.new_file_name.clear();
+        self.new_file_error = None;
+        self.mode = AppMode::Files;
+        self.workspace_restore_notice = None;
+        clear_last_workspace_task()
+    }
+
     fn load_history_task(&self, workspace: std::path::PathBuf) -> Task<Message> {
         load_history_task(workspace)
+    }
+
+    fn open_pending_new_file_if_available(&mut self) -> bool {
+        let Some(path) = self.pending_new_file_open.clone() else {
+            return false;
+        };
+        if self.open_or_activate_document(path) {
+            self.pending_new_file_open = None;
+            true
+        } else {
+            false
+        }
     }
 
     fn active_markdown_preview_items(&self) -> &[markdown::Item] {
@@ -1273,7 +1470,7 @@ impl FlokinApp {
             crate::theme::sizes::GRAPH_NODE_WIDTH,
             crate::theme::sizes::GRAPH_NODE_HEIGHT,
         );
-        let viewport = fit_graph_viewport(bounds, viewport_width, viewport_height, 72.0);
+        let viewport = fit_graph_viewport(bounds, viewport_width, viewport_height, 56.0);
         self.graph.pan = iced::Vector::new(viewport.pan_x, viewport.pan_y);
         self.graph.zoom = viewport.zoom;
     }
@@ -1344,6 +1541,9 @@ impl FlokinApp {
             path.to_path_buf(),
             text_editor::Content::with_text(&tab.buffer),
         );
+        self.markdown_editor_scroll_offsets
+            .entry(path.to_path_buf())
+            .or_insert(0.0);
     }
 
     fn sync_markdown_editor_for_active_from_model(&mut self) {
@@ -1378,8 +1578,25 @@ impl FlokinApp {
     fn cleanup_markdown_editors(&mut self) {
         self.markdown_editors
             .retain(|path, _| self.model.editor.tab(path).is_some());
+        self.markdown_editor_scroll_offsets
+            .retain(|path, _| self.model.editor.tab(path).is_some());
         self.markdown_previews
             .retain(|path, _| self.model.editor.tab(path).is_some());
+    }
+
+    fn track_markdown_editor_scroll(
+        &mut self,
+        path: &std::path::Path,
+        action: &text_editor::Action,
+    ) {
+        let text_editor::Action::Scroll { lines } = action else {
+            return;
+        };
+        let offset = self
+            .markdown_editor_scroll_offsets
+            .entry(path.to_path_buf())
+            .or_insert(0.0);
+        *offset = (*offset + *lines as f32 * views::editor::editor_line_height_px()).max(0.0);
     }
 
     fn enqueue_workspace_events(
@@ -1423,38 +1640,6 @@ impl FlokinApp {
             Task::batch(tasks)
         }
     }
-
-    fn refresh_sql_completion(&mut self, manual: bool) {
-        let Some(catalog) = self.model.sql_explorer.catalog.as_ref() else {
-            self.sql_completion.close();
-            return;
-        };
-        let query = self.sql_editor.text();
-        let cursor = cursor_offset(&self.sql_editor);
-        if !manual && !should_auto_trigger_completion(&query, cursor) {
-            self.sql_completion.close();
-            return;
-        }
-        let items = complete_sql(catalog, &query, cursor, DEFAULT_SQL_COMPLETION_LIMIT);
-        self.sql_completion.set_items(items);
-    }
-
-    fn accept_sql_completion(&mut self) {
-        let Some(item) = self
-            .sql_completion
-            .items
-            .get(self.sql_completion.selected)
-            .cloned()
-        else {
-            return;
-        };
-        let updated = replace_sql_completion(&self.sql_editor.text(), &item);
-        let cursor = item.replacement_start + item.insert_text.len();
-        self.sql_editor = text_editor::Content::with_text(&updated);
-        move_editor_cursor_to_offset(&mut self.sql_editor, cursor);
-        self.model.update_sql_query(updated);
-        self.sql_completion.close();
-    }
 }
 
 fn graph_viewport_width(viewport: Size) -> f32 {
@@ -1473,65 +1658,8 @@ fn graph_viewport_height(viewport: Size) -> f32 {
     }
 }
 
-fn cursor_offset(content: &text_editor::Content) -> usize {
-    let cursor = content.cursor().position;
-    let mut offset = 0;
-    for line_index in 0..cursor.line {
-        let Some(line) = content.line(line_index) else {
-            return content.text().len();
-        };
-        offset += line.text.len();
-        offset += line.ending.as_str().len();
-    }
-    let Some(line) = content.line(cursor.line) else {
-        return content.text().len();
-    };
-    offset + cursor.column.min(line.text.len())
-}
-
-fn move_editor_cursor_to_offset(content: &mut text_editor::Content, offset: usize) {
-    let mut remaining = offset;
-    for line_index in 0..content.line_count() {
-        let Some(line) = content.line(line_index) else {
-            break;
-        };
-        if remaining <= line.text.len() {
-            content.move_to(text_editor::Cursor {
-                position: text_editor::Position {
-                    line: line_index,
-                    column: remaining,
-                },
-                selection: None,
-            });
-            return;
-        }
-        remaining = remaining.saturating_sub(line.text.len());
-        let ending_len = line.ending.as_str().len();
-        if remaining <= ending_len {
-            content.move_to(text_editor::Cursor {
-                position: text_editor::Position {
-                    line: (line_index + 1).min(content.line_count().saturating_sub(1)),
-                    column: 0,
-                },
-                selection: None,
-            });
-            return;
-        }
-        remaining -= ending_len;
-    }
-    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-}
-
-fn should_auto_trigger_completion(query: &str, cursor: usize) -> bool {
-    let before = &query[..cursor.min(query.len())];
-    let Some(character) = before.chars().next_back() else {
-        return false;
-    };
-    character == '.' || character == '_' || character.is_alphanumeric()
-}
-
 pub fn run() -> iced::Result {
-    application(FlokinApp::new, FlokinApp::update, FlokinApp::view)
+    application(FlokinApp::boot, FlokinApp::update, FlokinApp::view)
         .subscription(FlokinApp::subscription)
         .title(title)
         .theme(app_theme)
@@ -1586,6 +1714,17 @@ fn create_schema_file_task(workspace: std::path::PathBuf, content: String) -> Ta
     Task::perform(
         async move { create_schema_file_if_absent(&workspace, &content) },
         Message::SchemaCreateCompleted,
+    )
+}
+
+fn create_markdown_file_task(
+    workspace: std::path::PathBuf,
+    parent: std::path::PathBuf,
+    file_name: String,
+) -> Task<Message> {
+    Task::perform(
+        async move { create_empty_markdown_file(&workspace, &parent, &file_name) },
+        Message::NewMarkdownFileCreated,
     )
 }
 
@@ -1812,6 +1951,137 @@ fn history_storage_path() -> std::path::PathBuf {
     app_data_dir().join("history.sqlite3")
 }
 
+fn settings_storage_path() -> std::path::PathBuf {
+    settings::settings_path(&app_data_dir())
+}
+
+fn validate_workspace_path(path: &Path) -> Result<PathBuf, ()> {
+    let canonical = path.canonicalize().map_err(|_| ())?;
+    if !canonical.is_dir() {
+        return Err(());
+    }
+    std::fs::read_dir(&canonical).map_err(|_| ())?;
+    Ok(canonical)
+}
+
+fn normalize_new_markdown_file_name(input: &str) -> Result<String, NewMarkdownFileError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('\0')
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(MAIN_SEPARATOR)
+        || trimmed
+            .chars()
+            .any(|character| matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    let path = Path::new(trimmed);
+    if path.components().count() != 1
+        || path.file_name().and_then(|name| name.to_str()) != Some(trimmed)
+    {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    match path.extension().and_then(|extension| extension.to_str()) {
+        None => Ok(format!("{trimmed}.md")),
+        Some(extension)
+            if extension.eq_ignore_ascii_case("md")
+                || extension.eq_ignore_ascii_case("markdown") =>
+        {
+            Ok(trimmed.to_string())
+        }
+        Some(_) => Err(NewMarkdownFileError::InvalidName),
+    }
+}
+
+fn create_empty_markdown_file(
+    workspace: &Path,
+    parent: &Path,
+    file_name: &str,
+) -> Result<PathBuf, NewMarkdownFileError> {
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|error| NewMarkdownFileError::Io(error.to_string()))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| NewMarkdownFileError::Io(error.to_string()))?;
+    if !parent.is_dir() || !parent.starts_with(&workspace) {
+        return Err(NewMarkdownFileError::InvalidName);
+    }
+
+    let path = parent.join(file_name);
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(_) => Ok(path),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Err(NewMarkdownFileError::AlreadyExists)
+        }
+        Err(error) => Err(NewMarkdownFileError::Io(error.to_string())),
+    }
+}
+
+fn restored_workspace_from_settings_path(settings_path: &Path) -> Result<Option<PathBuf>, ()> {
+    settings::load_last_workspace_path(settings_path)
+        .map(|path| validate_workspace_path(&path))
+        .transpose()
+}
+
+#[cfg(not(test))]
+fn initial_theme() -> AppTheme {
+    theme_from_settings_path(&settings_storage_path())
+}
+
+fn theme_from_settings_path(path: &std::path::Path) -> AppTheme {
+    settings::load_theme(path).unwrap_or(AppTheme::Dark)
+}
+
+#[cfg(not(test))]
+fn initial_language() -> AppLanguage {
+    language_from_settings_path(&settings_storage_path())
+}
+
+fn language_from_settings_path(path: &std::path::Path) -> AppLanguage {
+    match settings::load_language(path) {
+        settings::LanguageLoad::Language(language) => language,
+        settings::LanguageLoad::MissingLanguage => AppLanguage::PortugueseBrazil,
+        settings::LanguageLoad::MissingSettings | settings::LanguageLoad::Invalid => {
+            AppLanguage::from_os_locale(sys_locale::get_locale().as_deref())
+        }
+    }
+}
+
+fn persist_theme_task(theme: AppTheme) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_theme(&settings_storage_path(), theme) },
+        Message::ThemePersisted,
+    )
+}
+
+fn persist_language_task(language: AppLanguage) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_language(&settings_storage_path(), language) },
+        Message::LanguagePersisted,
+    )
+}
+
+fn persist_last_workspace_task(path: PathBuf) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_last_workspace_path(&settings_storage_path(), path) },
+        Message::LastWorkspacePersisted,
+    )
+}
+
+fn clear_last_workspace_task() -> Task<Message> {
+    Task::perform(
+        async move { settings::clear_last_workspace_path(&settings_storage_path()) },
+        Message::LastWorkspaceCleared,
+    )
+}
+
 fn app_data_dir() -> std::path::PathBuf {
     if let Some(value) = std::env::var_os("FLOKINMD_APP_DATA") {
         return std::path::PathBuf::from(value);
@@ -1856,6 +2126,12 @@ fn focus_search_task() -> Task<Message> {
     ])
 }
 
+fn focus_active_markdown_editor_task() -> Task<Message> {
+    operate::<Message>(advanced_widget::operation::focusable::focus(
+        advanced_widget::Id::new(views::editor::ACTIVE_MARKDOWN_EDITOR_ID),
+    ))
+}
+
 fn debounce_search_task(target: Instant) -> Task<Message> {
     Task::perform(
         async move {
@@ -1868,6 +2144,7 @@ fn debounce_search_task(target: Instant) -> Task<Message> {
 
 fn keyboard_message(
     event: keyboard::Event,
+    about_open: bool,
     search_open: bool,
     menu_open: bool,
     bulk_open: bool,
@@ -1882,6 +2159,10 @@ fn keyboard_message(
     else {
         return None;
     };
+
+    if about_open {
+        return matches!(key, Key::Named(Named::Escape)).then_some(Message::AboutClosed);
+    }
 
     if menu_open && matches!(key, Key::Named(Named::Escape)) {
         return Some(Message::MenuClosed);
@@ -1928,8 +2209,8 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 #[cfg(test)]
 mod tests {
     use flokin_core::{
-        scan_workspace, workspace_update_from_events, Activity, ScanResult, ScanState,
-        SqlCompletionItem, SqlCompletionKind, SqlError, WorkspaceEvent,
+        build_context_projection, scan_workspace, workspace_update_from_events, Activity,
+        ContextSection, ScanResult, ScanState, SqlError, SqlExplorerMode, WorkspaceEvent,
     };
     use iced::{
         keyboard::{
@@ -1941,15 +2222,24 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex, OnceLock,
+        },
         time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        create_schema_file_if_absent, hover_menu, keyboard_message, toggle_menu, FlokinApp,
+        create_empty_markdown_file, create_schema_file_if_absent, hover_menu, keyboard_message,
+        language_from_settings_path, normalize_new_markdown_file_name,
+        restored_workspace_from_settings_path, theme_from_settings_path, toggle_menu,
+        validate_workspace_path, FlokinApp,
     };
+    use crate::services::external_links::AboutContactLink;
     use crate::{
-        message::{AppMode, MenuId, Message, SplitterKind},
-        services::file_watcher::WatcherMessage,
+        i18n::AppLanguage,
+        message::{AppMode, MenuAction, MenuId, Message, NewMarkdownFileError, SplitterKind},
+        services::{file_watcher::WatcherMessage, settings},
         theme::AppTheme,
     };
 
@@ -1989,14 +2279,6 @@ mod tests {
         app.search_needs_refresh = true;
         app.search_debounce_target = Some(Instant::now());
         app.splitter = Some((SplitterKind::LeftSidebar, 100.0, app.left_width));
-        app.sql_completion.set_items(vec![SqlCompletionItem {
-            label: String::from("projects"),
-            insert_text: String::from("projects"),
-            kind: SqlCompletionKind::Table,
-            detail: String::from("table"),
-            replacement_start: 0,
-            replacement_end: 0,
-        }]);
         app.left_width = 360.0;
         app.mode = AppMode::Data;
 
@@ -2007,7 +2289,6 @@ mod tests {
         assert!(!app.search_needs_refresh);
         assert_eq!(app.search_debounce_target, None);
         assert_eq!(app.splitter, None);
-        assert!(!app.sql_completion.open);
         assert_eq!(app.left_width, 360.0);
         assert_eq!(app.mode, AppMode::Data);
     }
@@ -2198,6 +2479,21 @@ mod tests {
     }
 
     #[test]
+    fn saving_empty_file_keeps_zero_byte_content() {
+        let workspace = TempWorkspace::new();
+        workspace.write("empty.md", "");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("empty.md");
+
+        app.open_or_activate_document(path.clone());
+        assert!(flokin_core::save_markdown_file(&path, "").is_ok());
+
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+        assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "");
+        assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "");
+    }
+
+    #[test]
     fn missing_ui_state_is_initialized_from_existing_editor_buffer() {
         let workspace = TempWorkspace::new();
         workspace.write("b.md", "B buffer\n");
@@ -2329,31 +2625,509 @@ mod tests {
     }
 
     #[test]
+    fn saved_theme_is_used_for_startup_theme() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        settings::save_theme(&path, AppTheme::Light).unwrap();
+
+        assert_eq!(theme_from_settings_path(&path), AppTheme::Light);
+    }
+
+    #[test]
+    fn saved_language_is_used_for_startup_language() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        settings::save_language(&path, AppLanguage::English).unwrap();
+
+        assert_eq!(language_from_settings_path(&path), AppLanguage::English);
+    }
+
+    #[test]
+    fn existing_settings_without_language_migrate_to_portuguese() {
+        let workspace = TempWorkspace::new();
+        let path = settings::settings_path(workspace.path());
+        fs::write(&path, "version=1\ntheme=dark\n").unwrap();
+
+        assert_eq!(
+            language_from_settings_path(&path),
+            AppLanguage::PortugueseBrazil
+        );
+    }
+
+    #[test]
+    fn runtime_language_switch_preserves_workspace_dirty_tab_and_sql_text() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        app.sql_editor = text_editor::Content::with_text("SELECT * FROM projects;");
+        app.model
+            .update_sql_query(String::from("SELECT * FROM projects;"));
+        let workspace_before = app.model.current_workspace.clone();
+
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(app.model.current_workspace, workspace_before);
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+        assert_eq!(app.sql_editor.text(), "SELECT * FROM projects;");
+    }
+
+    #[test]
+    fn welcome_state_keeps_global_theme_and_language_controls_without_workspace() {
+        let mut app = FlokinApp::new();
+
+        assert_eq!(app.model.current_workspace, None);
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+        let _ = app.update(Message::ThemeSelected(true));
+        let _ = app.update(Message::FolderSelected(None));
+
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(app.theme, AppTheme::Light);
+        assert_eq!(app.mode, AppMode::Files);
+    }
+
+    #[test]
+    fn close_folder_clean_workspace_returns_to_welcome_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        app.model.open_sql_explorer();
+        app.model.open_search();
+        app.mode = AppMode::Sql;
+        app.workspace_update_running = true;
+        app.pending_workspace_events = vec![WorkspaceEvent::Upsert(workspace.path().join("a.md"))];
+
+        let task = app.update(Message::CloseFolderRequested);
+
+        drop(task);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.mode, AppMode::Files);
+        assert_eq!(app.model.scan_state, ScanState::Idle);
+        assert!(app.model.documents.is_empty());
+        assert!(app.model.editor.tabs.is_empty());
+        assert!(app.pending_workspace_events.is_empty());
+        assert!(!app.workspace_update_running);
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn close_folder_dirty_workspace_waits_for_existing_dirty_dialog() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+
+        let task = app.update(Message::CloseFolderRequested);
+
+        drop(task);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert!(app.pending_workspace_close);
+        assert!(app.model.editor.dialog.is_some());
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn cancel_dirty_close_folder_keeps_workspace_and_pending_restore_path() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+
+        let _ = app.update(Message::CloseFolderRequested);
+        let _ = app.update(Message::EditorDialogCancel);
+
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert!(!app.pending_workspace_close);
+        assert!(app.model.editor.dialog.is_none());
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn discard_dirty_close_folder_closes_workspace() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path);
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+
+        let _ = app.update(Message::CloseFolderRequested);
+        let task = app.update(Message::EditorDialogDiscard);
+
+        drop(task);
+        assert_eq!(app.model.current_workspace, None);
+        assert!(!app.pending_workspace_close);
+        assert_eq!(app.mode, AppMode::Files);
+    }
+
+    #[test]
+    fn about_menu_opens_without_workspace() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(app.model.current_workspace, None);
+    }
+
+    #[test]
+    fn about_menu_does_not_reset_dirty_workspace_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn about_language_switch_preserves_workspace_dirty_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        let _ = app.update(Message::LanguageSelected(AppLanguage::English));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(app.language, AppLanguage::English);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn about_contact_action_does_not_reset_workspace_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("a.md");
+        app.open_or_activate_document(path.clone());
+        app.model
+            .update_active_editor_buffer(String::from("# A dirty\n"));
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+
+        let task = app.update(Message::AboutContactOpened(AboutContactLink::Website));
+
+        drop(task);
+        assert_eq!(app.mode, AppMode::Files);
+        assert!(app.about_dialog_open);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+        assert!(app.model.editor.tab(&path).unwrap().dirty);
+    }
+
+    #[test]
+    fn closing_about_returns_to_previous_mode_without_resetting_workspace() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "# A\n");
+        let mut app = app_from_workspace(&workspace);
+        let _ = app.update(Message::AppModeSelected(AppMode::Sql));
+
+        let _ = app.update(Message::MenuAction(MenuAction::About));
+        let _ = app.update(Message::AboutClosed);
+
+        assert_eq!(app.mode, AppMode::Sql);
+        assert!(!app.about_dialog_open);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn no_last_workspace_keeps_welcome_state() {
+        let app = FlokinApp::new();
+
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn valid_workspace_path_is_canonicalized_for_restore_identity() {
+        let workspace = TempWorkspace::new();
+
+        let validated = validate_workspace_path(workspace.path()).unwrap();
+
+        assert_eq!(validated, workspace.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn valid_last_workspace_is_loaded_for_startup_restore() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let last_workspace = workspace.path().join("last");
+        fs::create_dir_all(&last_workspace).unwrap();
+        settings::save_last_workspace_path(&settings_path, last_workspace.clone()).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path).unwrap(),
+            Some(last_workspace.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn boot_restores_valid_last_workspace_from_app_settings() {
+        let _guard = env_guard();
+        let app_data = TempWorkspace::new();
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(app_data.path());
+        settings::save_last_workspace_path(&settings_path, workspace.path().to_path_buf()).unwrap();
+        let previous = std::env::var_os("FLOKINMD_APP_DATA");
+        std::env::set_var("FLOKINMD_APP_DATA", app_data.path());
+
+        let (app, task) = FlokinApp::boot();
+
+        drop(task);
+        restore_app_data_env(previous);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().canonicalize().unwrap())
+        );
+        assert!(matches!(app.model.scan_state, ScanState::Scanning));
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn boot_keeps_welcome_and_saved_path_when_last_workspace_is_unavailable() {
+        let _guard = env_guard();
+        let app_data = TempWorkspace::new();
+        let missing = app_data.path().join("missing");
+        let settings_path = settings::settings_path(app_data.path());
+        settings::save_last_workspace_path(&settings_path, missing.clone()).unwrap();
+        let previous = std::env::var_os("FLOKINMD_APP_DATA");
+        std::env::set_var("FLOKINMD_APP_DATA", app_data.path());
+
+        let (app, task) = FlokinApp::boot();
+
+        drop(task);
+        restore_app_data_env(previous);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(
+            app.workspace_restore_notice.as_deref(),
+            Some("A pasta usada anteriormente não está disponível.")
+        );
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(missing)
+        );
+    }
+
+    #[test]
+    fn boot_stays_in_welcome_after_last_workspace_is_cleared() {
+        let _guard = env_guard();
+        let app_data = TempWorkspace::new();
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(app_data.path());
+        settings::save_last_workspace_path(&settings_path, workspace.path().to_path_buf()).unwrap();
+        settings::clear_last_workspace_path(&settings_path).unwrap();
+        let previous = std::env::var_os("FLOKINMD_APP_DATA");
+        std::env::set_var("FLOKINMD_APP_DATA", app_data.path());
+
+        let (app, task) = FlokinApp::boot();
+
+        drop(task);
+        restore_app_data_env(previous);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(app.workspace_restore_notice, None);
+        assert_eq!(settings::load_last_workspace_path(&settings_path), None);
+    }
+
+    #[test]
+    fn file_path_last_workspace_is_handled_safely() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let file_path = workspace.path().join("not-a-directory");
+        fs::write(&file_path, "").unwrap();
+        settings::save_last_workspace_path(&settings_path, file_path).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn missing_last_workspace_setting_does_not_block_welcome() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn unavailable_last_workspace_is_reported_but_not_erased() {
+        let workspace = TempWorkspace::new();
+        let settings_path = settings::settings_path(workspace.path());
+        let missing = workspace.path().join("missing");
+        settings::save_last_workspace_path(&settings_path, missing.clone()).unwrap();
+
+        assert_eq!(
+            restored_workspace_from_settings_path(&settings_path),
+            Err(())
+        );
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(missing)
+        );
+    }
+
+    #[test]
+    fn invalid_last_workspace_path_stays_in_welcome_with_notice() {
+        let mut app = FlokinApp::new();
+        let missing = std::env::temp_dir().join("flokinmd-missing-last-workspace");
+
+        let task = app.switch_workspace(missing);
+
+        drop(task);
+        assert_eq!(app.model.current_workspace, None);
+        assert_eq!(
+            app.workspace_restore_notice.as_deref(),
+            Some("A pasta usada anteriormente não está disponível.")
+        );
+    }
+
+    #[test]
+    fn successful_open_folder_enters_workspace_with_canonical_path() {
+        let workspace = TempWorkspace::new();
+        let mut app = FlokinApp::new();
+
+        let task = app.switch_workspace(workspace.path().to_path_buf());
+
+        drop(task);
+        assert_eq!(
+            app.model.current_workspace,
+            Some(workspace.path().canonicalize().unwrap())
+        );
+        assert_eq!(app.workspace_restore_notice, None);
+    }
+
+    #[test]
+    fn opening_second_workspace_replaces_first_in_memory() {
+        let first = TempWorkspace::new();
+        let second = TempWorkspace::new();
+        let mut app = FlokinApp::new();
+
+        drop(app.switch_workspace(first.path().to_path_buf()));
+        drop(app.switch_workspace(second.path().to_path_buf()));
+
+        assert_eq!(
+            app.model.current_workspace,
+            Some(second.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn canceled_open_folder_keeps_saved_last_workspace_preference() {
+        let temp = TempWorkspace::new();
+        let settings_path = settings::settings_path(temp.path());
+        let saved = temp.path().join("saved");
+        fs::create_dir_all(&saved).unwrap();
+        settings::save_last_workspace_path(&settings_path, saved.clone()).unwrap();
+
+        let mut app = FlokinApp::new();
+        let _ = app.update(Message::FolderSelected(None));
+
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(saved)
+        );
+        assert_eq!(app.model.current_workspace, None);
+    }
+
+    #[test]
+    fn saved_last_workspace_can_be_replaced() {
+        let temp = TempWorkspace::new();
+        let settings_path = settings::settings_path(temp.path());
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+
+        settings::save_last_workspace_path(&settings_path, first).unwrap();
+        settings::save_last_workspace_path(&settings_path, second.clone()).unwrap();
+
+        assert_eq!(
+            settings::load_last_workspace_path(&settings_path),
+            Some(second)
+        );
+    }
+
+    #[test]
     fn folder_selected_updates_workspace_state() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
 
-        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+        let task = app.update(Message::FolderSelected(Some(path)));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        drop(task);
+        assert_eq!(app.model.current_workspace, Some(canonical));
         assert!(matches!(app.model.scan_state, ScanState::Scanning));
     }
 
     #[test]
     fn projection_failure_does_not_clear_selected_workspace() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/flokinmd-sql-test");
-        let _ = app.update(Message::FolderSelected(Some(path.clone())));
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
+        let task = app.update(Message::FolderSelected(Some(path)));
+        drop(task);
 
         let _ = app.update(Message::SqlProjectionCompleted(
             1,
-            path.clone(),
+            canonical.clone(),
             Err(SqlError {
                 message: String::from("projection failed"),
             }),
         ));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        assert_eq!(app.model.current_workspace, Some(canonical));
         assert_eq!(
             app.model.sql_explorer.error.as_deref(),
             Some("projection failed")
@@ -2363,8 +3137,10 @@ mod tests {
     #[test]
     fn stale_scan_result_cannot_replace_new_workspace() {
         let mut app = FlokinApp::new();
-        let first = std::path::PathBuf::from("/tmp/workspace-a");
-        let second = std::path::PathBuf::from("/tmp/workspace-b");
+        let first_workspace = TempWorkspace::new();
+        let second_workspace = TempWorkspace::new();
+        let first = first_workspace.path().canonicalize().unwrap();
+        let second = second_workspace.path().canonicalize().unwrap();
 
         let _ = app.update(Message::FolderSelected(Some(first.clone())));
         let _ = app.update(Message::FolderSelected(Some(second.clone())));
@@ -2386,19 +3162,23 @@ mod tests {
     #[test]
     fn canceling_folder_dialog_preserves_workspace_state() {
         let mut app = FlokinApp::new();
-        let path = std::path::PathBuf::from("/tmp/Conhecimento");
+        let workspace = TempWorkspace::new();
+        let path = workspace.path().to_path_buf();
+        let canonical = path.canonicalize().unwrap();
 
         let _ = app.update(Message::FolderSelected(Some(path.clone())));
         let _ = app.update(Message::FolderSelected(None));
 
-        assert_eq!(app.model.current_workspace, Some(path));
+        assert_eq!(app.model.current_workspace, Some(canonical));
     }
 
     #[test]
     fn watcher_event_from_old_workspace_is_ignored() {
         let mut app = FlokinApp::new();
-        let current = std::path::PathBuf::from("/tmp/current");
-        let old = std::path::PathBuf::from("/tmp/old");
+        let current_workspace = TempWorkspace::new();
+        let old_workspace = TempWorkspace::new();
+        let current = current_workspace.path().canonicalize().unwrap();
+        let old = old_workspace.path().canonicalize().unwrap();
         let _ = app.update(Message::FolderSelected(Some(current.clone())));
 
         let _ = app.update(Message::WorkspaceWatcher(WatcherMessage::Events {
@@ -2425,6 +3205,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
 
         assert_eq!(message, Some(Message::SearchOpened));
@@ -2442,9 +3223,12 @@ mod tests {
             repeat: false,
         };
 
-        assert_eq!(keyboard_message(event.clone(), false, false, false), None);
         assert_eq!(
-            keyboard_message(event, true, false, false),
+            keyboard_message(event.clone(), false, false, false, false),
+            None
+        );
+        assert_eq!(
+            keyboard_message(event, false, true, false, false),
             Some(Message::SearchNext)
         );
     }
@@ -2462,12 +3246,30 @@ mod tests {
         };
 
         assert_eq!(
-            keyboard_message(event.clone(), false, true, false),
+            keyboard_message(event.clone(), false, false, true, false),
             Some(Message::MenuClosed)
         );
         assert_eq!(
-            keyboard_message(event, false, false, true),
+            keyboard_message(event, false, false, false, true),
             Some(Message::BulkEditCanceled)
+        );
+    }
+
+    #[test]
+    fn escape_closes_about_dialog_before_global_shortcuts() {
+        let event = Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            modified_key: Key::Named(Named::Escape),
+            physical_key: Physical::Code(Code::Escape),
+            location: Location::Standard,
+            modifiers: Modifiers::NONE,
+            text: None,
+            repeat: false,
+        };
+
+        assert_eq!(
+            keyboard_message(event, true, true, true, true),
+            Some(Message::AboutClosed)
         );
     }
 
@@ -2598,6 +3400,107 @@ mod tests {
     }
 
     #[test]
+    fn context_mode_is_reachable_from_activity_and_menu() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        assert_eq!(app.mode, AppMode::Context);
+        assert_eq!(app.model.active_activity, Activity::Context);
+
+        let _ = app.update(Message::MenuAction(MenuAction::Graph));
+        let _ = app.update(Message::MenuAction(MenuAction::Context));
+        assert_eq!(app.mode, AppMode::Context);
+        assert_eq!(app.model.active_activity, Activity::Context);
+    }
+
+    #[test]
+    fn context_section_and_artifact_selection_update_state() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::ContextSectionSelected(ContextSection::Skills));
+        assert_eq!(app.model.context_section, ContextSection::Skills);
+        assert_eq!(app.model.selected_context_artifact, None);
+
+        let _ = app.update(Message::ContextArtifactSelected(path.clone()));
+        assert_eq!(app.model.selected_context_artifact, Some(path));
+    }
+
+    #[test]
+    fn context_open_in_editor_reuses_document_flow() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "skills/deploy/SKILL.md",
+            "---\ntitle: Deploy\n---\n# Deploy\n",
+        );
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        let _ = app.update(Message::ContextOpenInEditor(path.clone()));
+
+        assert_eq!(app.mode, AppMode::Files);
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.markdown_editors.contains_key(&path));
+    }
+
+    #[test]
+    fn context_show_in_graph_selects_document_without_opening_editor() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("skills/deploy/SKILL.md");
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Context));
+        let _ = app.update(Message::ContextShowInGraph(path.clone()));
+
+        assert_eq!(app.mode, AppMode::Graph);
+        assert_eq!(app.model.selected_document_path, Some(path));
+        assert!(app.model.editor.tabs.is_empty());
+    }
+
+    #[test]
+    fn context_projection_uses_refreshed_store_without_writes() {
+        let workspace = TempWorkspace::new();
+        workspace.write("skills/deploy/SKILL.md", "---\ntitle: Deploy\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        let first_path = workspace.path().join("skills/deploy/SKILL.md");
+        let before = fs::read_to_string(&first_path).unwrap();
+
+        let first = build_context_projection(&app.model.documents, &app.model.relation_index);
+        assert_eq!(first.count_for_section(ContextSection::Skills), 1);
+        let _ = app.update(Message::ContextArtifactSelected(first_path.clone()));
+        assert_eq!(
+            app.model.selected_context_artifact,
+            Some(first_path.clone())
+        );
+
+        fs::remove_file(&first_path).unwrap();
+        workspace.write("skills/release/SKILL.md", "---\ntitle: Release\n---\n");
+        app.model.workspace_update_completed(
+            workspace_update_from_events(
+                workspace.path(),
+                &[
+                    WorkspaceEvent::Remove(first_path.clone()),
+                    WorkspaceEvent::Upsert(workspace.path().join("skills/release/SKILL.md")),
+                ],
+            )
+            .unwrap(),
+        );
+
+        let second = build_context_projection(&app.model.documents, &app.model.relation_index);
+        assert_eq!(second.count_for_section(ContextSection::Skills), 1);
+        assert_eq!(app.model.selected_context_artifact, None);
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("skills/release/SKILL.md")).unwrap(),
+            "---\ntitle: Release\n---\n"
+        );
+        assert_eq!(before, "---\ntitle: Deploy\n---\n");
+    }
+
+    #[test]
     fn graph_mode_does_not_disturb_dirty_editor_buffers() {
         let workspace = TempWorkspace::new();
         workspace.write("a.md", "A saved\n");
@@ -2615,6 +3518,51 @@ mod tests {
         assert_eq!(app.model.editor.tab(&path).unwrap().buffer, "A dirty\n");
         assert!(app.model.editor.tab(&path).unwrap().dirty);
         assert_eq!(app.markdown_editors.get(&path).unwrap().text(), "A dirty\n");
+    }
+
+    #[test]
+    fn sql_execute_still_runs_select_without_completion_runtime() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/carf.md",
+            "---\ntitle: CARF\nstatus: active\n---\n",
+        );
+        let mut app = app_from_workspace(&workspace);
+        app.model.open_sql_explorer();
+        app.model.set_sql_mode(SqlExplorerMode::Query);
+        app.sql_editor = text_editor::Content::with_text("SELECT * FROM projects LIMIT 100;");
+
+        let task = app.update(Message::SqlExecute);
+
+        drop(task);
+        assert!(app.model.sql_explorer.running);
+        assert_eq!(
+            app.model.sql_explorer.query,
+            "SELECT * FROM projects LIMIT 100;"
+        );
+    }
+
+    #[test]
+    fn sql_execute_still_previews_update_without_completion_runtime() {
+        let workspace = TempWorkspace::new();
+        workspace.write(
+            "projects/carf.md",
+            "---\ntitle: CARF\nstatus: active\n---\n",
+        );
+        let mut app = app_from_workspace(&workspace);
+        app.model.open_sql_explorer();
+        app.model.set_sql_mode(SqlExplorerMode::Update);
+        app.sql_editor =
+            text_editor::Content::with_text("UPDATE projects SET status = 'archived';");
+
+        let task = app.update(Message::SqlExecute);
+
+        drop(task);
+        assert!(app.model.sql_explorer.running);
+        assert_eq!(
+            app.model.sql_explorer.query,
+            "UPDATE projects SET status = 'archived';"
+        );
     }
 
     #[test]
@@ -2712,6 +3660,61 @@ mod tests {
     }
 
     #[test]
+    fn graph_first_viewport_measurement_fits_small_graph_readably() {
+        let workspace = TempWorkspace::new();
+        for index in 0..6 {
+            workspace.write(
+                &format!("{index}.md"),
+                &format!("---\ntitle: Doc {index}\n---\n"),
+            );
+        }
+        let mut app = app_from_workspace(&workspace);
+        let _ = app.update(Message::AppModeSelected(AppMode::Graph));
+        app.graph.pan = iced::Vector::new(0.0, 0.0);
+        app.graph.zoom = 0.4;
+
+        let _ = app.update(Message::GraphViewportChanged(900.0, 600.0));
+
+        assert!(app.graph.zoom >= 1.0);
+        assert!(app.graph.pan.x.is_finite());
+        assert!(app.graph.pan.y.is_finite());
+    }
+
+    #[test]
+    fn graph_fit_action_recenters_and_recalculates_zoom() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\nrelated: \"[[B]]\"\n---\n");
+        workspace.write("b.md", "---\ntitle: B\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        app.graph.viewport = iced::Size::new(900.0, 600.0);
+        app.graph.pan = iced::Vector::new(-2_000.0, 1_300.0);
+        app.graph.zoom = 0.35;
+
+        let _ = app.update(Message::GraphFitRequested);
+
+        assert!(app.graph.zoom >= 1.0);
+        assert_ne!(app.graph.pan, iced::Vector::new(-2_000.0, 1_300.0));
+        assert!(app.graph.pan.x.is_finite());
+        assert!(app.graph.pan.y.is_finite());
+    }
+
+    #[test]
+    fn graph_resize_after_initial_measurement_preserves_user_view() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a.md", "---\ntitle: A\n---\n");
+        let mut app = app_from_workspace(&workspace);
+        app.graph.viewport = iced::Size::new(900.0, 600.0);
+        app.graph.pan = iced::Vector::new(125.0, 140.0);
+        app.graph.zoom = 1.4;
+
+        let _ = app.update(Message::GraphViewportChanged(1200.0, 800.0));
+
+        assert_eq!(app.graph.viewport, iced::Size::new(1200.0, 800.0));
+        assert_eq!(app.graph.pan, iced::Vector::new(125.0, 140.0));
+        assert_eq!(app.graph.zoom, 1.4);
+    }
+
+    #[test]
     fn graph_zoom_controls_update_and_reset_zoom() {
         let workspace = TempWorkspace::new();
         workspace.write("a.md", "---\ntitle: A\n---\n");
@@ -2726,6 +3729,134 @@ mod tests {
         assert!(app.graph.zoom < 1.18);
         let _ = app.update(Message::GraphZoomReset);
         assert_eq!(app.graph.zoom, 1.0);
+    }
+
+    #[test]
+    fn new_markdown_file_name_normalization_accepts_markdown_names() {
+        assert_eq!(
+            normalize_new_markdown_file_name("notes").unwrap(),
+            "notes.md"
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("notes.md").unwrap(),
+            "notes.md"
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("notes.markdown").unwrap(),
+            "notes.markdown"
+        );
+    }
+
+    #[test]
+    fn new_markdown_file_name_validation_rejects_non_markdown_and_traversal() {
+        assert_eq!(
+            normalize_new_markdown_file_name("spec.txt"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("../escape"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+        assert_eq!(
+            normalize_new_markdown_file_name("nested/file"),
+            Err(NewMarkdownFileError::InvalidName)
+        );
+    }
+
+    #[test]
+    fn create_empty_markdown_file_does_not_overwrite_existing_file() {
+        let workspace = TempWorkspace::new();
+        workspace.write("notes.md", "# Existing\n");
+
+        let result = create_empty_markdown_file(workspace.path(), workspace.path(), "notes.md");
+
+        assert_eq!(result, Err(NewMarkdownFileError::AlreadyExists));
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("notes.md")).unwrap(),
+            "# Existing\n"
+        );
+    }
+
+    #[test]
+    fn new_file_request_without_workspace_does_not_open_dialog() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::NewMarkdownFileRequested);
+
+        assert!(!app.new_file_dialog_open);
+    }
+
+    #[test]
+    fn new_file_created_opens_clean_editor_after_store_update() {
+        let workspace = TempWorkspace::new();
+        let mut app = app_from_workspace(&workspace);
+        let path = workspace.path().join("notes.md");
+        fs::write(&path, "").unwrap();
+
+        let _ = app.update(Message::NewMarkdownFileCreated(Ok(path.clone())));
+        let update =
+            workspace_update_from_events(workspace.path(), &[WorkspaceEvent::Upsert(path.clone())])
+                .unwrap();
+        let _ = app.update(Message::WorkspaceUpdateCompleted(
+            app.workspace_generation,
+            workspace.path().to_path_buf(),
+            Ok(update),
+        ));
+
+        assert_eq!(app.model.editor.active_path, Some(path.clone()));
+        assert!(app.markdown_editors.contains_key(&path));
+        assert!(!app.model.editor.has_dirty_tabs());
+        assert_eq!(
+            app.model
+                .documents
+                .iter()
+                .filter(|document| document.path == path)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn new_file_dialog_keeps_open_when_name_exists() {
+        let workspace = TempWorkspace::new();
+        workspace.write("notes.md", "");
+        let mut app = app_from_workspace(&workspace);
+
+        let _ = app.update(Message::NewMarkdownFileRequested);
+        let _ = app.update(Message::NewMarkdownFileNameChanged(String::from(
+            "notes.md",
+        )));
+        let _ = app.update(Message::NewMarkdownFileConfirmed);
+
+        assert!(app.new_file_dialog_open);
+        assert_eq!(
+            app.new_file_error,
+            Some(NewMarkdownFileError::AlreadyExists)
+        );
+    }
+
+    #[test]
+    fn explorer_tree_toggle_is_visual_only_and_preserves_selection() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a/b/c.md", "# C\n");
+        let mut app = app_from_workspace(&workspace);
+        let selected = workspace.path().join("a/b/c.md");
+        app.open_or_activate_document(selected.clone());
+
+        let _ = app.update(Message::ExplorerTreeExpandCollapseToggled);
+
+        assert_eq!(app.model.selected_document_path, Some(selected));
+        assert!(!app.model.explorer_tree_has_expanded_dirs());
+        assert_eq!(
+            app.model.scan_state,
+            ScanState::Completed {
+                documents: 1,
+                directories: 2,
+                collections: 1,
+                errors: 0,
+                warnings: 0,
+            }
+        );
     }
 
     fn app_from_workspace(workspace: &TempWorkspace) -> FlokinApp {
@@ -2768,7 +3899,12 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            path.push(format!("flokin-md-app-{}-{unique}", std::process::id()));
+            static NEXT_TEMP_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+            let serial = NEXT_TEMP_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+            path.push(format!(
+                "flokin-md-app-{}-{unique}-{serial}",
+                std::process::id()
+            ));
             fs::create_dir(&path).unwrap();
             Self { path }
         }
@@ -2789,6 +3925,22 @@ mod tests {
     impl Drop for TempWorkspace {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn restore_app_data_env(previous: Option<std::ffi::OsString>) {
+        if let Some(previous) = previous {
+            std::env::set_var("FLOKINMD_APP_DATA", previous);
+        } else {
+            std::env::remove_var("FLOKINMD_APP_DATA");
         }
     }
 }

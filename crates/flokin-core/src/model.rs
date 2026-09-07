@@ -8,15 +8,16 @@ use std::{
 use crate::{
     build_bulk_edit_plan, build_health, load_explicit_schema, relation_display_property,
     search_documents, BulkEditOperation, BulkEditPlan, BulkEditSelection, BulkEditValue,
-    Collection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue, HistoryState,
-    MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus, ScanError,
-    ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection, SqlCatalog,
-    SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
+    Collection, ContextSection, DatabaseHealth, Document, ExplicitSchemaState, HealthIssue,
+    HistoryState, MutationHistoryEntry, PropertyValue, Relation, RelationIndex, RelationStatus,
+    ScanError, ScanResult, SchemaCatalog, SchemaType, SearchQuery, SearchState, SortDirection,
+    SqlCatalog, SqlError, SqlQueryResult, SqlWritePlan, TableSort, WorkspaceUpdate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
     Explorer,
+    Context,
     Relations,
     Links,
     Tags,
@@ -29,8 +30,9 @@ pub enum Activity {
 }
 
 impl Activity {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Explorer,
+        Self::Context,
         Self::Relations,
         Self::Links,
         Self::Tags,
@@ -45,6 +47,7 @@ impl Activity {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Explorer => "Explorer",
+            Self::Context => "Context",
             Self::Relations => "Relations",
             Self::Links => "Links",
             Self::Tags => "Tags",
@@ -66,6 +69,7 @@ pub struct ExplorerNode {
     pub id: ExplorerNodeId,
     pub name: String,
     pub kind: ExplorerNodeKind,
+    pub semantic_kind: Option<SemanticKind>,
     pub path: PathBuf,
     pub children: Vec<ExplorerNode>,
     pub expanded: bool,
@@ -77,12 +81,29 @@ pub enum ExplorerNodeKind {
     File,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticKind {
+    Agent,
+    AgentInstructions,
+    Skill,
+    Spec,
+    Ice,
+    Context,
+    Prompt,
+    Rules,
+    Memory,
+    Mcp,
+}
+
 impl ExplorerNode {
     pub fn folder(id: usize, name: impl Into<String>, path: PathBuf, children: Vec<Self>) -> Self {
+        let name = name.into();
+        let semantic_kind = classify_semantic_entry(&name, ExplorerNodeKind::Folder, &children);
         Self {
             id: ExplorerNodeId(id),
-            name: name.into(),
+            name,
             kind: ExplorerNodeKind::Folder,
+            semantic_kind,
             path,
             children,
             expanded: true,
@@ -102,9 +123,11 @@ impl ExplorerNode {
     }
 
     pub fn file(id: usize, name: impl Into<String>, path: PathBuf) -> Self {
+        let name = name.into();
         Self {
             id: ExplorerNodeId(id),
-            name: name.into(),
+            semantic_kind: classify_semantic_entry(&name, ExplorerNodeKind::File, &[]),
+            name,
             kind: ExplorerNodeKind::File,
             path,
             children: Vec::new(),
@@ -124,6 +147,70 @@ impl ExplorerNode {
 
         self.children.iter_mut().any(|child| child.toggle(id))
     }
+}
+
+pub fn classify_semantic_entry(
+    name: &str,
+    kind: ExplorerNodeKind,
+    children: &[ExplorerNode],
+) -> Option<SemanticKind> {
+    match kind {
+        ExplorerNodeKind::Folder => classify_semantic_folder(name, children),
+        ExplorerNodeKind::File => classify_semantic_file(name),
+    }
+}
+
+fn classify_semantic_folder(name: &str, children: &[ExplorerNode]) -> Option<SemanticKind> {
+    let normalized = normalized_entry_name(name);
+    let by_name = match normalized.as_str() {
+        "agent" | "agents" => Some(SemanticKind::Agent),
+        "skill" | "skills" => Some(SemanticKind::Skill),
+        "spec" | "specs" | "sdd" => Some(SemanticKind::Spec),
+        "ice" => Some(SemanticKind::Ice),
+        "context" | "contexts" => Some(SemanticKind::Context),
+        "prompt" | "prompts" => Some(SemanticKind::Prompt),
+        "rules" | "instructions" => Some(SemanticKind::Rules),
+        "memory" | "memories" => Some(SemanticKind::Memory),
+        ".mcp" | "mcp" => Some(SemanticKind::Mcp),
+        _ => None,
+    };
+
+    by_name.or_else(|| {
+        children
+            .iter()
+            .any(|child| {
+                matches!(child.kind, ExplorerNodeKind::File)
+                    && child.name.eq_ignore_ascii_case("SKILL.md")
+            })
+            .then_some(SemanticKind::Skill)
+    })
+}
+
+fn classify_semantic_file(name: &str) -> Option<SemanticKind> {
+    let normalized = normalized_entry_name(name);
+    match normalized.as_str() {
+        "skill.md" => Some(SemanticKind::Skill),
+        "spec.md" | "sdd_template.md" => Some(SemanticKind::Spec),
+        "ice.md" | "ice_template.md" => Some(SemanticKind::Ice),
+        "context.md" => Some(SemanticKind::Context),
+        "prompt.md" => Some(SemanticKind::Prompt),
+        "rules.md" | "instructions.md" => Some(SemanticKind::Rules),
+        "memory.md" => Some(SemanticKind::Memory),
+        "mcp.json" => Some(SemanticKind::Mcp),
+        "agents.md" => Some(SemanticKind::AgentInstructions),
+        _ if normalized.ends_with(".spec.md") => Some(SemanticKind::Spec),
+        _ if normalized.ends_with(".ice.md") => Some(SemanticKind::Ice),
+        _ if normalized.starts_with("sdd-")
+            && (normalized.ends_with(".md") || normalized.ends_with(".markdown")) =>
+        {
+            Some(SemanticKind::Spec)
+        }
+        _ => None,
+    }
+}
+
+fn normalized_entry_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,6 +421,7 @@ pub struct ShellModel {
     pub collections: Vec<Collection>,
     pub scan_state: ScanState,
     pub selected_document_path: Option<PathBuf>,
+    pub selected_explorer_folder_path: Option<PathBuf>,
     pub selected_collection: Option<String>,
     pub collection_table_sort: Option<TableSort>,
     pub search: SearchState,
@@ -343,6 +431,8 @@ pub struct ShellModel {
     pub health_filter: HealthFilter,
     pub health_query: String,
     pub selected_health_issue_id: Option<String>,
+    pub context_section: ContextSection,
+    pub selected_context_artifact: Option<PathBuf>,
     pub workspace_errors: Vec<ScanError>,
     pub selected_schema_field: Option<(String, String)>,
     pub collection_panel: CollectionPanel,
@@ -456,33 +546,44 @@ impl ShellModel {
     pub fn workspace_selected(&mut self, path: Option<PathBuf>) {
         if let Some(path) = path {
             self.current_workspace = Some(path);
-            self.explorer.clear();
-            self.documents.clear();
-            self.collections.clear();
-            self.selected_document_path = None;
-            self.selected_collection = None;
-            self.collection_table_sort = None;
-            self.search = SearchState::closed();
-            self.relation_index = RelationIndex::default();
-            self.schema_catalog = SchemaCatalog::default();
-            self.health = DatabaseHealth::default();
-            self.health_filter = HealthFilter::All;
-            self.health_query.clear();
-            self.selected_health_issue_id = None;
-            self.workspace_errors.clear();
-            self.selected_schema_field = None;
-            self.collection_panel = CollectionPanel::Data;
-            self.bulk_edit = BulkEditState::default();
-            self.editor = EditorState::default();
-            self.sql_explorer.open = false;
-            self.sql_explorer.catalog = None;
-            self.sql_explorer.result = None;
-            self.sql_explorer.error = None;
-            self.sql_explorer.running = false;
-            self.history = HistoryState::default();
-            self.collapsed_sql_tables.clear();
+            self.clear_workspace_state();
             self.scan_state = ScanState::Scanning;
         }
+    }
+
+    pub fn close_workspace(&mut self) {
+        self.current_workspace = None;
+        self.clear_workspace_state();
+        self.active_activity = Activity::Explorer;
+        self.scan_state = ScanState::Idle;
+    }
+
+    fn clear_workspace_state(&mut self) {
+        self.explorer.clear();
+        self.documents.clear();
+        self.collections.clear();
+        self.selected_document_path = None;
+        self.selected_explorer_folder_path = None;
+        self.selected_collection = None;
+        self.collection_table_sort = None;
+        self.search = SearchState::closed();
+        self.relation_index = RelationIndex::default();
+        self.schema_catalog = SchemaCatalog::default();
+        self.health = DatabaseHealth::default();
+        self.health_filter = HealthFilter::All;
+        self.health_query.clear();
+        self.selected_health_issue_id = None;
+        self.context_section = ContextSection::Overview;
+        self.selected_context_artifact = None;
+        self.workspace_errors.clear();
+        self.selected_schema_field = None;
+        self.collection_panel = CollectionPanel::Data;
+        self.bulk_edit = BulkEditState::default();
+        self.editor = EditorState::default();
+        self.sql_explorer = SqlExplorerState::closed();
+        self.history = HistoryState::default();
+        self.collapsed_sql_tables.clear();
+        self.filters.clear();
     }
 
     pub fn workspace_display(&self) -> WorkspaceDisplay {
@@ -494,6 +595,21 @@ impl ShellModel {
 
     pub fn select_activity(&mut self, activity: Activity) {
         self.active_activity = activity;
+    }
+
+    pub fn select_context_section(&mut self, section: ContextSection) {
+        self.context_section = section;
+        self.selected_context_artifact = None;
+    }
+
+    pub fn select_context_artifact(&mut self, path: PathBuf) -> bool {
+        if self.documents.iter().any(|document| document.path == path) {
+            self.selected_context_artifact = Some(path);
+            true
+        } else {
+            self.sync_context_selection_with_documents();
+            false
+        }
     }
 
     pub fn history_loaded(&mut self, result: Result<Vec<MutationHistoryEntry>, String>) {
@@ -602,7 +718,16 @@ impl ShellModel {
     }
 
     pub fn toggle_explorer_node(&mut self, id: ExplorerNodeId) -> bool {
-        self.explorer.iter_mut().any(|node| node.toggle(id))
+        let toggled_folder = self
+            .explorer
+            .iter_mut()
+            .find_map(|node| node.toggle_folder(id));
+        if let Some(path) = toggled_folder {
+            self.selected_explorer_folder_path = Some(path);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn select_explorer_node(&mut self, id: ExplorerNodeId) -> bool {
@@ -621,9 +746,37 @@ impl ShellModel {
         }
     }
 
+    pub fn explorer_tree_has_expanded_dirs(&self) -> bool {
+        self.explorer
+            .iter()
+            .any(|node| node.has_expanded_descendant(true))
+    }
+
+    pub fn toggle_explorer_tree_expansion(&mut self) {
+        let expand = !self.explorer_tree_has_expanded_dirs();
+        for node in &mut self.explorer {
+            node.set_expanded_recursive(expand, true);
+        }
+    }
+
+    pub fn new_markdown_file_parent(&self) -> Option<PathBuf> {
+        if let Some(folder) = self.selected_explorer_folder_path.as_ref() {
+            return Some(folder.clone());
+        }
+        if let Some(parent) = self
+            .selected_document_path
+            .as_ref()
+            .and_then(|path| path.parent())
+        {
+            return Some(parent.to_path_buf());
+        }
+        self.current_workspace.clone()
+    }
+
     pub fn select_markdown_path(&mut self, path: PathBuf) -> bool {
         if self.open_editor_tab(path.clone()) {
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -638,6 +791,7 @@ impl ShellModel {
             let path = document.path.clone();
             self.open_editor_tab(path.clone());
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -652,6 +806,7 @@ impl ShellModel {
     pub fn select_document_without_opening(&mut self, path: PathBuf) -> bool {
         if self.documents.iter().any(|document| document.path == path) {
             self.selected_document_path = Some(path);
+            self.selected_explorer_folder_path = None;
             self.selected_collection = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -659,6 +814,26 @@ impl ShellModel {
             true
         } else {
             false
+        }
+    }
+
+    fn sync_context_selection_with_documents(&mut self) {
+        if let Some(path) = self.selected_context_artifact.as_ref() {
+            if !self.documents.iter().any(|document| &document.path == path) {
+                self.selected_context_artifact = None;
+            }
+        }
+    }
+
+    fn sync_selected_explorer_folder_with_tree(&mut self) {
+        if let Some(path) = self.selected_explorer_folder_path.as_ref() {
+            if !self
+                .explorer
+                .iter()
+                .any(|node| node.contains_folder_path(path))
+            {
+                self.selected_explorer_folder_path = None;
+            }
         }
     }
 
@@ -673,6 +848,7 @@ impl ShellModel {
             }
             self.selected_collection = Some(collection_id);
             self.selected_document_path = None;
+            self.selected_explorer_folder_path = None;
             self.editor.active_path = None;
             self.collection_table_sort = None;
             self.selected_schema_field = None;
@@ -1209,6 +1385,8 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_selected_explorer_folder_with_tree();
+        self.sync_context_selection_with_documents();
         if let Some(selected_collection) = self.selected_collection.as_ref() {
             if !self
                 .collections
@@ -1331,6 +1509,8 @@ impl ShellModel {
                 self.selected_document_path = None;
             }
         }
+        self.sync_selected_explorer_folder_with_tree();
+        self.sync_context_selection_with_documents();
         self.retain_bulk_selection_in_current_collection();
 
         let expanded_paths = expanded_folder_paths(&self.explorer);
@@ -2151,6 +2331,42 @@ impl ExplorerNode {
 
         self.children.iter().find_map(|child| child.file_path(id))
     }
+
+    fn toggle_folder(&mut self, id: ExplorerNodeId) -> Option<PathBuf> {
+        if self.id == id && self.is_folder() {
+            self.expanded = !self.expanded;
+            return Some(self.path.clone());
+        }
+
+        self.children
+            .iter_mut()
+            .find_map(|child| child.toggle_folder(id))
+    }
+
+    fn contains_folder_path(&self, path: &Path) -> bool {
+        (self.is_folder() && self.path == path)
+            || self
+                .children
+                .iter()
+                .any(|child| child.contains_folder_path(path))
+    }
+
+    fn has_expanded_descendant(&self, is_root: bool) -> bool {
+        (self.is_folder() && !is_root && self.expanded)
+            || self
+                .children
+                .iter()
+                .any(|child| child.has_expanded_descendant(false))
+    }
+
+    fn set_expanded_recursive(&mut self, expanded: bool, is_root: bool) {
+        if self.is_folder() {
+            self.expanded = is_root || expanded;
+        }
+        for child in &mut self.children {
+            child.set_expanded_recursive(expanded, false);
+        }
+    }
 }
 
 fn explorer_from_scan_result(result: &ScanResult) -> Vec<ExplorerNode> {
@@ -2637,8 +2853,9 @@ mod tests {
     };
 
     use super::{
-        workspace_display, Activity, BulkEditStep, EditorTabKind, EditorViewMode, ExplorerNode,
-        ExplorerNodeId, InspectorModel, InspectorValue, ScanState,
+        classify_semantic_entry, workspace_display, Activity, BulkEditStep, EditorTabKind,
+        EditorViewMode, ExplorerNode, ExplorerNodeId, ExplorerNodeKind, InspectorModel,
+        InspectorValue, ScanState, SemanticKind,
     };
 
     #[test]
@@ -2697,6 +2914,26 @@ mod tests {
     }
 
     #[test]
+    fn close_workspace_clears_workspace_state_without_deleting_history_storage() {
+        let mut shell = mock_shell();
+        let path = PathBuf::from("/home/sc/Documents/Knowledge");
+        shell.workspace_selected(Some(path));
+        shell.open_sql_explorer();
+        shell.open_search();
+
+        shell.close_workspace();
+
+        assert_eq!(shell.current_workspace, None);
+        assert_eq!(shell.scan_state, ScanState::Idle);
+        assert!(shell.documents.is_empty());
+        assert!(shell.explorer.is_empty());
+        assert!(shell.editor.tabs.is_empty());
+        assert!(!shell.sql_explorer.open);
+        assert!(shell.history.entries.is_empty());
+        assert_eq!(shell.active_activity, Activity::Explorer);
+    }
+
+    #[test]
     fn selecting_another_folder_replaces_workspace() {
         let mut shell = mock_shell();
         let first = PathBuf::from("/home/sc/Documents/Knowledge");
@@ -2747,10 +2984,195 @@ mod tests {
     }
 
     #[test]
+    fn folder_toggle_tracks_new_markdown_file_parent() {
+        let mut shell = mock_shell();
+        let folder = PathBuf::from("/tmp/Knowledge/Projects");
+        shell.current_workspace = Some(PathBuf::from("/tmp/Knowledge"));
+        shell.explorer = vec![ExplorerNode::folder(
+            1,
+            "Knowledge",
+            PathBuf::from("/tmp/Knowledge"),
+            vec![ExplorerNode::folder(
+                2,
+                "Projects",
+                folder.clone(),
+                Vec::new(),
+            )],
+        )];
+
+        assert!(shell.toggle_explorer_node(ExplorerNodeId(2)));
+
+        assert_eq!(shell.selected_explorer_folder_path, Some(folder.clone()));
+        assert_eq!(shell.new_markdown_file_parent(), Some(folder));
+    }
+
+    #[test]
+    fn file_selection_uses_parent_for_new_markdown_file() {
+        let workspace = TempWorkspace::new();
+        workspace.write("projects/carf.md", "# CARF");
+        let mut shell = shell_from_workspace(&workspace);
+        let path = workspace.path().join("projects/carf.md");
+
+        assert!(shell.select_markdown_path(path));
+
+        assert_eq!(
+            shell.new_markdown_file_parent(),
+            Some(workspace.path().join("projects"))
+        );
+    }
+
+    #[test]
+    fn no_selection_uses_workspace_root_for_new_markdown_file() {
+        let workspace = TempWorkspace::new();
+        let mut shell = mock_shell();
+        shell.workspace_selected(Some(workspace.path().to_path_buf()));
+
+        assert_eq!(
+            shell.new_markdown_file_parent(),
+            Some(workspace.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn collapse_all_preserves_selected_document() {
+        let workspace = TempWorkspace::new();
+        workspace.write("a/b/c.md", "# C");
+        let mut shell = shell_from_workspace(&workspace);
+        let selected = workspace.path().join("a/b/c.md");
+        assert!(shell.select_markdown_path(selected.clone()));
+        assert!(shell.explorer_tree_has_expanded_dirs());
+
+        shell.toggle_explorer_tree_expansion();
+
+        assert_eq!(shell.selected_document_path, Some(selected));
+        assert!(!shell.explorer_tree_has_expanded_dirs());
+        assert!(shell.explorer[0].expanded);
+        assert!(!shell.explorer[0].children[0].expanded);
+    }
+
+    #[test]
+    fn expand_all_includes_nested_directories() {
+        let mut shell = mock_shell();
+        shell.explorer = vec![ExplorerNode::folder(
+            1,
+            "Knowledge",
+            PathBuf::from("/tmp/Knowledge"),
+            vec![ExplorerNode::collapsed_folder(
+                2,
+                "a",
+                PathBuf::from("/tmp/Knowledge/a"),
+                vec![ExplorerNode::collapsed_folder(
+                    3,
+                    "b",
+                    PathBuf::from("/tmp/Knowledge/a/b"),
+                    Vec::new(),
+                )],
+            )],
+        )];
+
+        shell.toggle_explorer_tree_expansion();
+
+        assert!(shell.explorer_tree_has_expanded_dirs());
+        assert!(shell.explorer[0].expanded);
+        assert!(shell.explorer[0].children[0].expanded);
+        assert!(shell.explorer[0].children[0].children[0].expanded);
+    }
+
+    #[test]
     fn ignores_toggle_for_unknown_tree_nodes() {
         let mut shell = mock_shell();
 
         assert!(!shell.toggle_explorer_node(ExplorerNodeId(999)));
+    }
+
+    #[test]
+    fn classifies_explicit_ai_semantic_folders() {
+        assert_eq!(
+            classify_semantic_entry("skills", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Skill)
+        );
+        assert_eq!(
+            classify_semantic_entry("specs", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Spec)
+        );
+        assert_eq!(
+            classify_semantic_entry("ice", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Ice)
+        );
+        assert_eq!(
+            classify_semantic_entry("context", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Context)
+        );
+        assert_eq!(
+            classify_semantic_entry("prompts", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Prompt)
+        );
+        assert_eq!(
+            classify_semantic_entry("agents", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Agent)
+        );
+        assert_eq!(
+            classify_semantic_entry("rules", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Rules)
+        );
+        assert_eq!(
+            classify_semantic_entry("memory", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Memory)
+        );
+        assert_eq!(
+            classify_semantic_entry(".mcp", ExplorerNodeKind::Folder, &[]),
+            Some(SemanticKind::Mcp)
+        );
+    }
+
+    #[test]
+    fn classifies_direct_skill_marker_folder_without_filesystem_io() {
+        let marker = ExplorerNode::file(1, "SKILL.md", PathBuf::from("/workspace/foo/SKILL.md"));
+
+        assert_eq!(
+            classify_semantic_entry("deploy-production", ExplorerNodeKind::Folder, &[marker]),
+            Some(SemanticKind::Skill)
+        );
+    }
+
+    #[test]
+    fn classifies_explicit_ai_semantic_files() {
+        let cases = [
+            ("SKILL.md", SemanticKind::Skill),
+            ("SPEC.md", SemanticKind::Spec),
+            ("foo.spec.md", SemanticKind::Spec),
+            ("SDD_TEMPLATE.md", SemanticKind::Spec),
+            ("SDD-0001-auth.md", SemanticKind::Spec),
+            ("ICE.md", SemanticKind::Ice),
+            ("ICE_TEMPLATE.md", SemanticKind::Ice),
+            ("foo.ice.md", SemanticKind::Ice),
+            ("CONTEXT.md", SemanticKind::Context),
+            ("PROMPT.md", SemanticKind::Prompt),
+            ("MEMORY.md", SemanticKind::Memory),
+            ("RULES.md", SemanticKind::Rules),
+            ("INSTRUCTIONS.md", SemanticKind::Rules),
+            ("mcp.json", SemanticKind::Mcp),
+            ("AGENTS.md", SemanticKind::AgentInstructions),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(
+                classify_semantic_entry(name, ExplorerNodeKind::File, &[]),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_normal_files_and_folders_without_semantic_kind() {
+        assert_eq!(
+            classify_semantic_entry("notes.md", ExplorerNodeKind::File, &[]),
+            None
+        );
+        assert_eq!(
+            classify_semantic_entry("docs", ExplorerNodeKind::Folder, &[]),
+            None
+        );
     }
 
     #[test]

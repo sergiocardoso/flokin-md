@@ -1,6 +1,7 @@
 use crate::model::{Activity, CollectionPanel, FilterCount, HealthFilter, ScanState, ShellModel};
 use crate::{
-    DatabaseHealth, HistoryState, RelationIndex, SchemaCatalog, SearchState, SqlExplorerState,
+    ContextSection, DatabaseHealth, HistoryState, RelationIndex, SchemaCatalog, SearchState,
+    SqlExplorerState,
 };
 use std::collections::BTreeSet;
 
@@ -13,6 +14,7 @@ pub fn mock_shell() -> ShellModel {
         collections: Vec::new(),
         scan_state: ScanState::Idle,
         selected_document_path: None,
+        selected_explorer_folder_path: None,
         selected_collection: None,
         collection_table_sort: None,
         search: SearchState::closed(),
@@ -22,6 +24,8 @@ pub fn mock_shell() -> ShellModel {
         health_filter: HealthFilter::All,
         health_query: String::new(),
         selected_health_issue_id: None,
+        context_section: ContextSection::Overview,
+        selected_context_artifact: None,
         workspace_errors: Vec::new(),
         selected_schema_field: None,
         collection_panel: CollectionPanel::Data,

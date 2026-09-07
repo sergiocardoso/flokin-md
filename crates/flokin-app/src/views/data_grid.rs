@@ -1,5 +1,5 @@
 use iced::widget::{button, container, text};
-use iced::{alignment, Element};
+use iced::{alignment, Element, Length};
 
 use crate::{message::Message, theme};
 
@@ -12,6 +12,7 @@ pub fn header_gutter() -> Element<'static, Message> {
         .width(GUTTER_WIDTH)
         .height(HEADER_HEIGHT)
         .padding([7.0, theme::spacing::SM])
+        .align_y(alignment::Vertical::Center)
         .style(theme::data_gutter)
         .into()
 }
@@ -27,6 +28,7 @@ pub fn row_gutter(row_index: usize, selected: bool) -> Element<'static, Message>
     .height(ROW_HEIGHT)
     .padding([7.0, theme::spacing::SM])
     .align_x(alignment::Horizontal::Right)
+    .align_y(alignment::Vertical::Center)
     .style(move |theme| {
         if selected {
             theme::data_row(theme, row_index, true)
@@ -47,6 +49,7 @@ pub fn cell<'a>(
         .height(ROW_HEIGHT)
         .padding([6.0, theme::spacing::SM])
         .align_x(alignment)
+        .align_y(alignment::Vertical::Center)
         .style(theme::data_cell)
         .into()
 }
@@ -59,6 +62,7 @@ pub fn header_cell<'a>(
         .width(width)
         .height(HEADER_HEIGHT)
         .padding([7.0, theme::spacing::SM])
+        .align_y(alignment::Vertical::Center)
         .style(theme::data_header)
         .into()
 }
@@ -66,9 +70,15 @@ pub fn header_cell<'a>(
 pub fn selection_header<'a>(label: &'a str, width: f32, message: Message) -> Element<'a, Message> {
     container(
         button(
-            text(label)
-                .font(theme::mono())
-                .size(theme::typography::LABEL),
+            container(
+                text(label)
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
         )
         .width(width)
         .height(HEADER_HEIGHT)
@@ -91,9 +101,15 @@ pub fn selection_cell<'a>(
 ) -> Element<'a, Message> {
     container(
         button(
-            text(label)
-                .font(theme::mono())
-                .size(theme::typography::LABEL),
+            container(
+                text(label)
+                    .font(theme::mono())
+                    .size(theme::typography::LABEL),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
         )
         .width(width)
         .height(ROW_HEIGHT)

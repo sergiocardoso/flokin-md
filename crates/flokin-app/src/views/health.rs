@@ -1,4 +1,7 @@
-use flokin_core::{ExplicitSchemaState, HealthFilter, HealthIssue, HealthSeverity, ShellModel};
+use flokin_core::{
+    ExplicitSchemaState, HealthCategory, HealthFilter, HealthIssue, HealthIssueKind,
+    HealthSeverity, SchemaType, ShellModel,
+};
 use iced::widget::{
     button, column, container, row, scrollable,
     scrollable::{Direction, Scrollbar},
@@ -6,11 +9,11 @@ use iced::widget::{
     text::Wrapping,
     text_input,
 };
-use iced::{Alignment, Element, Length};
+use iced::{alignment, Alignment, Element, Length};
 
-use crate::{message::Message, theme, views::data_grid, widgets};
+use crate::{i18n::I18nCatalog, message::Message, theme, views::data_grid, widgets};
 
-pub fn view(model: &ShellModel) -> Element<'_, Message> {
+pub fn view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let summary = &model.health.summary;
     let issues = model.filtered_health_issues();
 
@@ -18,39 +21,61 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
         column![
             row![
                 column![
-                    text("Database Health")
+                    text(i18n.tr("health-title"))
                         .size(theme::typography::TITLE)
                         .style(theme::text_normal),
-                    text(format!("{} documentos", summary.total_documents))
-                        .size(theme::typography::BODY)
-                        .style(theme::text_muted),
+                    text(i18n.tr_with(
+                        "health-total-documents",
+                        &[("count", summary.total_documents.into())],
+                    ))
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
                 ]
                 .spacing(theme::spacing::XS)
                 .width(Length::Fill),
-                summary_counter("Errors", summary.errors, HealthSeverity::Error),
-                summary_counter("Warnings", summary.warnings, HealthSeverity::Warning),
-                summary_counter("Healthy", summary.healthy_documents, HealthSeverity::Info),
+                summary_counter(
+                    i18n.tr("health-errors"),
+                    summary.errors,
+                    HealthSeverity::Error
+                ),
+                summary_counter(
+                    i18n.tr("health-warnings"),
+                    summary.warnings,
+                    HealthSeverity::Warning
+                ),
+                summary_counter(
+                    i18n.tr("health-healthy"),
+                    summary.healthy_documents,
+                    HealthSeverity::Info
+                ),
             ]
             .spacing(theme::spacing::MD)
             .align_y(Alignment::Center),
             row![
-                filter_button("All", HealthFilter::All, model),
-                filter_button("Errors", HealthFilter::Errors, model),
-                filter_button("Warnings", HealthFilter::Warnings, model),
-                text_input("Filtrar issues...", model.health_query.as_str())
-                    .on_input(Message::HealthQueryChanged)
-                    .size(theme::typography::BODY)
-                    .padding([5.0, theme::spacing::SM])
-                    .width(220)
-                    .style(theme::input),
+                filter_button(i18n.tr("health-filter-all"), HealthFilter::All, model),
+                filter_button(i18n.tr("health-filter-errors"), HealthFilter::Errors, model),
+                filter_button(
+                    i18n.tr("health-filter-warnings"),
+                    HealthFilter::Warnings,
+                    model
+                ),
+                text_input(
+                    i18n.tr_static("health-filter-placeholder"),
+                    model.health_query.as_str()
+                )
+                .on_input(Message::HealthQueryChanged)
+                .size(theme::typography::BODY)
+                .padding([5.0, theme::spacing::SM])
+                .width(220)
+                .style(theme::input),
             ]
             .spacing(theme::spacing::SM)
             .align_y(Alignment::Center),
-            health_schema_hint(model),
+            health_schema_hint(model, i18n),
             if issues.is_empty() {
-                empty_state()
+                empty_state(i18n)
             } else {
-                issues_grid(model, &issues)
+                issues_grid(model, &issues, i18n)
             }
         ]
         .spacing(theme::spacing::LG),
@@ -62,21 +87,21 @@ pub fn view(model: &ShellModel) -> Element<'_, Message> {
     .into()
 }
 
-fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
+fn health_schema_hint<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     match &model.schema_catalog.explicit_schema {
         ExplicitSchemaState::Absent => container(
             row![
                 column![
-                    text("Schema explícito não configurado.")
+                    text(i18n.tr("health-schema-absent"))
                         .size(theme::typography::BODY)
                         .style(theme::text_normal),
-                    text("O banco está usando somente a estrutura inferida.")
+                    text(i18n.tr("health-schema-inferred"))
                         .size(theme::typography::BODY)
                         .style(theme::text_muted),
                 ]
                 .spacing(theme::spacing::XXS)
                 .width(Length::Fill),
-                button(text("Criar schema").size(theme::typography::BODY))
+                button(text(i18n.tr("schema-create")).size(theme::typography::BODY))
                     .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
                     .padding([0.0, 10.0])
                     .style(theme::button_primary)
@@ -91,11 +116,11 @@ fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
         .into(),
         ExplicitSchemaState::Invalid(_) => container(
             row![
-                text("Há um problema em flokin.schema.yaml.")
+                text(i18n.tr("health-schema-invalid"))
                     .size(theme::typography::BODY)
                     .style(theme::text_warning)
                     .width(Length::Fill),
-                button(text("Abrir schema").size(theme::typography::BODY))
+                button(text(i18n.tr("schema-open")).size(theme::typography::BODY))
                     .height(theme::sizes::TOOLBAR_BUTTON_HEIGHT)
                     .padding([0.0, 10.0])
                     .style(theme::button_toolbar)
@@ -113,7 +138,7 @@ fn health_schema_hint<'a>(model: &'a ShellModel) -> Element<'a, Message> {
 }
 
 fn summary_counter<'a>(
-    label: &'static str,
+    label: String,
     count: usize,
     severity: HealthSeverity,
 ) -> Element<'a, Message> {
@@ -136,28 +161,30 @@ fn summary_counter<'a>(
     .into()
 }
 
-fn filter_button(
-    label: &'static str,
-    filter: HealthFilter,
-    model: &ShellModel,
-) -> Element<'static, Message> {
-    button(text(label).size(theme::typography::LABEL))
-        .height(theme::sizes::TAB_BUTTON_HEIGHT)
-        .padding([0.0, theme::spacing::MD])
-        .style(if model.health_filter == filter {
-            theme::button_selected
-        } else {
-            theme::button_toolbar
-        })
-        .on_press(Message::HealthFilterSelected(filter))
-        .into()
+fn filter_button(label: String, filter: HealthFilter, model: &ShellModel) -> Element<'_, Message> {
+    button(
+        container(text(label).size(theme::typography::LABEL))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(theme::sizes::TAB_BUTTON_HEIGHT)
+    .padding([0.0, theme::spacing::MD])
+    .style(if model.health_filter == filter {
+        theme::button_selected
+    } else {
+        theme::button_toolbar
+    })
+    .on_press(Message::HealthFilterSelected(filter))
+    .into()
 }
 
-fn empty_state<'a>() -> Element<'a, Message> {
+fn empty_state<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     container(
         column![
             widgets::icon(theme::Icon::Health, theme::icons::META, true),
-            text("Nenhuma issue encontrada.")
+            text(i18n.tr("health-no-issues"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         ]
@@ -171,10 +198,14 @@ fn empty_state<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn issues_grid<'a>(model: &'a ShellModel, issues: &[&'a HealthIssue]) -> Element<'a, Message> {
+fn issues_grid<'a>(
+    model: &'a ShellModel,
+    issues: &[&'a HealthIssue],
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let widths = [92.0, 110.0, 260.0, 140.0, 360.0];
     let width = data_grid::grid_width(true, widths.into_iter());
-    let mut rows = column![header(widths, width)].spacing(0);
+    let mut rows = column![header(widths, width, i18n)].spacing(0);
 
     for (row_index, issue) in issues.iter().enumerate() {
         let selected = model.selected_health_issue_id.as_ref() == Some(&issue.id);
@@ -182,13 +213,13 @@ fn issues_grid<'a>(model: &'a ShellModel, issues: &[&'a HealthIssue]) -> Element
             .spacing(0)
             .align_y(Alignment::Center);
         cells = cells.push(cell(
-            severity_label(issue.severity),
+            severity_label(issue.severity, i18n),
             widths[0],
             selected,
             issue.severity,
         ));
         cells = cells.push(cell(
-            issue.category.label().to_owned(),
+            category_label(issue.category, i18n),
             widths[1],
             selected,
             issue.severity,
@@ -198,7 +229,7 @@ fn issues_grid<'a>(model: &'a ShellModel, issues: &[&'a HealthIssue]) -> Element
                 .relative_path
                 .as_ref()
                 .map(|path| path.display().to_string())
-                .unwrap_or_else(|| String::from("workspace")),
+                .unwrap_or_else(|| i18n.tr("health-workspace")),
             widths[2],
             selected,
             issue.severity,
@@ -210,7 +241,7 @@ fn issues_grid<'a>(model: &'a ShellModel, issues: &[&'a HealthIssue]) -> Element
             issue.severity,
         ));
         cells = cells.push(cell(
-            issue.message.clone(),
+            localized_health_issue_message(issue, i18n),
             widths[4],
             selected,
             issue.severity,
@@ -242,16 +273,16 @@ fn issues_grid<'a>(model: &'a ShellModel, issues: &[&'a HealthIssue]) -> Element
     .into()
 }
 
-fn header<'a>(widths: [f32; 5], width: f32) -> Element<'a, Message> {
+fn header<'a>(widths: [f32; 5], width: f32, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let mut header = row![data_grid::header_gutter()]
         .spacing(0)
         .align_y(Alignment::Center);
     for (label, width) in [
-        ("SEVERITY", widths[0]),
-        ("CATEGORY", widths[1]),
-        ("DOCUMENT", widths[2]),
-        ("PROPERTY", widths[3]),
-        ("PROBLEM", widths[4]),
+        (i18n.tr("health-severity"), widths[0]),
+        (i18n.tr("health-category"), widths[1]),
+        (i18n.tr("health-document"), widths[2]),
+        (i18n.tr("health-property"), widths[3]),
+        (i18n.tr("health-problem"), widths[4]),
     ] {
         header = header.push(data_grid::header_cell(
             text(label)
@@ -293,10 +324,72 @@ fn cell<'a>(
     )
 }
 
-fn severity_label(severity: HealthSeverity) -> String {
+fn severity_label(severity: HealthSeverity, i18n: &I18nCatalog) -> String {
     match severity {
-        HealthSeverity::Error => String::from("Error"),
-        HealthSeverity::Warning => String::from("Warning"),
-        HealthSeverity::Info => String::from("Info"),
+        HealthSeverity::Error => i18n.tr("health-severity-error"),
+        HealthSeverity::Warning => i18n.tr("health-severity-warning"),
+        HealthSeverity::Info => i18n.tr("health-severity-info"),
+    }
+}
+
+fn category_label(category: HealthCategory, i18n: &I18nCatalog) -> String {
+    match category {
+        HealthCategory::Parsing => i18n.tr("health-category-parsing"),
+        HealthCategory::Schema => i18n.tr("health-category-schema"),
+        HealthCategory::Relations => i18n.tr("health-category-relations"),
+        HealthCategory::Workspace => i18n.tr("health-category-workspace"),
+    }
+}
+
+pub(crate) fn localized_health_issue_message(issue: &HealthIssue, i18n: &I18nCatalog) -> String {
+    match issue.kind {
+        HealthIssueKind::InvalidFrontmatter => i18n.tr("health-issue-invalid-frontmatter"),
+        HealthIssueKind::FileReadError => i18n.tr("health-issue-file-read-error"),
+        HealthIssueKind::WorkspaceScanError => i18n.tr("health-issue-workspace-scan-error"),
+        HealthIssueKind::ExplicitSchemaInvalid => i18n.tr("health-issue-explicit-schema-invalid"),
+        HealthIssueKind::RequiredFieldMissing => i18n.tr("health-issue-required-field-missing"),
+        HealthIssueKind::TypeMismatch => i18n.tr_with(
+            "health-issue-type-mismatch",
+            &[
+                (
+                    "expected",
+                    issue
+                        .expected
+                        .map(|schema_type| schema_type_label(schema_type, i18n))
+                        .unwrap_or_else(|| i18n.tr("schema-unknown"))
+                        .into(),
+                ),
+                (
+                    "found",
+                    issue
+                        .found
+                        .map(|schema_type| schema_type_label(schema_type, i18n))
+                        .unwrap_or_else(|| i18n.tr("schema-unknown"))
+                        .into(),
+                ),
+            ],
+        ),
+        HealthIssueKind::UndeclaredField => i18n.tr("health-issue-undeclared-field"),
+        HealthIssueKind::MixedObservedTypes => i18n.tr("health-issue-mixed-observed-types"),
+        HealthIssueKind::RelationUnresolved => i18n.tr("health-issue-relation-unresolved"),
+        HealthIssueKind::RelationAmbiguous => i18n.tr_with(
+            "health-issue-relation-ambiguous",
+            &[("count", issue.details.len().into())],
+        ),
+    }
+}
+
+pub(crate) fn schema_type_label(schema_type: SchemaType, i18n: &I18nCatalog) -> String {
+    match schema_type {
+        SchemaType::String => i18n.tr("value-type-string"),
+        SchemaType::Integer => i18n.tr("value-type-integer"),
+        SchemaType::Float => i18n.tr("value-type-float"),
+        SchemaType::Boolean => i18n.tr("value-type-boolean"),
+        SchemaType::Array => i18n.tr("value-type-array"),
+        SchemaType::Object => i18n.tr("value-type-object"),
+        SchemaType::Relation => i18n.tr("value-type-relation"),
+        SchemaType::Mixed => i18n.tr("value-type-mixed"),
+        SchemaType::Null => i18n.tr("value-type-null"),
+        SchemaType::Unknown => i18n.tr("schema-unknown"),
     }
 }
