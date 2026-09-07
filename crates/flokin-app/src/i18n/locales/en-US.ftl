@@ -194,6 +194,7 @@ editor-select-document = Select a Markdown document to view its contents.
 # SQL
 sql-reviewing = Reviewing...
 sql-running = Running...
+sql-query-tab = Query 1
 sql-review-update = Review update
 sql-run = Run
 sql-mode-query = Query

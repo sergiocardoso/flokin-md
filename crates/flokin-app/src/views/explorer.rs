@@ -242,9 +242,9 @@ fn sql_schema_table<'a>(
                     "sql-schema-table-name",
                     &[("table", table.name.as_str().into())]
                 ))
-                    .font(theme::mono())
-                    .size(theme::typography::LABEL)
-                    .style(theme::text_muted),
+                .font(theme::mono())
+                .size(theme::typography::LABEL)
+                .style(theme::text_muted),
             ]
             .spacing(theme::spacing::XS)
             .align_y(Alignment::Center),

@@ -70,9 +70,10 @@ fn document_inspector<'a>(
     }
 
     if !inspector.outgoing_relations.is_empty() {
-        content = content
-            .push(subtle_divider())
-            .push(section_header(i18n.tr("inspector-relations"), theme::Icon::FileText));
+        content = content.push(subtle_divider()).push(section_header(
+            i18n.tr("inspector-relations"),
+            theme::Icon::FileText,
+        ));
 
         for relation in inspector.outgoing_relations {
             content = content.push(relation_row(relation, true, i18n));
@@ -80,12 +81,10 @@ fn document_inspector<'a>(
     }
 
     if !inspector.incoming_relations.is_empty() {
-        content = content
-            .push(subtle_divider())
-            .push(section_header(
-                i18n.tr("inspector-referenced-by"),
-                theme::Icon::Tag,
-            ));
+        content = content.push(subtle_divider()).push(section_header(
+            i18n.tr("inspector-referenced-by"),
+            theme::Icon::Tag,
+        ));
 
         for relation in inspector.incoming_relations {
             content = content.push(relation_row(relation, false, i18n));
@@ -105,18 +104,20 @@ fn document_inspector<'a>(
     }
 
     if !inspector.warnings.is_empty() {
-        content = content
-            .push(subtle_divider())
-            .push(section_header(i18n.tr("inspector-warnings"), theme::Icon::Clock));
+        content = content.push(subtle_divider()).push(section_header(
+            i18n.tr("inspector-warnings"),
+            theme::Icon::Clock,
+        ));
 
         for warning in inspector.warnings {
             content = content.push(warning_row(warning));
         }
     }
 
-    content = content
-        .push(subtle_divider())
-        .push(section_header(i18n.tr("inspector-metadata"), theme::Icon::FileText));
+    content = content.push(subtle_divider()).push(section_header(
+        i18n.tr("inspector-metadata"),
+        theme::Icon::FileText,
+    ));
 
     for field in inspector.metadata {
         content = content.push(field_row(field));
@@ -190,9 +191,10 @@ fn health_issue_inspector<'a>(
     }
 
     if !issue.details.is_empty() {
-        content = content
-            .push(subtle_divider())
-            .push(section_header(i18n.tr("inspector-details"), theme::Icon::FileText));
+        content = content.push(subtle_divider()).push(section_header(
+            i18n.tr("inspector-details"),
+            theme::Icon::FileText,
+        ));
         for detail in issue.details {
             content = content.push(
                 text(detail)
@@ -288,10 +290,9 @@ fn relation_row<'a>(
     let status_text = match status {
         InspectorRelationStatus::Resolved => None,
         InspectorRelationStatus::Unresolved => Some(i18n.tr("relation-unresolved")),
-        InspectorRelationStatus::Ambiguous(count) => Some(i18n.tr_with(
-            "relation-ambiguous-count",
-            &[("count", count.into())],
-        )),
+        InspectorRelationStatus::Ambiguous(count) => {
+            Some(i18n.tr_with("relation-ambiguous-count", &[("count", count.into())]))
+        }
     };
 
     let target: Element<'static, Message> = if let Some(path) = target_path {

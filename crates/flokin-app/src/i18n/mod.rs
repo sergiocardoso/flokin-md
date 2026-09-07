@@ -288,9 +288,7 @@ mod tests {
             let name_len = rest
                 .chars()
                 .take_while(|character| {
-                    character.is_ascii_alphanumeric()
-                        || *character == '-'
-                        || *character == '_'
+                    character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
                 })
                 .map(char::len_utf8)
                 .sum();
@@ -301,5 +299,4 @@ mod tests {
         }
         args
     }
-
 }

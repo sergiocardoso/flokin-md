@@ -184,9 +184,9 @@ fn empty_workspace_view<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Ele
                 "editor-scanned-folder",
                 &[("path", workspace.path.as_str().into())]
             ))
-                .font(theme::mono())
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),
+            .font(theme::mono())
+            .size(theme::typography::BODY)
+            .style(theme::text_muted),
             text(i18n.tr("editor-empty-workspace-hint"))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
@@ -584,7 +584,7 @@ fn sql_update_preview<'a>(
                 "sql-documents-match",
                 &[("count", plan.matched_rows.into())],
             ))
-                .size(theme::typography::LABEL),
+            .size(theme::typography::LABEL),
             text(i18n.tr_with("changes-will-change", &[("count", summary.changed.into())]))
                 .size(theme::typography::LABEL),
             text(i18n.tr_with("changes-no-change", &[("count", summary.no_change.into())]))
@@ -783,19 +783,15 @@ fn collection_header<'a>(
 ) -> Element<'a, Message> {
     container(
         row![
-            column![text(i18n.tr_with(
-                "status-documents",
-                &[("count", document_count.into())],
-            ))
-                .size(theme::typography::BODY)
-                .style(theme::text_muted),]
+            column![
+                text(i18n.tr_with("status-documents", &[("count", document_count.into())],))
+                    .size(theme::typography::BODY)
+                    .style(theme::text_muted),
+            ]
             .spacing(theme::spacing::XS)
             .width(Length::Fill),
             collection_panel_switch(model, i18n),
-            text(i18n.tr_with(
-                "data-properties",
-                &[("count", property_count.into())],
-            ))
+            text(i18n.tr_with("data-properties", &[("count", property_count.into())],))
                 .size(theme::typography::BODY)
                 .style(theme::text_muted),
         ]
@@ -863,7 +859,10 @@ fn empty_schema_view<'a>(i18n: &'a I18nCatalog) -> Element<'a, Message> {
     .into()
 }
 
-fn bulk_selection_toolbar<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+fn bulk_selection_toolbar<'a>(
+    model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let count = model.bulk_edit.selected_paths.len();
     if count == 0 || model.collection_panel != CollectionPanel::Data {
         return container("").height(0).into();
@@ -914,8 +913,8 @@ fn schema_view<'a>(
             "status-documents",
             &[("count", schema.document_count.into())],
         ))
-            .size(theme::typography::BODY)
-            .style(theme::text_muted),
+        .size(theme::typography::BODY)
+        .style(theme::text_muted),
         text(source)
             .size(theme::typography::BODY)
             .style(theme::text_muted),
@@ -1130,11 +1129,7 @@ fn schema_grid<'a>(
     .into()
 }
 
-fn schema_header<'a>(
-    widths: [f32; 4],
-    width: f32,
-    i18n: &'a I18nCatalog,
-) -> Element<'a, Message> {
+fn schema_header<'a>(widths: [f32; 4], width: f32, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let mut header = row![data_grid::header_gutter()]
         .spacing(0)
         .align_y(Alignment::Center);
@@ -1647,7 +1642,10 @@ fn step_label(label: String, active: bool) -> Element<'static, Message> {
         .into()
 }
 
-fn bulk_configure_content<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+fn bulk_configure_content<'a>(
+    model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let mut content = column![
         text(i18n.tr("bulk-operation"))
             .size(theme::typography::LABEL)
@@ -1744,7 +1742,10 @@ fn bulk_operation_button(
         .into()
 }
 
-fn bulk_property_controls<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Element<'a, Message> {
+fn bulk_property_controls<'a>(
+    model: &'a ShellModel,
+    i18n: &'a I18nCatalog,
+) -> Element<'a, Message> {
     let mut options = model.bulk_property_options();
     let new_property_option = i18n.tr("bulk-new-property-option");
     options.push(new_property_option.clone());
@@ -1773,11 +1774,14 @@ fn bulk_property_controls<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> E
             text(i18n.tr("bulk-property-name"))
                 .size(theme::typography::LABEL)
                 .style(theme::text_muted),
-            text_input(i18n.tr_static("bulk-property-name-placeholder"), &model.bulk_edit.new_property)
-                .padding(theme::spacing::SM)
-                .size(theme::typography::BODY)
-                .style(theme::input)
-                .on_input(Message::BulkNewPropertyChanged),
+            text_input(
+                i18n.tr_static("bulk-property-name-placeholder"),
+                &model.bulk_edit.new_property
+            )
+            .padding(theme::spacing::SM)
+            .size(theme::typography::BODY)
+            .style(theme::input)
+            .on_input(Message::BulkNewPropertyChanged),
         ]
         .spacing(theme::spacing::XS)
         .into()
@@ -1846,18 +1850,24 @@ fn bulk_value_controls<'a>(model: &'a ShellModel, i18n: &'a I18nCatalog) -> Elem
             .size(theme::typography::BODY)
             .style(theme::text_muted)
             .into(),
-        BulkEditValueType::Relation => text_input(i18n.tr_static("bulk-target-placeholder"), &model.bulk_edit.value)
-            .padding(theme::spacing::SM)
-            .size(theme::typography::BODY)
-            .style(theme::input)
-            .on_input(Message::BulkValueChanged)
-            .into(),
-        _ => text_input(i18n.tr_static("bulk-value-placeholder"), &model.bulk_edit.value)
-            .padding(theme::spacing::SM)
-            .size(theme::typography::BODY)
-            .style(theme::input)
-            .on_input(Message::BulkValueChanged)
-            .into(),
+        BulkEditValueType::Relation => text_input(
+            i18n.tr_static("bulk-target-placeholder"),
+            &model.bulk_edit.value,
+        )
+        .padding(theme::spacing::SM)
+        .size(theme::typography::BODY)
+        .style(theme::input)
+        .on_input(Message::BulkValueChanged)
+        .into(),
+        _ => text_input(
+            i18n.tr_static("bulk-value-placeholder"),
+            &model.bulk_edit.value,
+        )
+        .padding(theme::spacing::SM)
+        .size(theme::typography::BODY)
+        .style(theme::input)
+        .on_input(Message::BulkValueChanged)
+        .into(),
     };
 
     column![
