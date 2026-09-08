@@ -2325,7 +2325,7 @@ mod tests {
             modified_key: Key::Character("k".into()),
             physical_key: Physical::Code(Code::KeyK),
             location: Location::Standard,
-            modifiers: Modifiers::CTRL,
+            modifiers: Modifiers::COMMAND,
             text: None,
             repeat: false,
         };
@@ -3198,7 +3198,7 @@ mod tests {
                 modified_key: Key::Character("k".into()),
                 physical_key: Physical::Code(Code::KeyK),
                 location: Location::Standard,
-                modifiers: Modifiers::CTRL,
+                modifiers: Modifiers::COMMAND,
                 text: None,
                 repeat: false,
             },
