@@ -1,0 +1,53 @@
+name: Package FlokinMD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - chore/release-v0.1
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Quality gates
+        run: |
+          cargo fmt --check
+          cargo check --workspace
+          cargo test --workspace
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Package Linux
+        run: cargo packager --release --formats deb,appimage
+
+      - name: Show artifacts
+        run: |
+          file dist/*
+          sha256sum dist/*
+          ls -lh dist/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlokinMD-linux-x86_64
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+          if-no-files-found: error
