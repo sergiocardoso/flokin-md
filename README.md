@@ -46,7 +46,7 @@ A normal Markdown file:
 
 ```yaml
 ---
-title: CARF
+title: Flokin
 type: project
 status: active
 priority: 10
