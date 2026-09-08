@@ -1,0 +1,26 @@
+name = "flokinmd"
+product-name = "FlokinMD"
+identifier = "dev.sergiocardoso.flokinmd"
+version = "0.1.0"
+
+authors = ["Sérgio Cardoso"]
+publisher = "Sérgio Cardoso"
+
+description = "A local-first desktop workspace for understanding, querying and organizing Markdown as structured data."
+homepage = "https://github.com/sergiocardoso/flokin-md"
+license-file = "LICENSE"
+
+category = "DeveloperTool"
+
+out-dir = "dist"
+binaries-dir = "target/release"
+
+before-packaging-command = "cargo build --workspace --release"
+
+formats = ["deb", "appimage"]
+
+icons = ["assets/logo-icon-512.png"]
+
+binaries = [
+  { path = "flokin-app", main = true }
+]
