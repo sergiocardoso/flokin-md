@@ -52,12 +52,140 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
 
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Package Windows
+        run: cargo packager --release --formats nsis
+
+      - name: Show artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem dist
+          Get-ChildItem dist -File | ForEach-Object {
+            Get-FileHash $_.FullName -Algorithm SHA256
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlokinMD-windows-x86_64
+          path: dist/*.exe
+          if-no-files-found: error
+
+  macos-arm64:
+    name: macOS Apple Silicon
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Package macOS
+        run: cargo packager --release --formats dmg
+
+      - name: Show artifacts
+        run: |
+          file dist/*
+          shasum -a 256 dist/*
+          ls -lh dist/
+
+      - name: Upload macOS Apple Silicon artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlokinMD-macos-arm64
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  macos-intel:
+    name: macOS Intel
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Package macOS
+        run: cargo packager --release --formats dmg
+
+      - name: Show artifacts
+        run: |
+          file dist/*
+          shasum -a 256 dist/*
+          ls -lh dist/
+
+      - name: Upload macOS Intel artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlokinMD-macos-x86_64
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - linux
+      - windows
+      - macos-arm64
+      - macos-intel
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Show release assets
+        run: ls -lh release-assets/
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-rc.') }}
           generate_release_notes: true
-          files: |
-            dist/*.deb
-            dist/*.AppImage
+          files: release-assets/*
