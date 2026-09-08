@@ -22,6 +22,16 @@ Point it at an existing folder containing `.md` or `.markdown` files and FlokinM
 
 No import step. No proprietary vault. No mandatory cloud.
 
+<div align="center">
+
+<img
+  src="https://supabase.flokin.com.br/storage/v1/object/public/projects/flokinmd/images5.png"
+  alt="FlokinMD DataGrid showing Markdown documents as structured data"
+  width="1200"
+/>
+
+</div>
+
 ---
 
 ## Features
