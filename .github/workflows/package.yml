@@ -2,6 +2,9 @@ name: Package FlokinMD
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - chore/release-v0.1
 
 permissions:
   contents: read
