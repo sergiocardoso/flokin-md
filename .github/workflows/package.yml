@@ -183,6 +183,45 @@ jobs:
       - name: Show release assets
         run: ls -lh release-assets/
 
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          rename_one() {
+            local pattern="$1"
+            local target="$2"
+            local matches=(release-assets/$pattern)
+
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one file matching '$pattern', found ${#matches[@]}"
+              exit 1
+            fi
+
+            mv "${matches[0]}" "release-assets/$target"
+          }
+
+          rename_one "*.deb" \
+            "FlokinMD_${VERSION}_linux_amd64.deb"
+
+          rename_one "*.AppImage" \
+            "FlokinMD_${VERSION}_linux_x86_64.AppImage"
+
+          rename_one "*.exe" \
+            "FlokinMD_${VERSION}_windows_x86_64-setup.exe"
+
+          rename_one "*aarch64*.dmg" \
+            "FlokinMD_${VERSION}_macos_arm64.dmg"
+
+          rename_one "*x64*.dmg" \
+            "FlokinMD_${VERSION}_macos_x86_64.dmg"
+
+          echo "Normalized release assets:"
+          ls -lh release-assets/
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
