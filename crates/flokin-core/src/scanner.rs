@@ -622,7 +622,6 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -1215,37 +1214,29 @@ mod tests {
     }
 
     struct TempWorkspace {
-        path: PathBuf,
+        dir: tempfile::TempDir,
     }
 
     impl TempWorkspace {
         fn new() -> Self {
-            let mut path = std::env::temp_dir();
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            path.push(format!("flokin-md-scanner-{}-{unique}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self { path }
+            // `TempDir` picks a securely random, collision-checked name and owns the
+            // directory for the lifetime of this value, removing it on drop. This
+            // avoids the hand-rolled PID+nanosecond name that could collide under
+            // parallel test execution (two threads sampling the same clock tick).
+            let dir = tempfile::TempDir::new().unwrap();
+            Self { dir }
         }
 
         fn path(&self) -> &Path {
-            &self.path
+            self.dir.path()
         }
 
         fn write(&self, relative_path: &str, content: &str) {
-            let path = self.path.join(relative_path);
+            let path = self.path().join(relative_path);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
             fs::write(path, content).unwrap();
-        }
-    }
-
-    impl Drop for TempWorkspace {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
         }
     }
 }

@@ -2701,16 +2701,16 @@ mod tests {
     }
 
     struct TempWorkspace {
-        root: PathBuf,
+        dir: tempfile::TempDir,
     }
 
     impl TempWorkspace {
         fn path(&self) -> &std::path::Path {
-            &self.root
+            self.dir.path()
         }
 
         fn write(&self, relative: &str, content: &str) {
-            let path = self.root.join(relative);
+            let path = self.path().join(relative);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
@@ -2718,21 +2718,13 @@ mod tests {
         }
     }
 
-    impl Drop for TempWorkspace {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
     fn temp_workspace() -> TempWorkspace {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("flokinmd-sql-test-{}-{nonce}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        TempWorkspace { root }
+        // `TempDir` owns a securely-named, collision-checked directory and removes
+        // it on drop, unlike the previous hand-rolled PID+nanosecond name, which
+        // could collide (and silently share a directory) under parallel tests.
+        TempWorkspace {
+            dir: tempfile::TempDir::new().unwrap(),
+        }
     }
 
     fn collections_from_documents(documents: &[Document]) -> Vec<Collection> {

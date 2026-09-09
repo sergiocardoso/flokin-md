@@ -968,6 +968,7 @@ dependencies = [
  "open",
  "rfd",
  "sys-locale",
+ "tempfile",
  "unic-langid",
  "ureq",
 ]
@@ -982,6 +983,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlparser",
+ "tempfile",
 ]
 
 [[package]]

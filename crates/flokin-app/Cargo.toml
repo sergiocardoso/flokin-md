@@ -18,5 +18,8 @@ sys-locale = "0.3"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 unic-langid = "0.9"
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

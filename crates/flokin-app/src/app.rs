@@ -2425,11 +2425,8 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Mutex, OnceLock,
-        },
-        time::{Instant, SystemTime, UNIX_EPOCH},
+        sync::{Mutex, OnceLock},
+        time::{Instant, UNIX_EPOCH},
     };
 
     use super::{
@@ -4452,42 +4449,28 @@ mod tests {
     }
 
     struct TempWorkspace {
-        path: PathBuf,
+        dir: tempfile::TempDir,
     }
 
     impl TempWorkspace {
         fn new() -> Self {
-            let mut path = std::env::temp_dir();
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            static NEXT_TEMP_WORKSPACE: AtomicU64 = AtomicU64::new(0);
-            let serial = NEXT_TEMP_WORKSPACE.fetch_add(1, Ordering::Relaxed);
-            path.push(format!(
-                "flokin-md-app-{}-{unique}-{serial}",
-                std::process::id()
-            ));
-            fs::create_dir(&path).unwrap();
-            Self { path }
+            // `TempDir` owns a securely-named, collision-checked directory and
+            // removes it on drop, replacing the previous hand-rolled
+            // PID+nanosecond+counter name.
+            let dir = tempfile::TempDir::new().unwrap();
+            Self { dir }
         }
 
         fn path(&self) -> &Path {
-            &self.path
+            self.dir.path()
         }
 
         fn write(&self, relative_path: &str, content: &str) {
-            let path = self.path.join(relative_path);
+            let path = self.path().join(relative_path);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).unwrap();
             }
             fs::write(path, content).unwrap();
-        }
-    }
-
-    impl Drop for TempWorkspace {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
         }
     }
 
