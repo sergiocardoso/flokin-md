@@ -426,6 +426,31 @@ To add a language:
 4. Register the language in `AppLanguage::all`.
 5. Run the locale key parity test and app quality checks.
 
+## Update Checker
+
+FlokinMD v0.1 can tell the user a newer version exists, but it never downloads, installs, replaces the running binary, or talks to any package manager. It only checks GitHub Releases metadata and points the user at the corresponding release page.
+
+```text
+flokin-core (update.rs)      version parsing, SemVer comparison, channel filtering,
+                              update-availability decision — no I/O, no Iced
+flokin-app (services/update_check.rs)
+                              blocking HTTPS GET against the GitHub Releases API
+flokin-app (app.rs)          async Task, persisted preferences, banner/dialog state
+flokin-app (views/update.rs) non-modal banner + manual "Check for Updates..." dialog
+```
+
+Flow: `boot()` decides whether an automatic check is due (at most once every 24 hours, tracked via a persisted timestamp) and, if so, fires a `Task::perform` that runs `update_check::fetch_releases()` off the UI thread. `flokin_core::parse_github_releases` turns the JSON body into `ReleaseInfo` values (skipping draft releases and any entry whose tag fails to parse as SemVer, rather than aborting the whole check). `flokin_core::evaluate_update` then picks the newest release compatible with the active channel and compares it against the running `CARGO_PKG_VERSION` using the `semver` crate, so `0.1.0-rc.2 < 0.1.0-rc.3 < 0.1.0 < 0.1.1` holds exactly as SemVer defines it. A release tag's leading `v` (e.g. `v0.1.0-rc.3`) is stripped before parsing.
+
+Two channels are supported: Stable (default) ignores prerelease tags entirely; Prerelease also considers them. The choice is a persisted preference in `settings.conf`, alongside whether automatic checking is enabled, the last automatic check timestamp, and an optional skipped version.
+
+Automatic checks are silent: any network or parsing failure is swallowed and never interrupts startup or shows an error. A result is only ever surfaced as a small non-modal banner ("FlokinMD X is available...") pushed into the shell layout — never a blocking modal — with Download update, Release notes, Skip this version, and Remind me later actions. "Remind me later" hides the banner for the rest of the running session; "Skip this version" persists that version so it is not offered again, though any release newer than the skipped one still notifies normally.
+
+The manual "Check for Updates..." entry under the Help menu always reports a definite, user-visible outcome — Update available, FlokinMD is up to date, or Could not check for updates — through a small centered dialog, since a deliberate user action deserves a deliberate answer even on failure.
+
+No GitHub authentication is used or required; the request carries a `FlokinMD/<version>` User-Agent, a short timeout, and reads only the fields it needs from the response.
+
+**Versioning constraint for maintainers:** the workspace `Cargo.toml` `[workspace.package].version` is the single runtime source of truth for `CARGO_PKG_VERSION` (used by both the About screen and the update checker); `Packager.toml`'s own `version` field is independent and only feeds installer/package metadata. Before tagging a release `vX.Y.Z[-rc.N]`, bump `Cargo.toml`'s version to exactly `X.Y.Z[-rc.N]` (no leading `v`) so a freshly built binary reports the version it actually is — otherwise the update checker can silently miss real updates (see Version source cleanup in the UPDATE-001 roadmap entry for the concrete bug this caused).
+
 ## Future Direction
 
 As the product grows, the intended structure remains:

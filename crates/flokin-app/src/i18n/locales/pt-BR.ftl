@@ -41,6 +41,7 @@ menu-search = Buscar
 menu-open-data = Abrir Dados
 menu-open-graph = Abrir Grafo
 menu-run-query = Executar query
+menu-check-updates = Verificar atualizações...
 menu-about = Sobre o FlokinMD
 
 # Activity
@@ -331,6 +332,15 @@ settings-section-appearance = APARÊNCIA
 settings-theme = Tema
 theme-light = Claro
 theme-dark = Escuro
+settings-section-updates = ATUALIZAÇÕES
+settings-update-installed-version = Versão instalada
+settings-update-auto-check = Verificar atualizações automaticamente
+settings-update-channel = Canal de atualização
+settings-update-channel-stable = Estável
+settings-update-channel-prerelease = Pré-lançamento
+settings-update-channel-stable-description = Apenas versões finais
+settings-update-channel-prerelease-description = Inclui versões RC e de pré-lançamento
+settings-update-check-now = Verificar agora
 settings-section-layout = LAYOUT
 settings-hide-left-sidebar = Ocultar barra lateral esquerda
 settings-show-left-sidebar = Mostrar barra lateral esquerda
@@ -544,3 +554,14 @@ welcome-title = Abra uma pasta Markdown para começar
 welcome-open-folder = Abrir pasta
 workspace-restoring = Abrindo workspace...
 workspace-previous-unavailable = A pasta usada anteriormente não está disponível.
+
+# Verificador de atualizações
+update-banner-available = FlokinMD { $version } está disponível. Você está usando { $current }.
+update-action-download = Baixar atualização
+update-action-release-notes = Notas da versão
+update-action-remind-later = Lembrar mais tarde
+update-action-skip = Ignorar esta versão
+update-check-title = Verificar atualizações
+update-status-checking = Verificando atualizações...
+update-status-up-to-date = O FlokinMD está atualizado.
+update-status-failed = Não foi possível verificar atualizações: { $error }

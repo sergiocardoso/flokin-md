@@ -41,6 +41,7 @@ menu-search = Search
 menu-open-data = Open Data
 menu-open-graph = Open Graph
 menu-run-query = Run query
+menu-check-updates = Check for Updates...
 menu-about = About FlokinMD
 
 # Activity
@@ -331,6 +332,15 @@ settings-section-appearance = APPEARANCE
 settings-theme = Theme
 theme-light = Light
 theme-dark = Dark
+settings-section-updates = UPDATES
+settings-update-installed-version = Installed version
+settings-update-auto-check = Automatically check for updates
+settings-update-channel = Update channel
+settings-update-channel-stable = Stable
+settings-update-channel-prerelease = Pre-release
+settings-update-channel-stable-description = Only final releases
+settings-update-channel-prerelease-description = Includes release candidates and preview builds
+settings-update-check-now = Check now
 settings-section-layout = LAYOUT
 settings-hide-left-sidebar = Hide left sidebar
 settings-show-left-sidebar = Show left sidebar
@@ -544,3 +554,14 @@ welcome-title = Open a Markdown folder to get started
 welcome-open-folder = Open folder
 workspace-restoring = Opening workspace...
 workspace-previous-unavailable = The previously used folder is not available.
+
+# Update Checker
+update-banner-available = FlokinMD { $version } is available. You're currently using { $current }.
+update-action-download = Download update
+update-action-release-notes = Release notes
+update-action-remind-later = Remind me later
+update-action-skip = Skip this version
+update-check-title = Check for Updates
+update-status-checking = Checking for updates...
+update-status-up-to-date = FlokinMD is up to date.
+update-status-failed = Could not check for updates: { $error }

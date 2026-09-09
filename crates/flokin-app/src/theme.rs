@@ -452,6 +452,11 @@ pub fn surface(theme: &Theme) -> container::Style {
     container_style(palette.surface, Some(palette.border_subtle), radius::SM)
 }
 
+pub fn update_banner(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container_style(palette.accent_soft, Some(palette.accent_border), radius::SM)
+}
+
 pub fn editor(theme: &Theme) -> container::Style {
     let palette = palette(theme);
     container_style(

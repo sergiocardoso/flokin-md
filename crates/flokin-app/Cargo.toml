@@ -15,6 +15,7 @@ notify = "8.2.0"
 open = "5"
 rfd = "0.17"
 sys-locale = "0.3"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 unic-langid = "0.9"
 
 [lints]

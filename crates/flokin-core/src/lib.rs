@@ -12,6 +12,7 @@ mod search;
 mod sql;
 mod sql_completion;
 mod table;
+mod update;
 
 pub use bulk_edit::{
     apply_bulk_edit_plan, build_bulk_edit_plan, content_fingerprint, explicit_schema_loaded,
@@ -82,3 +83,11 @@ pub use sql_completion::{
 pub use table::{
     SortDirection, TableCell, TableColumn, TableModel, TableRow, TableSort, TableValueType,
 };
+pub use update::{
+    default_channel_for_version, effective_update_channel, evaluate_update, normalize_release_tag,
+    parse_github_releases, parse_release_version, select_latest_release, should_check_on_startup,
+    should_notify_update, update_check_due, ReleaseInfo, UpdateChannel, UpdateInfo, UpdateStatus,
+    UPDATE_CHECK_INTERVAL_SECONDS,
+};
+
+pub use semver::Version as AppVersion;

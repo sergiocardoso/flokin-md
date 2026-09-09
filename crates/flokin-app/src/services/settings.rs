@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use flokin_core::UpdateChannel;
+
 use crate::{i18n::AppLanguage, theme::AppTheme};
 
 const SETTINGS_VERSION: &str = "1";
@@ -12,6 +14,10 @@ pub struct AppSettings {
     pub theme: Option<AppTheme>,
     pub language: Option<AppLanguage>,
     pub last_workspace_path: Option<PathBuf>,
+    pub update_auto_check: Option<bool>,
+    pub update_channel: Option<UpdateChannel>,
+    pub last_update_check_unix: Option<i64>,
+    pub skipped_update_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +78,51 @@ pub fn clear_last_workspace_path(path: &Path) -> Result<(), String> {
     save_settings(path, settings)
 }
 
+pub fn load_update_auto_check(path: &Path) -> Option<bool> {
+    load_settings(path).and_then(|settings| settings.update_auto_check)
+}
+
+pub fn save_update_auto_check(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.update_auto_check = Some(enabled);
+    save_settings(path, settings)
+}
+
+pub fn load_update_channel(path: &Path) -> Option<UpdateChannel> {
+    load_settings(path).and_then(|settings| settings.update_channel)
+}
+
+pub fn save_update_channel(path: &Path, channel: UpdateChannel) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.update_channel = Some(channel);
+    save_settings(path, settings)
+}
+
+// Not read by the startup flow: a fresh process always checks once regardless of
+// this timestamp (see `should_check_on_startup`). Kept symmetric with
+// `save_last_update_check`, which is still written after every check, for a
+// possible future in-process periodic recheck.
+#[allow(dead_code)]
+pub fn load_last_update_check(path: &Path) -> Option<i64> {
+    load_settings(path).and_then(|settings| settings.last_update_check_unix)
+}
+
+pub fn save_last_update_check(path: &Path, unix_seconds: i64) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.last_update_check_unix = Some(unix_seconds);
+    save_settings(path, settings)
+}
+
+pub fn load_skipped_update_version(path: &Path) -> Option<String> {
+    load_settings(path).and_then(|settings| settings.skipped_update_version)
+}
+
+pub fn save_skipped_update_version(path: &Path, version: String) -> Result<(), String> {
+    let mut settings = load_settings(path).unwrap_or_default();
+    settings.skipped_update_version = Some(version);
+    save_settings(path, settings)
+}
+
 pub fn save_settings(path: &Path, settings: AppSettings) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -105,6 +156,10 @@ fn parse_settings(content: &str) -> Option<AppSettings> {
     let mut theme = None;
     let mut language = None;
     let mut last_workspace_path = None;
+    let mut update_auto_check = None;
+    let mut update_channel = None;
+    let mut last_update_check_unix = None;
+    let mut skipped_update_version = None;
 
     for line in content.lines() {
         let Some((key, value)) = line.split_once('=') else {
@@ -126,6 +181,21 @@ fn parse_settings(content: &str) -> Option<AppSettings> {
                     last_workspace_path = Some(PathBuf::from(value));
                 }
             }
+            "update_auto_check" => {
+                update_auto_check = match value.trim() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                }
+            }
+            "update_channel" => update_channel = UpdateChannel::from_setting(value.trim()),
+            "last_update_check" => last_update_check_unix = value.trim().parse::<i64>().ok(),
+            "skipped_update_version" => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    skipped_update_version = Some(value.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -134,6 +204,10 @@ fn parse_settings(content: &str) -> Option<AppSettings> {
         theme,
         language,
         last_workspace_path,
+        update_auto_check,
+        update_channel,
+        last_update_check_unix,
+        skipped_update_version,
     })
 }
 
@@ -156,6 +230,26 @@ fn serialize_settings(settings: AppSettings) -> String {
     if let Some(path) = settings.last_workspace_path {
         content.push_str("last_workspace_path=");
         content.push_str(&path.display().to_string());
+        content.push('\n');
+    }
+    if let Some(enabled) = settings.update_auto_check {
+        content.push_str("update_auto_check=");
+        content.push_str(if enabled { "true" } else { "false" });
+        content.push('\n');
+    }
+    if let Some(channel) = settings.update_channel {
+        content.push_str("update_channel=");
+        content.push_str(channel.as_setting());
+        content.push('\n');
+    }
+    if let Some(timestamp) = settings.last_update_check_unix {
+        content.push_str("last_update_check=");
+        content.push_str(&timestamp.to_string());
+        content.push('\n');
+    }
+    if let Some(version) = settings.skipped_update_version {
+        content.push_str("skipped_update_version=");
+        content.push_str(&version);
         content.push('\n');
     }
     content
@@ -230,6 +324,39 @@ mod tests {
         fs::write(&path, "version=1\ntheme=dark\n").unwrap();
 
         assert_eq!(load_language(&path), LanguageLoad::MissingLanguage);
+    }
+
+    #[test]
+    fn saves_and_loads_update_preferences_without_dropping_theme() {
+        let temp = temp_dir();
+        let path = settings_path(&temp);
+
+        save_theme(&path, AppTheme::Light).unwrap();
+        save_update_auto_check(&path, false).unwrap();
+        save_update_channel(&path, UpdateChannel::Prerelease).unwrap();
+        save_last_update_check(&path, 1_700_000_000).unwrap();
+        save_skipped_update_version(&path, "0.1.1".to_string()).unwrap();
+
+        assert_eq!(load_theme(&path), Some(AppTheme::Light));
+        assert_eq!(load_update_auto_check(&path), Some(false));
+        assert_eq!(load_update_channel(&path), Some(UpdateChannel::Prerelease));
+        assert_eq!(load_last_update_check(&path), Some(1_700_000_000));
+        assert_eq!(
+            load_skipped_update_version(&path),
+            Some("0.1.1".to_string())
+        );
+    }
+
+    #[test]
+    fn missing_update_preferences_default_to_none() {
+        let temp = temp_dir();
+        let path = settings_path(&temp);
+        save_theme(&path, AppTheme::Dark).unwrap();
+
+        assert_eq!(load_update_auto_check(&path), None);
+        assert_eq!(load_update_channel(&path), None);
+        assert_eq!(load_last_update_check(&path), None);
+        assert_eq!(load_skipped_update_version(&path), None);
     }
 
     #[test]

@@ -8,11 +8,12 @@ use std::{
 
 use flokin_core::{
     apply_bulk_edit_plan, build_undo_plan, bulk_history_entry, clamp_graph_zoom, default_query,
-    document_node_id, fit_graph_viewport, graph_bounds, graph_collections_map,
-    initial_graph_layout, mock_shell, save_markdown_file, sql_history_entry, undo_history_entry,
-    workspace_identity, BulkEditApplyError, BulkEditPlan, GraphNodeId, GraphProjection,
-    MutationHistoryEntry, MutationHistoryStore, ScanError, ShellModel, SqlExplorerMode,
-    SqlWritePlan, WorkspaceEvent,
+    document_node_id, evaluate_update, fit_graph_viewport, graph_bounds, graph_collections_map,
+    initial_graph_layout, mock_shell, save_markdown_file, should_notify_update, sql_history_entry,
+    undo_history_entry, workspace_identity, AppVersion, BulkEditApplyError, BulkEditPlan,
+    GraphNodeId, GraphProjection, MutationHistoryEntry, MutationHistoryStore, ScanError,
+    ShellModel, SqlExplorerMode, SqlWritePlan, UpdateChannel, UpdateInfo, UpdateStatus,
+    WorkspaceEvent,
 };
 use iced::{
     advanced::widget::{self as advanced_widget, operate},
@@ -25,7 +26,7 @@ use iced::{
 use crate::{
     i18n::{AppLanguage, I18nCatalog},
     message::{AppMode, MenuAction, Message, NewMarkdownFileError, SplitterKind},
-    services::{external_links, file_dialog, file_watcher, settings},
+    services::{external_links, file_dialog, file_watcher, settings, update_check},
     theme::{self, AppTheme},
     views,
     views::graph::GraphViewState,
@@ -73,6 +74,13 @@ pub struct FlokinApp {
     mode: AppMode,
     workspace_restore_notice: Option<String>,
     collection_page: usize,
+    update_auto_check_enabled: bool,
+    update_channel_preference: Option<UpdateChannel>,
+    update_status: UpdateStatus,
+    update_check_dialog_open: bool,
+    update_banner: Option<UpdateInfo>,
+    update_banner_dismissed_version: Option<AppVersion>,
+    skipped_update_version: Option<AppVersion>,
 }
 
 fn toggle_menu(
@@ -99,6 +107,18 @@ impl FlokinApp {
         let language = AppLanguage::PortugueseBrazil;
         #[cfg(not(test))]
         let language = initial_language();
+        #[cfg(test)]
+        let update_auto_check_enabled = true;
+        #[cfg(not(test))]
+        let update_auto_check_enabled = initial_update_auto_check();
+        #[cfg(test)]
+        let update_channel_preference = None;
+        #[cfg(not(test))]
+        let update_channel_preference = initial_update_channel_preference();
+        #[cfg(test)]
+        let skipped_update_version = None;
+        #[cfg(not(test))]
+        let skipped_update_version = initial_skipped_update_version();
 
         Self {
             model: mock_shell(),
@@ -141,22 +161,60 @@ impl FlokinApp {
             mode: AppMode::Files,
             workspace_restore_notice: None,
             collection_page: 0,
+            update_auto_check_enabled,
+            update_channel_preference,
+            update_status: UpdateStatus::Idle,
+            update_check_dialog_open: false,
+            update_banner: None,
+            update_banner_dismissed_version: None,
+            skipped_update_version,
         }
     }
 
     fn boot() -> (Self, Task<Message>) {
         let mut app = Self::new();
-        match restored_workspace_from_settings_path(&settings_storage_path()) {
-            Ok(Some(path)) => {
-                let task = app.switch_workspace(path);
-                (app, task)
-            }
-            Ok(None) => (app, Task::none()),
-            Err(()) => {
-                app.workspace_restore_notice = Some(app.i18n.tr("workspace-previous-unavailable"));
-                (app, Task::none())
-            }
+        let (app, workspace_task) =
+            match restored_workspace_from_settings_path(&settings_storage_path()) {
+                Ok(Some(path)) => {
+                    let task = app.switch_workspace(path);
+                    (app, task)
+                }
+                Ok(None) => (app, Task::none()),
+                Err(()) => {
+                    app.workspace_restore_notice =
+                        Some(app.i18n.tr("workspace-previous-unavailable"));
+                    (app, Task::none())
+                }
+            };
+        let update_task = app.startup_update_check_task();
+        (app, Task::batch([workspace_task, update_task]))
+    }
+
+    /// Every fresh process launch performs exactly one automatic update check when
+    /// automatic checking is enabled. Unlike a hypothetical periodic recheck within
+    /// an already-running process, the persisted "last check" timestamp must never
+    /// suppress this — a user closing and reopening FlokinMD minutes apart should
+    /// still get checked again on the new launch.
+    fn startup_update_check_task(&self) -> Task<Message> {
+        if self.should_run_startup_update_check() {
+            fetch_releases_task(false)
+        } else {
+            Task::none()
         }
+    }
+
+    fn should_run_startup_update_check(&self) -> bool {
+        flokin_core::should_check_on_startup(self.update_auto_check_enabled)
+    }
+
+    /// The channel actually used for update checks: the user's explicit choice always
+    /// wins; otherwise a prerelease-installed build keeps following prereleases and a
+    /// stable-installed build stays on stable, with no configuration required.
+    fn effective_update_channel(&self) -> UpdateChannel {
+        flokin_core::effective_update_channel(
+            self.update_channel_preference,
+            &current_app_version(),
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -1077,6 +1135,9 @@ impl FlokinApp {
                     }
                     MenuAction::Search => return self.update(Message::SearchOpened),
                     MenuAction::ExecuteSql => return self.update(Message::SqlExecute),
+                    MenuAction::CheckForUpdates => {
+                        return self.update(Message::UpdateCheckRequested(true))
+                    }
                     MenuAction::About => {
                         self.about_dialog_open = true;
                     }
@@ -1092,6 +1153,77 @@ impl FlokinApp {
             Message::AboutContactOpenCompleted(_result) => {}
             Message::AboutClosed => {
                 self.about_dialog_open = false;
+            }
+            Message::UpdateCheckRequested(is_manual) => {
+                if is_manual {
+                    self.update_check_dialog_open = true;
+                    self.update_status = UpdateStatus::Checking;
+                }
+                return fetch_releases_task(is_manual);
+            }
+            Message::UpdateCheckCompleted(is_manual, result) => {
+                match result {
+                    Ok(releases) => {
+                        let current = current_app_version();
+                        let channel = self.effective_update_channel();
+                        match evaluate_update(&current, &releases, channel) {
+                            Some(update) => {
+                                if is_manual {
+                                    self.update_status = UpdateStatus::Available(update.clone());
+                                }
+                                let already_dismissed =
+                                    self.update_banner_dismissed_version.as_ref()
+                                        == Some(&update.latest_version);
+                                if !already_dismissed
+                                    && should_notify_update(
+                                        &update,
+                                        self.skipped_update_version.as_ref(),
+                                    )
+                                {
+                                    self.update_banner = Some(update);
+                                }
+                            }
+                            None => {
+                                if is_manual {
+                                    self.update_status = UpdateStatus::UpToDate;
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if is_manual {
+                            self.update_status = UpdateStatus::Failed(error);
+                        }
+                    }
+                }
+                return persist_last_update_check_task();
+            }
+            Message::UpdateSettingsPersisted(_result) => {}
+            Message::UpdateBannerDismissed => {
+                if let Some(update) = self.update_banner.take() {
+                    self.update_banner_dismissed_version = Some(update.latest_version);
+                }
+            }
+            Message::UpdateBannerSkipped => {
+                if let Some(update) = self.update_banner.take() {
+                    self.skipped_update_version = Some(update.latest_version.clone());
+                    return persist_skipped_update_version_task(update.latest_version);
+                }
+            }
+            Message::UpdateLinkOpened(url) => {
+                return open_update_link_task(url);
+            }
+            Message::UpdateLinkOpenCompleted(_result) => {}
+            Message::UpdateCheckDialogClosed => {
+                self.update_check_dialog_open = false;
+            }
+            Message::UpdateAutoCheckToggled(enabled) => {
+                self.update_auto_check_enabled = enabled;
+                return persist_update_auto_check_task(enabled);
+            }
+            Message::UpdateChannelSelected(channel) => {
+                self.update_channel_preference = Some(channel);
+                return persist_update_channel_task(channel);
             }
             Message::SplitterPressed(kind, _position) => {
                 let value = match kind {
@@ -1217,6 +1349,11 @@ impl FlokinApp {
             &self.i18n,
             self.language,
             self.workspace_restore_notice.as_deref(),
+            self.update_banner.as_ref(),
+            self.update_check_dialog_open,
+            &self.update_status,
+            self.update_auto_check_enabled,
+            self.effective_update_channel(),
         )
     }
 
@@ -2082,6 +2219,71 @@ fn clear_last_workspace_task() -> Task<Message> {
     )
 }
 
+#[cfg(not(test))]
+fn initial_update_auto_check() -> bool {
+    settings::load_update_auto_check(&settings_storage_path()).unwrap_or(true)
+}
+
+#[cfg(not(test))]
+fn initial_update_channel_preference() -> Option<UpdateChannel> {
+    settings::load_update_channel(&settings_storage_path())
+}
+
+#[cfg(not(test))]
+fn initial_skipped_update_version() -> Option<AppVersion> {
+    settings::load_skipped_update_version(&settings_storage_path())
+        .and_then(|version| AppVersion::parse(&version).ok())
+}
+
+fn current_app_version() -> AppVersion {
+    AppVersion::parse(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION must be valid SemVer")
+}
+
+fn fetch_releases_task(is_manual: bool) -> Task<Message> {
+    Task::perform(
+        async move { update_check::fetch_releases() },
+        move |result| Message::UpdateCheckCompleted(is_manual, result),
+    )
+}
+
+fn persist_last_update_check_task() -> Task<Message> {
+    let now = chrono::Utc::now().timestamp();
+    Task::perform(
+        async move { settings::save_last_update_check(&settings_storage_path(), now) },
+        Message::UpdateSettingsPersisted,
+    )
+}
+
+fn persist_update_auto_check_task(enabled: bool) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_update_auto_check(&settings_storage_path(), enabled) },
+        Message::UpdateSettingsPersisted,
+    )
+}
+
+fn persist_update_channel_task(channel: UpdateChannel) -> Task<Message> {
+    Task::perform(
+        async move { settings::save_update_channel(&settings_storage_path(), channel) },
+        Message::UpdateSettingsPersisted,
+    )
+}
+
+fn persist_skipped_update_version_task(version: AppVersion) -> Task<Message> {
+    Task::perform(
+        async move {
+            settings::save_skipped_update_version(&settings_storage_path(), version.to_string())
+        },
+        Message::UpdateSettingsPersisted,
+    )
+}
+
+fn open_update_link_task(url: String) -> Task<Message> {
+    Task::perform(
+        async move { open::that(url).map_err(|error| error.to_string()) },
+        Message::UpdateLinkOpenCompleted,
+    )
+}
+
 fn app_data_dir() -> std::path::PathBuf {
     if let Some(value) = std::env::var_os("FLOKINMD_APP_DATA") {
         return std::path::PathBuf::from(value);
@@ -2210,7 +2412,8 @@ fn app_style(_state: &FlokinApp, theme: &Theme) -> iced::theme::Style {
 mod tests {
     use flokin_core::{
         build_context_projection, scan_workspace, workspace_update_from_events, Activity,
-        ContextSection, ScanResult, ScanState, SqlError, SqlExplorerMode, WorkspaceEvent,
+        AppVersion, ContextSection, ReleaseInfo, ScanResult, ScanState, SqlError, SqlExplorerMode,
+        UpdateChannel, UpdateStatus, WorkspaceEvent,
     };
     use iced::{
         keyboard::{
@@ -2230,8 +2433,8 @@ mod tests {
     };
 
     use super::{
-        create_empty_markdown_file, create_schema_file_if_absent, hover_menu, keyboard_message,
-        language_from_settings_path, normalize_new_markdown_file_name,
+        create_empty_markdown_file, create_schema_file_if_absent, current_app_version, hover_menu,
+        keyboard_message, language_from_settings_path, normalize_new_markdown_file_name,
         restored_workspace_from_settings_path, theme_from_settings_path, toggle_menu,
         validate_workspace_path, FlokinApp,
     };
@@ -2874,6 +3077,366 @@ mod tests {
         assert_eq!(
             app.model.current_workspace,
             Some(workspace.path().to_path_buf())
+        );
+    }
+
+    fn newer_test_version() -> AppVersion {
+        let current = current_app_version();
+        AppVersion::parse(&format!(
+            "{}.{}.{}",
+            current.major,
+            current.minor,
+            current.patch + 1
+        ))
+        .unwrap()
+    }
+
+    fn test_release(version: &AppVersion, prerelease: bool) -> ReleaseInfo {
+        ReleaseInfo {
+            tag: format!("v{version}"),
+            version: version.clone(),
+            prerelease,
+            url: format!("https://github.com/sergiocardoso/flokin-md/releases/tag/v{version}"),
+            notes: None,
+            published_at: None,
+        }
+    }
+
+    #[test]
+    fn check_for_updates_menu_action_opens_dialog_and_starts_checking() {
+        let mut app = FlokinApp::new();
+
+        let _ = app.update(Message::MenuAction(MenuAction::CheckForUpdates));
+
+        assert!(app.update_check_dialog_open);
+        assert_eq!(app.update_status, UpdateStatus::Checking);
+    }
+
+    #[test]
+    fn manual_check_with_newer_release_reports_available() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        let _ = app.update(Message::MenuAction(MenuAction::CheckForUpdates));
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            true,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+
+        match &app.update_status {
+            UpdateStatus::Available(update) => assert_eq!(update.latest_version, newer),
+            other => panic!("expected Available, got {other:?}"),
+        }
+        assert_eq!(
+            app.update_banner
+                .as_ref()
+                .map(|update| &update.latest_version),
+            Some(&newer)
+        );
+    }
+
+    #[test]
+    fn manual_check_with_no_newer_release_reports_up_to_date() {
+        let mut app = FlokinApp::new();
+        let current = current_app_version();
+        let _ = app.update(Message::MenuAction(MenuAction::CheckForUpdates));
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            true,
+            Ok(vec![test_release(&current, false)]),
+        ));
+
+        assert_eq!(app.update_status, UpdateStatus::UpToDate);
+        assert!(app.update_banner.is_none());
+    }
+
+    #[test]
+    fn manual_check_network_failure_reports_failed_status() {
+        let mut app = FlokinApp::new();
+        let _ = app.update(Message::MenuAction(MenuAction::CheckForUpdates));
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            true,
+            Err("timeout".to_string()),
+        ));
+
+        assert_eq!(
+            app.update_status,
+            UpdateStatus::Failed("timeout".to_string())
+        );
+    }
+
+    #[test]
+    fn automatic_check_shows_banner_but_does_not_touch_manual_status() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+
+        assert_eq!(app.update_status, UpdateStatus::Idle);
+        assert!(!app.update_check_dialog_open);
+        assert_eq!(
+            app.update_banner
+                .as_ref()
+                .map(|update| &update.latest_version),
+            Some(&newer)
+        );
+    }
+
+    #[test]
+    fn startup_automatic_check_populates_global_banner_without_any_user_interaction() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        assert!(app.update_banner.is_none());
+        assert!(!app.update_check_dialog_open);
+
+        // This is exactly the message `boot()` dispatches when an automatic check is
+        // due; no menu click, dialog, or Settings visit is involved.
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+
+        assert_eq!(
+            app.update_banner
+                .as_ref()
+                .map(|update| &update.latest_version),
+            Some(&newer)
+        );
+        assert!(
+            !app.update_check_dialog_open,
+            "the automatic path must never open the manual dialog"
+        );
+    }
+
+    #[test]
+    fn navigating_to_another_section_does_not_clear_the_banner() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(app.update_banner.is_some());
+
+        for mode in [
+            AppMode::Data,
+            AppMode::Context,
+            AppMode::Graph,
+            AppMode::Health,
+            AppMode::Sql,
+            AppMode::History,
+            AppMode::Files,
+        ] {
+            let _ = app.update(Message::AppModeSelected(mode));
+            assert!(
+                app.update_banner.is_some(),
+                "banner was cleared after navigating to {mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_and_closing_settings_does_not_control_banner_lifecycle() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(app.update_banner.is_some());
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Settings));
+        assert!(
+            app.update_banner.is_some(),
+            "opening Settings must not affect the banner"
+        );
+
+        let _ = app.update(Message::AppModeSelected(AppMode::Files));
+        assert!(
+            app.update_banner.is_some(),
+            "leaving Settings must not affect the banner"
+        );
+    }
+
+    #[test]
+    fn stable_channel_ignores_prerelease_only_release() {
+        let mut app = FlokinApp::new();
+        app.update_channel_preference = Some(UpdateChannel::Stable);
+        let newer = newer_test_version();
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, true)]),
+        ));
+
+        assert!(app.update_banner.is_none());
+    }
+
+    #[test]
+    fn remind_me_later_hides_banner_and_suppresses_it_for_the_session() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(app.update_banner.is_some());
+
+        let _ = app.update(Message::UpdateBannerDismissed);
+        assert!(app.update_banner.is_none());
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(
+            app.update_banner.is_none(),
+            "the same version should not reappear after Remind me later in this session"
+        );
+    }
+
+    #[test]
+    fn skip_this_version_suppresses_banner_for_that_version() {
+        let mut app = FlokinApp::new();
+        let newer = newer_test_version();
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(app.update_banner.is_some());
+
+        let _ = app.update(Message::UpdateBannerSkipped);
+        assert!(app.update_banner.is_none());
+        assert_eq!(app.skipped_update_version, Some(newer.clone()));
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&newer, false)]),
+        ));
+        assert!(
+            app.update_banner.is_none(),
+            "a skipped version must not notify again"
+        );
+    }
+
+    #[test]
+    fn newer_release_after_skip_still_notifies() {
+        let mut app = FlokinApp::new();
+        let skipped = newer_test_version();
+        app.skipped_update_version = Some(skipped.clone());
+        let even_newer = AppVersion::parse(&format!(
+            "{}.{}.{}",
+            skipped.major,
+            skipped.minor,
+            skipped.patch + 1
+        ))
+        .unwrap();
+
+        let _ = app.update(Message::UpdateCheckCompleted(
+            false,
+            Ok(vec![test_release(&even_newer, false)]),
+        ));
+
+        assert_eq!(
+            app.update_banner
+                .as_ref()
+                .map(|update| &update.latest_version),
+            Some(&even_newer)
+        );
+    }
+
+    #[test]
+    fn auto_check_toggle_updates_state() {
+        let mut app = FlokinApp::new();
+        assert!(app.update_auto_check_enabled);
+
+        let _ = app.update(Message::UpdateAutoCheckToggled(false));
+
+        assert!(!app.update_auto_check_enabled);
+    }
+
+    #[test]
+    fn fresh_process_startup_requests_a_check_even_with_a_recent_persisted_timestamp() {
+        let temp = temp_settings_dir();
+        let path = settings::settings_path(&temp);
+        // Simulate a previous process having checked moments ago: under the
+        // in-process 24h interval rule this would not be "due" again yet.
+        settings::save_last_update_check(&path, chrono::Utc::now().timestamp()).unwrap();
+        assert!(!flokin_core::update_check_due(
+            settings::load_last_update_check(&path),
+            chrono::Utc::now().timestamp()
+        ));
+
+        let mut app = FlokinApp::new();
+        app.update_auto_check_enabled = true;
+
+        // A fresh process launch must still request its own check regardless of
+        // that timestamp: the startup decision never consults it.
+        assert!(app.should_run_startup_update_check());
+    }
+
+    #[test]
+    fn startup_check_is_skipped_when_auto_check_is_disabled() {
+        let mut app = FlokinApp::new();
+        app.update_auto_check_enabled = false;
+
+        assert!(!app.should_run_startup_update_check());
+    }
+
+    #[test]
+    fn startup_check_decision_is_a_pure_query_not_a_one_shot_flag() {
+        // Guards against a regression where the startup path could end up
+        // scheduling more than one automatic request (e.g. a stateful "already
+        // checked" flag). `boot()` calls this once, and it must be a stable,
+        // side-effect-free answer every time it is asked.
+        let app = FlokinApp::new();
+
+        let first = app.should_run_startup_update_check();
+        let second = app.should_run_startup_update_check();
+
+        assert!(first);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn manual_check_still_works_when_automatic_checking_is_disabled() {
+        let mut app = FlokinApp::new();
+        app.update_auto_check_enabled = false;
+        assert!(!app.should_run_startup_update_check());
+
+        let _ = app.update(Message::MenuAction(MenuAction::CheckForUpdates));
+
+        assert!(app.update_check_dialog_open);
+        assert_eq!(app.update_status, UpdateStatus::Checking);
+    }
+
+    fn temp_settings_dir() -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flokinmd-app-update-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn channel_selection_updates_state() {
+        let mut app = FlokinApp::new();
+        assert_eq!(app.update_channel_preference, None);
+
+        let _ = app.update(Message::UpdateChannelSelected(UpdateChannel::Prerelease));
+
+        assert_eq!(
+            app.update_channel_preference,
+            Some(UpdateChannel::Prerelease)
         );
     }
 

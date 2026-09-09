@@ -2,8 +2,9 @@ use std::{path::PathBuf, time::Instant};
 
 use flokin_core::{
     BulkEditOperationKind, BulkEditValueType, CollectionPanel, ContextSection, EditorViewMode,
-    ExplorerNodeId, GraphNodeId, HealthFilter, MutationHistoryEntry, ScanResult, SqlCatalog,
-    SqlError, SqlExplorerMode, SqlQueryResult, SqlWritePlan, WorkspaceUpdate,
+    ExplorerNodeId, GraphNodeId, HealthFilter, MutationHistoryEntry, ReleaseInfo, ScanResult,
+    SqlCatalog, SqlError, SqlExplorerMode, SqlQueryResult, SqlWritePlan, UpdateChannel,
+    WorkspaceUpdate,
 };
 use iced::{
     keyboard,
@@ -43,6 +44,7 @@ pub enum MenuAction {
     Search,
     ExecuteSql,
     History,
+    CheckForUpdates,
     About,
 }
 
@@ -208,6 +210,16 @@ pub enum Message {
     MenuHovered(MenuId),
     MenuAction(MenuAction),
     MenuClosed,
+    UpdateCheckRequested(bool),
+    UpdateCheckCompleted(bool, Result<Vec<ReleaseInfo>, String>),
+    UpdateSettingsPersisted(Result<(), String>),
+    UpdateBannerDismissed,
+    UpdateBannerSkipped,
+    UpdateLinkOpened(String),
+    UpdateLinkOpenCompleted(Result<(), String>),
+    UpdateCheckDialogClosed,
+    UpdateAutoCheckToggled(bool),
+    UpdateChannelSelected(UpdateChannel),
     AboutContactOpened(AboutContactLink),
     AboutContactOpenCompleted(Result<(), String>),
     AboutClosed,

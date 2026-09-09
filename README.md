@@ -463,6 +463,20 @@ The UI is being designed as a dense desktop productivity tool rather than a brow
 
 ---
 
+### Update checker
+
+FlokinMD can tell you when a newer version is published on [GitHub Releases](https://github.com/sergiocardoso/flokin-md/releases), without any auto-updater, package-manager integration, or background download.
+
+- Checks happen automatically, asynchronously, at most once every 24 hours, and never block startup or show an error on failure.
+- A newer compatible release appears as a small non-modal banner with Download update, Release notes, Skip this version, and Remind me later.
+- `Help → Check for Updates...` runs a manual check that always reports Update available, FlokinMD is up to date, or Could not check for updates.
+- Settings expose a Stable (default) or Pre-release update channel and a toggle for automatic checks.
+- Version comparison uses proper SemVer, including prereleases, so `0.1.0-rc.2 < 0.1.0-rc.3 < 0.1.0 < 0.1.1`.
+
+FlokinMD only notifies about updates in v0.1. It does not download, install, or self-update.
+
+---
+
 ## How it works
 
 The high-level architecture follows one important direction of data flow:
@@ -769,6 +783,7 @@ The first public version is intentionally focused.
 - [x] Explicit schema onboarding/generation
 - [x] Database Health
 - [x] Light/Dark design system
+- [x] Update checker & release notifications (no auto-update)
 
 ## In progress / before v0.1
 

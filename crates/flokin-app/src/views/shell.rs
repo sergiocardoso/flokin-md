@@ -1,4 +1,7 @@
-use flokin_core::{EditorDialog, ExplicitSchemaState, SchemaType, ShellModel};
+use flokin_core::{
+    EditorDialog, ExplicitSchemaState, SchemaType, ShellModel, UpdateChannel, UpdateInfo,
+    UpdateStatus,
+};
 use iced::widget::{
     button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_input,
 };
@@ -47,6 +50,11 @@ pub fn view<'a>(
     i18n: &'a I18nCatalog,
     language: AppLanguage,
     workspace_restore_notice: Option<&'a str>,
+    update_banner: Option<&'a UpdateInfo>,
+    update_check_dialog_open: bool,
+    update_status: &'a UpdateStatus,
+    update_auto_check_enabled: bool,
+    update_channel: UpdateChannel,
 ) -> Element<'a, Message> {
     if model.current_workspace.is_none() {
         return no_workspace_shell(
@@ -57,6 +65,11 @@ pub fn view<'a>(
             language,
             about_open,
             workspace_restore_notice,
+            update_banner,
+            update_check_dialog_open,
+            update_status,
+            update_auto_check_enabled,
+            update_channel,
         );
     }
 
@@ -64,7 +77,16 @@ pub fn view<'a>(
         row![
             activity_bar(mode, i18n),
             panel_gutter(),
-            views::settings::view(app_theme, language, i18n, left_visible, right_visible, true)
+            views::settings::view(
+                app_theme,
+                language,
+                i18n,
+                left_visible,
+                right_visible,
+                true,
+                update_auto_check_enabled,
+                update_channel,
+            )
         ]
         .height(Length::Fill)
     } else if mode == AppMode::Sql {
@@ -171,20 +193,22 @@ pub fn view<'a>(
         content
     };
 
-    let shell = column![
-        top_shell(
-            model,
-            app_theme,
-            left_visible,
-            right_visible,
-            open_menu,
-            i18n
-        ),
-        content_frame(content),
-        views::status_bar::view(model, i18n),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let mut shell = column![top_shell(
+        model,
+        app_theme,
+        left_visible,
+        right_visible,
+        open_menu,
+        i18n
+    )];
+    if let Some(update) = update_banner {
+        shell = shell.push(views::update::banner(update, i18n));
+    }
+    let shell = shell
+        .push(content_frame(content))
+        .push(views::status_bar::view(model, i18n))
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     let shell = if model.search.open {
         stack![shell, search_backdrop(), search_overlay(model, i18n)]
@@ -219,13 +243,24 @@ pub fn view<'a>(
         shell
     };
 
-    if about_open {
+    let shell = if about_open {
         stack![shell, views::about::dialog_overlay(app_theme, i18n)].into()
+    } else {
+        shell
+    };
+
+    if update_check_dialog_open {
+        stack![
+            shell,
+            views::update::check_dialog_overlay(update_status, i18n)
+        ]
+        .into()
     } else {
         shell
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn no_workspace_shell<'a>(
     app_theme: AppTheme,
     open_menu: Option<MenuId>,
@@ -234,19 +269,34 @@ fn no_workspace_shell<'a>(
     language: AppLanguage,
     about_open: bool,
     workspace_restore_notice: Option<&'a str>,
+    update_banner: Option<&'a UpdateInfo>,
+    update_check_dialog_open: bool,
+    update_status: &'a UpdateStatus,
+    update_auto_check_enabled: bool,
+    update_channel: UpdateChannel,
 ) -> Element<'a, Message> {
     let content = if mode == AppMode::Settings {
-        views::settings::view(app_theme, language, i18n, true, true, false)
+        views::settings::view(
+            app_theme,
+            language,
+            i18n,
+            true,
+            true,
+            false,
+            update_auto_check_enabled,
+            update_channel,
+        )
     } else {
         views::welcome::view(app_theme, i18n, workspace_restore_notice)
     };
 
-    let shell = column![
-        welcome_top_shell(app_theme, open_menu, i18n, language, mode),
-        content
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let mut shell = column![welcome_top_shell(
+        app_theme, open_menu, i18n, language, mode
+    )];
+    if let Some(update) = update_banner {
+        shell = shell.push(views::update::banner(update, i18n));
+    }
+    let shell = shell.push(content).width(Length::Fill).height(Length::Fill);
 
     let shell = if matches!(open_menu, Some(MenuId::File | MenuId::Help)) {
         stack![shell, welcome_menu_overlay(open_menu.unwrap(), i18n)].into()
@@ -254,8 +304,18 @@ fn no_workspace_shell<'a>(
         shell.into()
     };
 
-    if about_open {
+    let shell = if about_open {
         stack![shell, views::about::dialog_overlay(app_theme, i18n)].into()
+    } else {
+        shell
+    };
+
+    if update_check_dialog_open {
+        stack![
+            shell,
+            views::update::check_dialog_overlay(update_status, i18n)
+        ]
+        .into()
     } else {
         shell
     }
@@ -379,7 +439,10 @@ fn welcome_menu_overlay<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, 
 fn welcome_menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
     let entries: Vec<(String, MenuAction)> = match menu {
         MenuId::File => vec![(i18n.tr("menu-open-folder"), MenuAction::OpenFolder)],
-        MenuId::Help => vec![(i18n.tr("menu-about"), MenuAction::About)],
+        MenuId::Help => vec![
+            (i18n.tr("menu-check-updates"), MenuAction::CheckForUpdates),
+            (i18n.tr("menu-about"), MenuAction::About),
+        ],
         _ => Vec::new(),
     };
     let mut items = column![];
@@ -737,7 +800,14 @@ fn menu_items<'a>(menu: MenuId, i18n: &'a I18nCatalog) -> Element<'a, Message> {
                 MenuAction::ExecuteSql,
             ),
         ],
-        MenuId::Help => vec![(i18n.tr("menu-about"), None, MenuAction::About)],
+        MenuId::Help => vec![
+            (
+                i18n.tr("menu-check-updates"),
+                None,
+                MenuAction::CheckForUpdates,
+            ),
+            (i18n.tr("menu-about"), None, MenuAction::About),
+        ],
     };
     let mut items = column![];
     for (index, (label, shortcut, action)) in entries.into_iter().enumerate() {
