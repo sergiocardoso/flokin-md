@@ -1,7 +1,7 @@
 name = "flokinmd"
 product-name = "FlokinMD"
 identifier = "dev.sergiocardoso.flokinmd"
-version = "0.1.0-rc.4"
+version = "0.1.0-rc.5"
 
 authors = ["Sérgio Cardoso"]
 publisher = "Sérgio Cardoso"
